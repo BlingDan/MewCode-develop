@@ -1,0 +1,22 @@
+package com.mewcode.conversation;
+
+import java.util.ArrayList;
+import java.util.List;
+
+/** In-memory conversation history for the current process. */
+public final class ConversationManager {
+
+    private final List<Message> messages = new ArrayList<>();
+
+    public synchronized void addUserMessage(String text) {
+        messages.add(new Message("user", text));
+    }
+
+    public synchronized void addAssistantMessage(String text) {
+        messages.add(new Message("assistant", text));
+    }
+
+    public synchronized List<Message> getMessages() {
+        return List.copyOf(messages);
+    }
+}

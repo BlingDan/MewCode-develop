@@ -7,12 +7,12 @@
 ### 已通过
 
 - 自动测试：`clean test shadowJar` 成功；24 个测试全部通过（配置 6、会话 2、Anthropic 3、OpenAI 3、Markdown 2、TUI 8），零 skipped / failure / error。
-- 构建产物：Java 21 fat jar 已生成于 `build/libs/mewcode.jar`；缺配置启动返回退出码 2，只输出一行安全错误，无堆栈。
+- 构建产物：Java 21 fat jar 已生成于 `../../build/libs/mewcode.jar`；缺配置启动返回退出码 2，只输出一行安全错误，无堆栈。
 - 本地协议集成：官方 Anthropic/OpenAI SDK 均通过本地 HTTP/SSE 服务验证；覆盖 system prompt、完整历史、自定义 `base_url`、thinking 事件、正文顺序、401、429 与关闭自动重试。
 - 真实 PTY：验证了单 provider 直进、双 provider 方向键选择、状态栏、`Alt+Enter` 多行提交、流式增量、spinner/秒数、完成后 Markdown、`/exit` 和流式期间 `Ctrl+C`。
 - 终端清理：真实长流中发送 `Ctrl+C` 后进程退出，并由 shutdown hook 输出恢复光标序列、关闭 JLine 终端；该项验收曾发现问题并已修复。
-- 安全与范围：临时配置均已删除；`.mewcode/config.yaml` 被忽略、example 未被忽略；源码无 TBD/TODO、MCP/工具/远程/恢复入口；`git diff --check` 通过。
-- 参数隔离：设置 `OPENAI_API_KEY` 并传入 `--remote -p --config` 后，程序仍只查找当前工作目录的 `.mewcode/config.yaml`，参数与环境变量未改变运行模式。
+- 安全与范围：临时配置均已删除；`../../.mewcode/config.yaml` 被忽略、example 未被忽略；源码无 TBD/TODO、MCP/工具/远程/恢复入口；`git diff --check` 通过。
+- 参数隔离：设置 `OPENAI_API_KEY` 并传入 `--remote -p --config` 后，程序仍只查找当前工作目录的 `../../.mewcode/config.yaml`，参数与环境变量未改变运行模式。
 
 ### 尚未执行或仅部分覆盖
 
@@ -28,14 +28,14 @@
 
 ## 配置与启动
 
-- [ ] 合法配置仅含一个 provider 时，程序不显示选择页，直接进入聊天界面。（验证：复制单 provider 示例为 `.mewcode/config.yaml` 后启动，观察首屏）`AC1/F1`
+- [ ] 合法配置仅含一个 provider 时，程序不显示选择页，直接进入聊天界面。（验证：复制单 provider 示例为 `../../.mewcode/config.yaml` 后启动，观察首屏）`AC1/F1`
 - [ ] 合法配置包含两个 provider 时，程序显示两项名称和模型；方向键可移动，Enter 后状态栏显示选中项。（验证：使用双 provider 配置进行真实 TUI 操作）`AC2/F2`
-- [ ] 配置文件缺失时，程序输出包含缺失路径的单行错误并以非零状态退出，无 Java 堆栈。（验证：在无 `.mewcode/config.yaml` 的临时工作目录运行 jar 并记录退出码）`AC1/N4`
+- [ ] 配置文件缺失时，程序输出包含缺失路径的单行错误并以非零状态退出，无 Java 堆栈。（验证：在无 `../../.mewcode/config.yaml` 的临时工作目录运行 jar 并记录退出码）`AC1/N4`
 - [ ] YAML 语法损坏或 `providers` 为空时，程序分别给出可定位错误并非零退出。（验证：为两个场景分别启动并记录 stderr 与退出码）`AC1/N4`
 - [ ] `name`、`protocol`、`model`、`api_key` 任一缺失时，错误准确指出 `providers[index].field`。（验证：运行配置参数化测试）`AC1/F1`
 - [ ] 重复 provider 名称、未知 protocol、非法 HTTP/HTTPS `base_url` 均被启动期校验拒绝。（验证：运行配置参数化测试）`AC1/N4`
 - [ ] `base_url` 省略或留空时配置仍合法，`thinking` 省略时按关闭处理。（验证：运行合法配置单元测试）`AC1/F1`
-- [ ] 程序只读取当前项目的 `.mewcode/config.yaml`，不会因用户目录配置、环境变量或命令行参数改变 provider。（验证：设置同名环境变量和用户级配置后在项目目录启动，观察仍采用项目配置）`F1/N9`
+- [ ] 程序只读取当前项目的 `../../.mewcode/config.yaml`，不会因用户目录配置、环境变量或命令行参数改变 provider。（验证：设置同名环境变量和用户级配置后在项目目录启动，观察仍采用项目配置）`F1/N9`
 
 ## 请求与协议适配
 
@@ -82,7 +82,7 @@
 - [ ] 流中已经出现部分正文后连接中断，部分正文和错误均可见，但部分正文不进入下一轮 assistant 历史。（验证：先发送文本再断开，随后检查下一轮请求体）`AC11/F11`
 - [ ] 配置错误、鉴权错误、协议错误和正常输出均不包含完整 API 密钥。（验证：使用唯一测试密钥运行全部相关测试，对捕获输出执行精确搜索）`AC14/N5`
 - [ ] `ProviderConfig.toString()`、异常消息和测试失败输出不会回显密钥。（验证：运行安全相关单元测试）`AC14/N5`
-- [ ] `.mewcode/config.yaml` 被 Git 忽略，example 被跟踪且只含占位密钥。（验证：运行 `git check-ignore` 并检查 example 内容）`AC14/N5`
+- [ ] `../../.mewcode/config.yaml` 被 Git 忽略，example 被跟踪且只含占位密钥。（验证：运行 `git check-ignore` 并检查 example 内容）`AC14/N5`
 
 ## 响应性与退出
 
@@ -105,7 +105,7 @@
 
 - [ ] `./gradlew compileJava` 无编译错误。（验证：记录命令退出码为 0）
 - [ ] `./gradlew test` 全部通过，包含配置、会话、双 SSE、Markdown 和 TUI 状态测试。（验证：记录 Gradle 测试摘要）
-- [ ] `./gradlew clean shadowJar` 成功生成 `build/libs/mewcode.jar`，jar 可由 Java 21 启动。（验证：检查产物并运行缺配置启动场景）
+- [ ] `./gradlew clean shadowJar` 成功生成 `../../build/libs/mewcode.jar`，jar 可由 Java 21 启动。（验证：检查产物并运行缺配置启动场景）
 - [ ] `git diff --check` 无空白错误，源码中无 TBD/TODO 占位实现。（验证：运行命令及 `rg 'TBD|TODO' src`）
 - [ ] 构建依赖不包含 MCP SDK、Javalin、Jackson、SLF4J 或其他本期外组件。（验证：运行 `./gradlew dependencies --configuration runtimeClasspath` 并检查输出）`AC16/N9`
 
@@ -117,3 +117,13 @@
 - [ ] **场景 4：自定义兼容端点**——OpenAI protocol + 自定义 `base_url` → 完成一轮延迟 SSE 对话 → 行为与标准 OpenAI 一致。（验证：本地兼容 server 请求日志与终端输出）
 - [ ] **场景 5：错误恢复**——本地端点先返回鉴权错误 → 界面显示安全错误并恢复输入 → 下一请求返回正常流 → 程序继续对话。（验证：可切换响应的本地 server + 终端录屏）
 - [ ] **场景 6：长回复与退出**——生成超过一屏的长回复 → 等待/流式期间界面响应 → scrollback 可回看且不重复 → 流式期间 Ctrl+C → shell 立即可正常编辑。（验证：长延迟流 + 终端操作记录）
+
+---
+
+## DeepSeek OpenAI 兼容配置增量
+
+- [x] 本地配置与示例模板都包含第三个 `deepseek-openai` provider，使用 `protocol: openai`、`model: deepseek-v4-flash`、`base_url: https://api.deepseek.com`、`thinking: false`。（证据：两份 YAML 的第三项非敏感字段一致）`DAC1/DF1/DF3`
+- [x] `../../.mewcode/config.yaml.example` 只含占位 Key，`../../.mewcode/config.yaml` 继续被 Git 忽略，Git diff 不包含真实 API Key。（证据：`git check-ignore` 命中本地配置，example 未被忽略且 diff 只有占位配置）`DAC2/DF2/DN1`
+- [x] `./gradlew clean test shadowJar` 成功，24 个现有测试全部通过并生成 `../../build/libs/mewcode.jar`。（证据：24 tests、0 skipped/failure/error，Shadow Jar 约 73 MB）`DAC5/DF5/DN2`
+- [x] 使用 Java 21 在 tmux 启动后，选择页依次显示 Claude、OpenAI、`deepseek-openai (deepseek-v4-flash)`；选择第三项后状态栏匹配，输入 `/exit` 后恢复 shell。（证据：Java 21.0.11 启动，状态栏匹配，退出后 pane 命令为 `zsh`）`DAC3/DF4`
+- [x] 用户在 IDE 中替换本地 DeepSeek Key 后，tmux 中选择第三项并发送真实请求，正文以流式方式返回，完成后输入框恢复，退出后终端正常。（证据：真实请求在 2.2 秒返回 `DeepSeek E2E OK`，输入框恢复，`/exit` 后 pane 命令为 `zsh`）`DAC4/DF1/DF2`

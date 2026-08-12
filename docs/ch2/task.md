@@ -6,40 +6,40 @@
 
 | 操作 | 文件 | 职责 |
 |---|---|---|
-| 修改 | `build.gradle.kts` | 增加 SDK、YAML、Markdown 和测试依赖 |
-| 修改 | `.gitignore` | 忽略真实配置、构建与 IDE 文件 |
-| 新建 | `.mewcode/config.yaml.example` | 六字段双 provider 配置示例 |
-| 修改 | `src/main/java/com/mewcode/MewCode.java` | 配置加载、装配和安全启动错误 |
-| 新建 | `src/main/java/com/mewcode/config/AppConfig.java` | 配置根 JavaBean |
-| 新建 | `src/main/java/com/mewcode/config/ProviderConfig.java` | 六字段 provider JavaBean |
-| 新建 | `src/main/java/com/mewcode/config/ConfigLoader.java` | YAML 绑定、校验与安全错误 |
-| 新建 | `src/main/java/com/mewcode/conversation/Message.java` | 纯文本 role/content 消息 |
-| 新建 | `src/main/java/com/mewcode/conversation/ConversationManager.java` | 进程内多轮历史 |
-| 新建 | `src/main/java/com/mewcode/prompt/PromptBuilder.java` | 固定 system prompt |
-| 新建 | `src/main/java/com/mewcode/llm/StreamEvent.java` | 统一流式事件 |
-| 新建 | `src/main/java/com/mewcode/llm/LlmClient.java` | 统一 provider 接口 |
-| 新建 | `src/main/java/com/mewcode/llm/LlmClients.java` | provider 工厂 |
-| 新建 | `src/main/java/com/mewcode/llm/AnthropicClient.java` | Anthropic SDK 适配 |
-| 新建 | `src/main/java/com/mewcode/llm/OpenAiClient.java` | OpenAI Chat Completions 适配 |
-| 修改 | `src/main/java/com/mewcode/tui/tea/Program.java` | `Alt+Enter`、退出和终端清理 |
-| 新建 | `src/main/java/com/mewcode/tui/AppState.java` | Provider 选择/聊天状态 |
-| 新建 | `src/main/java/com/mewcode/tui/ChatMessage.java` | UI 消息与耗时 |
-| 新建 | `src/main/java/com/mewcode/tui/Styles.java` | TUI 样式常量 |
-| 新建 | `src/main/java/com/mewcode/tui/SpinnerVerbs.java` | 进行中提示文本 |
-| 新建 | `src/main/java/com/mewcode/tui/MarkdownRenderer.java` | Mordant Markdown ANSI 渲染 |
-| 修改 | `src/main/java/com/mewcode/tui/MewCodeModel.java` | 完整对话 TUI 状态机 |
-| 新建 | `src/test/java/com/mewcode/config/ConfigLoaderTest.java` | 配置成功与失败测试 |
-| 新建 | `src/test/java/com/mewcode/conversation/ConversationManagerTest.java` | 历史顺序与防修改测试 |
-| 新建 | `src/test/java/com/mewcode/llm/AnthropicClientTest.java` | Anthropic 本地 SSE 测试 |
-| 新建 | `src/test/java/com/mewcode/llm/OpenAiClientTest.java` | OpenAI 本地 SSE 测试 |
-| 新建 | `src/test/java/com/mewcode/tui/MarkdownRendererTest.java` | Markdown 行为测试 |
-| 新建 | `src/test/java/com/mewcode/tui/MewCodeModelTest.java` | Provider、输入、流式与错误状态测试 |
-| 新建 | `src/test/resources/sse/anthropic-thinking.txt` | Anthropic thinking + text 流样例 |
-| 新建 | `src/test/resources/sse/openai-chat.txt` | OpenAI Chat Completions 流样例 |
+| 修改 | `../../build.gradle.kts` | 增加 SDK、YAML、Markdown 和测试依赖 |
+| 修改 | `../../.gitignore` | 忽略真实配置、构建与 IDE 文件 |
+| 新建 | `../../.mewcode/config.yaml.example` | 六字段双 provider 配置示例 |
+| 修改 | `../../src/main/java/com/mewcode/MewCode.java` | 配置加载、装配和安全启动错误 |
+| 新建 | `../../src/main/java/com/mewcode/config/AppConfig.java` | 配置根 JavaBean |
+| 新建 | `../../src/main/java/com/mewcode/config/ProviderConfig.java` | 六字段 provider JavaBean |
+| 新建 | `../../src/main/java/com/mewcode/config/ConfigLoader.java` | YAML 绑定、校验与安全错误 |
+| 新建 | `../../src/main/java/com/mewcode/conversation/Message.java` | 纯文本 role/content 消息 |
+| 新建 | `../../src/main/java/com/mewcode/conversation/ConversationManager.java` | 进程内多轮历史 |
+| 新建 | `../../src/main/java/com/mewcode/prompt/PromptBuilder.java` | 固定 system prompt |
+| 新建 | `../../src/main/java/com/mewcode/llm/StreamEvent.java` | 统一流式事件 |
+| 新建 | `../../src/main/java/com/mewcode/llm/LlmClient.java` | 统一 provider 接口 |
+| 新建 | `../../src/main/java/com/mewcode/llm/LlmClients.java` | provider 工厂 |
+| 新建 | `../../src/main/java/com/mewcode/llm/AnthropicClient.java` | Anthropic SDK 适配 |
+| 新建 | `../../src/main/java/com/mewcode/llm/OpenAiClient.java` | OpenAI Chat Completions 适配 |
+| 修改 | `../../src/main/java/com/mewcode/tui/tea/Program.java` | `Alt+Enter`、退出和终端清理 |
+| 新建 | `../../src/main/java/com/mewcode/tui/AppState.java` | Provider 选择/聊天状态 |
+| 新建 | `../../src/main/java/com/mewcode/tui/ChatMessage.java` | UI 消息与耗时 |
+| 新建 | `../../src/main/java/com/mewcode/tui/Styles.java` | TUI 样式常量 |
+| 新建 | `../../src/main/java/com/mewcode/tui/SpinnerVerbs.java` | 进行中提示文本 |
+| 新建 | `../../src/main/java/com/mewcode/tui/MarkdownRenderer.java` | Mordant Markdown ANSI 渲染 |
+| 修改 | `../../src/main/java/com/mewcode/tui/MewCodeModel.java` | 完整对话 TUI 状态机 |
+| 新建 | `../../src/test/java/com/mewcode/config/ConfigLoaderTest.java` | 配置成功与失败测试 |
+| 新建 | `../../src/test/java/com/mewcode/conversation/ConversationManagerTest.java` | 历史顺序与防修改测试 |
+| 新建 | `../../src/test/java/com/mewcode/llm/AnthropicClientTest.java` | Anthropic 本地 SSE 测试 |
+| 新建 | `../../src/test/java/com/mewcode/llm/OpenAiClientTest.java` | OpenAI 本地 SSE 测试 |
+| 新建 | `../../src/test/java/com/mewcode/tui/MarkdownRendererTest.java` | Markdown 行为测试 |
+| 新建 | `../../src/test/java/com/mewcode/tui/MewCodeModelTest.java` | Provider、输入、流式与错误状态测试 |
+| 新建 | `../../src/test/resources/sse/anthropic-thinking.txt` | Anthropic thinking + text 流样例 |
+| 新建 | `../../src/test/resources/sse/openai-chat.txt` | OpenAI Chat Completions 流样例 |
 
 ## T1：补齐构建依赖
 
-**文件：** `build.gradle.kts`  
+**文件：** `../../build.gradle.kts`  
 **依赖：** 无
 
 **步骤：**
@@ -54,7 +54,7 @@
 
 ## T2：定义 Provider 配置 JavaBean
 
-**文件：** `src/main/java/com/mewcode/config/AppConfig.java`、`ProviderConfig.java`  
+**文件：** `../../src/main/java/com/mewcode/config/AppConfig.java`、`ProviderConfig.java`  
 **依赖：** T1
 
 **步骤：**
@@ -68,7 +68,7 @@
 
 ## T3：实现 YAML 文件读取与绑定
 
-**文件：** `src/main/java/com/mewcode/config/ConfigLoader.java`  
+**文件：** `../../src/main/java/com/mewcode/config/ConfigLoader.java`  
 **依赖：** T2
 
 **步骤：**
@@ -83,7 +83,7 @@
 
 ## T4：实现配置语义校验
 
-**文件：** `src/main/java/com/mewcode/config/ConfigLoader.java`  
+**文件：** `../../src/main/java/com/mewcode/config/ConfigLoader.java`  
 **依赖：** T3
 
 **步骤：**
@@ -99,7 +99,7 @@
 
 ## T5：覆盖合法配置场景
 
-**文件：** `src/test/java/com/mewcode/config/ConfigLoaderTest.java`  
+**文件：** `../../src/test/java/com/mewcode/config/ConfigLoaderTest.java`  
 **依赖：** T4
 
 **步骤：**
@@ -114,7 +114,7 @@
 
 ## T6：覆盖非法配置场景
 
-**文件：** `src/test/java/com/mewcode/config/ConfigLoaderTest.java`  
+**文件：** `../../src/test/java/com/mewcode/config/ConfigLoaderTest.java`  
 **依赖：** T5
 
 **步骤：**
@@ -128,21 +128,21 @@
 
 ## T7：添加安全配置模板与忽略规则
 
-**文件：** `.mewcode/config.yaml.example`、`.gitignore`  
+**文件：** `../../.mewcode/config.yaml.example`、`../../.gitignore`  
 **依赖：** T4
 
 **步骤：**
 
 1. 创建包含 Anthropic 与 OpenAI 两项的六字段示例。
 2. 使用 `replace-me` 占位密钥，不加入真实凭据。
-3. 忽略 `.mewcode/config.yaml`、`build/`、`.gradle/` 和 `.idea/`。
-4. 保证 `.mewcode/config.yaml.example` 不被忽略。
+3. 忽略 `../../.mewcode/config.yaml`、`../../build`、`../../.gradle` 和 `../../.idea`。
+4. 保证 `../../.mewcode/config.yaml.example` 不被忽略。
 
 **验证：** 运行 `git check-ignore .mewcode/config.yaml` 应命中；运行 `git check-ignore .mewcode/config.yaml.example` 应不命中。
 
 ## T8：实现纯文本会话历史
 
-**文件：** `src/main/java/com/mewcode/conversation/Message.java`、`ConversationManager.java`  
+**文件：** `../../src/main/java/com/mewcode/conversation/Message.java`、`ConversationManager.java`  
 **依赖：** T1
 
 **步骤：**
@@ -157,7 +157,7 @@
 
 ## T9：验证会话顺序与封装
 
-**文件：** `src/test/java/com/mewcode/conversation/ConversationManagerTest.java`  
+**文件：** `../../src/test/java/com/mewcode/conversation/ConversationManagerTest.java`  
 **依赖：** T8
 
 **步骤：**
@@ -171,7 +171,7 @@
 
 ## T10：实现内置 System Prompt
 
-**文件：** `src/main/java/com/mewcode/prompt/PromptBuilder.java`  
+**文件：** `../../src/main/java/com/mewcode/prompt/PromptBuilder.java`  
 **依赖：** T1
 
 **步骤：**
@@ -185,7 +185,7 @@
 
 ## T11：定义统一流事件与接口
 
-**文件：** `src/main/java/com/mewcode/llm/StreamEvent.java`、`LlmClient.java`  
+**文件：** `../../src/main/java/com/mewcode/llm/StreamEvent.java`、`LlmClient.java`  
 **依赖：** T2、T8
 
 **步骤：**
@@ -197,7 +197,7 @@
 
 ## T12：构造 Anthropic 客户端与消息历史
 
-**文件：** `src/main/java/com/mewcode/llm/AnthropicClient.java`  
+**文件：** `../../src/main/java/com/mewcode/llm/AnthropicClient.java`  
 **依赖：** T10、T11
 
 **步骤：**
@@ -212,7 +212,7 @@
 
 ## T13：构造 Anthropic 普通与 Thinking 请求
 
-**文件：** `src/main/java/com/mewcode/llm/AnthropicClient.java`  
+**文件：** `../../src/main/java/com/mewcode/llm/AnthropicClient.java`  
 **依赖：** T12
 
 **步骤：**
@@ -226,7 +226,7 @@
 
 ## T14：解析 Anthropic 流式事件
 
-**文件：** `src/main/java/com/mewcode/llm/AnthropicClient.java`  
+**文件：** `../../src/main/java/com/mewcode/llm/AnthropicClient.java`  
 **依赖：** T13
 
 **步骤：**
@@ -241,7 +241,7 @@
 
 ## T15：清洗 Anthropic 错误
 
-**文件：** `src/main/java/com/mewcode/llm/AnthropicClient.java`  
+**文件：** `../../src/main/java/com/mewcode/llm/AnthropicClient.java`  
 **依赖：** T14
 
 **步骤：**
@@ -256,7 +256,7 @@
 
 ## T16：验证 Anthropic SSE 与 Thinking 隔离
 
-**文件：** `src/test/resources/sse/anthropic-thinking.txt`、`src/test/java/com/mewcode/llm/AnthropicClientTest.java`  
+**文件：** `../../src/test/resources/sse/anthropic-thinking.txt`、`../../src/test/java/com/mewcode/llm/AnthropicClientTest.java`  
 **依赖：** T15
 
 **步骤：**
@@ -271,7 +271,7 @@
 
 ## T17：构造 OpenAI Chat Completions 请求
 
-**文件：** `src/main/java/com/mewcode/llm/OpenAiClient.java`  
+**文件：** `../../src/main/java/com/mewcode/llm/OpenAiClient.java`  
 **依赖：** T10、T11
 
 **步骤：**
@@ -286,7 +286,7 @@
 
 ## T18：解析 OpenAI 流式正文
 
-**文件：** `src/main/java/com/mewcode/llm/OpenAiClient.java`  
+**文件：** `../../src/main/java/com/mewcode/llm/OpenAiClient.java`  
 **依赖：** T17
 
 **步骤：**
@@ -301,7 +301,7 @@
 
 ## T19：清洗 OpenAI 与兼容端点错误
 
-**文件：** `src/main/java/com/mewcode/llm/OpenAiClient.java`  
+**文件：** `../../src/main/java/com/mewcode/llm/OpenAiClient.java`  
 **依赖：** T18
 
 **步骤：**
@@ -316,7 +316,7 @@
 
 ## T20：验证 OpenAI 标准与自定义 Base URL
 
-**文件：** `src/test/resources/sse/openai-chat.txt`、`src/test/java/com/mewcode/llm/OpenAiClientTest.java`、`src/main/java/com/mewcode/llm/LlmClients.java`  
+**文件：** `../../src/test/resources/sse/openai-chat.txt`、`../../src/test/java/com/mewcode/llm/OpenAiClientTest.java`、`../../src/main/java/com/mewcode/llm/LlmClients.java`  
 **依赖：** T19
 
 **步骤：**
@@ -332,7 +332,7 @@
 
 ## T21：实现 Mordant Markdown 字符串渲染
 
-**文件：** `src/main/java/com/mewcode/tui/MarkdownRenderer.java`  
+**文件：** `../../src/main/java/com/mewcode/tui/MarkdownRenderer.java`  
 **依赖：** T1
 
 **步骤：**
@@ -347,7 +347,7 @@
 
 ## T22：验证 Markdown 内容与宽度
 
-**文件：** `src/test/java/com/mewcode/tui/MarkdownRendererTest.java`  
+**文件：** `../../src/test/java/com/mewcode/tui/MarkdownRendererTest.java`  
 **依赖：** T21
 
 **步骤：**
@@ -361,7 +361,7 @@
 
 ## T23：补齐终端按键与退出解析
 
-**文件：** `src/main/java/com/mewcode/tui/tea/Program.java`  
+**文件：** `../../src/main/java/com/mewcode/tui/tea/Program.java`  
 **依赖：** T1
 
 **步骤：**
@@ -376,7 +376,7 @@
 
 ## T24：定义 TUI 状态、消息和样式
 
-**文件：** `src/main/java/com/mewcode/tui/AppState.java`、`ChatMessage.java`、`Styles.java`、`SpinnerVerbs.java`  
+**文件：** `../../src/main/java/com/mewcode/tui/AppState.java`、`ChatMessage.java`、`Styles.java`、`SpinnerVerbs.java`  
 **依赖：** T1
 
 **步骤：**
@@ -391,7 +391,7 @@
 
 ## T25：实现单/多 Provider 启动状态
 
-**文件：** `src/main/java/com/mewcode/tui/MewCodeModel.java`  
+**文件：** `../../src/main/java/com/mewcode/tui/MewCodeModel.java`  
 **依赖：** T2、T10、T11、T16、T20、T24
 
 **步骤：**
@@ -406,7 +406,7 @@
 
 ## T26：实现 Banner 与空闲聊天布局
 
-**文件：** `src/main/java/com/mewcode/tui/MewCodeModel.java`  
+**文件：** `../../src/main/java/com/mewcode/tui/MewCodeModel.java`  
 **依赖：** T25
 
 **步骤：**
@@ -421,7 +421,7 @@
 
 ## T27：实现多行输入编辑
 
-**文件：** `src/main/java/com/mewcode/tui/MewCodeModel.java`  
+**文件：** `../../src/main/java/com/mewcode/tui/MewCodeModel.java`  
 **依赖：** T26
 
 **步骤：**
@@ -436,7 +436,7 @@
 
 ## T28：实现提交与启动流式请求
 
-**文件：** `src/main/java/com/mewcode/tui/MewCodeModel.java`  
+**文件：** `../../src/main/java/com/mewcode/tui/MewCodeModel.java`  
 **依赖：** T9、T23、T27
 
 **步骤：**
@@ -451,7 +451,7 @@
 
 ## T29：处理 Thinking、正文与实时计时
 
-**文件：** `src/main/java/com/mewcode/tui/MewCodeModel.java`  
+**文件：** `../../src/main/java/com/mewcode/tui/MewCodeModel.java`  
 **依赖：** T28
 
 **步骤：**
@@ -466,7 +466,7 @@
 
 ## T30：完成回复并 Markdown 定型
 
-**文件：** `src/main/java/com/mewcode/tui/MewCodeModel.java`  
+**文件：** `../../src/main/java/com/mewcode/tui/MewCodeModel.java`  
 **依赖：** T22、T29
 
 **步骤：**
@@ -481,7 +481,7 @@
 
 ## T31：实现可恢复错误展示
 
-**文件：** `src/main/java/com/mewcode/tui/MewCodeModel.java`  
+**文件：** `../../src/main/java/com/mewcode/tui/MewCodeModel.java`  
 **依赖：** T29
 
 **步骤：**
@@ -496,7 +496,7 @@
 
 ## T32：实现统一退出行为
 
-**文件：** `src/main/java/com/mewcode/tui/MewCodeModel.java`  
+**文件：** `../../src/main/java/com/mewcode/tui/MewCodeModel.java`  
 **依赖：** T28、T31
 
 **步骤：**
@@ -510,7 +510,7 @@
 
 ## T33：验证 Provider 选择与多行输入
 
-**文件：** `src/test/java/com/mewcode/tui/MewCodeModelTest.java`  
+**文件：** `../../src/test/java/com/mewcode/tui/MewCodeModelTest.java`  
 **依赖：** T27、T32
 
 **步骤：**
@@ -525,7 +525,7 @@
 
 ## T34：验证流式成功、Thinking 与错误恢复
 
-**文件：** `src/test/java/com/mewcode/tui/MewCodeModelTest.java`  
+**文件：** `../../src/test/java/com/mewcode/tui/MewCodeModelTest.java`  
 **依赖：** T30、T31、T33
 
 **步骤：**
@@ -540,12 +540,12 @@
 
 ## T35：装配应用入口
 
-**文件：** `src/main/java/com/mewcode/MewCode.java`  
+**文件：** `../../src/main/java/com/mewcode/MewCode.java`  
 **依赖：** T6、T25、T32
 
 **步骤：**
 
-1. 固定加载 `.mewcode/config.yaml`。
+1. 固定加载 `../../.mewcode/config.yaml`。
 2. 创建 MewCodeModel 与 Program 并运行。
 3. 配置错误时只向 stderr 输出 `MewCode: <safe message>`。
 4. 配置错误使用非零退出状态，不输出堆栈。
@@ -566,7 +566,7 @@
 4. 搜索源码，确认不存在工具、MCP、权限、远程、会话持久化入口。
 5. 搜索测试输出与源码日志，确认没有示例以外的密钥文本。
 
-**验证：** `./gradlew clean test shadowJar` 全部通过，生成 `build/libs/mewcode.jar`。
+**验证：** `./gradlew clean test shadowJar` 全部通过，生成 `../../build/libs/mewcode.jar`。
 
 ## 执行顺序
 
@@ -593,4 +593,98 @@ T30 + T31 + T33 → T34
 T6 + T25 + T32 → T35
 
 T7 + T9 + T16 + T20 + T22 + T23 + T34 + T35 → T36
+```
+
+---
+
+## 配置增量任务：DeepSeek OpenAI 兼容接口
+
+### 文件清单
+
+| 操作 | 文件 | 职责 |
+|---|---|---|
+| 修改 | `../../.mewcode/config.yaml` | 追加本机 DeepSeek provider，占位 Key 后由用户本地替换 |
+| 修改 | `../../.mewcode/config.yaml.example` | 追加可提交的 DeepSeek 安全示例 |
+| 不修改 | `src/main/java/com/mewcode/**` | 复用现有 OpenAI Chat Completions 适配链路 |
+| 不修改 | `src/test/java/com/mewcode/**` | 复用现有配置、协议和 TUI 测试 |
+
+### DT1：追加本地 DeepSeek Provider
+
+**文件：** `../../.mewcode/config.yaml`
+**依赖：** 无
+
+**步骤：**
+
+1. 保留现有 Claude 与 OpenAI provider 的顺序和字段。
+2. 在列表末尾追加名称为 `deepseek-openai` 的 provider。
+3. 设置 `protocol: openai`、`model: deepseek-v4-flash`。
+4. 设置官方端点 `https://api.deepseek.com`。
+5. 使用 `replace-with-deepseek-api-key` 占位，不接收或打印真实 Key。
+6. 显式设置 `thinking: false`。
+
+**验证：** 使用现有 `ConfigLoader` 加载本地配置，断言 provider 数量为 3、第三项字段正确且名称唯一。
+
+### DT2：更新安全配置模板
+
+**文件：** `../../.mewcode/config.yaml.example`
+**依赖：** 无
+
+**步骤：**
+
+1. 保留原有两个示例不变。
+2. 追加与 DT1 相同的 DeepSeek provider。
+3. `api_key` 只使用 `replace-with-deepseek-api-key`。
+4. 检查模板不存在真实密钥格式或本地配置内容泄漏。
+
+**验证：** `git check-ignore .mewcode/config.yaml.example` 返回未忽略；`git diff -- .mewcode/config.yaml.example` 只包含 DeepSeek 占位配置。
+
+### DT3：验证配置与现有测试
+
+**文件：** `src/test/java/com/mewcode/**`（只运行，不修改）
+**依赖：** DT1、DT2
+
+**步骤：**
+
+1. 运行配置加载测试。
+2. 运行全部自动测试。
+3. 构建 Shadow fat jar。
+4. 检查 `../../.mewcode/config.yaml` 仍被 Git 忽略。
+5. 检查 Git diff 中没有真实 API Key。
+
+**验证：** `./gradlew clean test shadowJar` 成功，24 个现有测试全部通过，`../../build/libs/mewcode.jar` 生成。
+
+### DT4：验证三 Provider TUI
+
+**文件：** `../../build/libs/mewcode.jar`（运行产物）
+**依赖：** DT3
+
+**步骤：**
+
+1. 使用项目 Java 21 toolchain 的绝对路径在 tmux 启动 MewCode。
+2. 确认选择页依次显示 Claude、OpenAI、DeepSeek 三项。
+3. 向下移动两次，确认第三项为 `deepseek-openai (deepseek-v4-flash)`。
+4. 按 Enter 后确认状态栏显示 DeepSeek provider 与模型。
+5. 输入 `/exit`，确认 shell 恢复正常。
+
+**验证：** tmux 捕获输出包含第三项及状态栏字段，退出后 pane 当前命令恢复为 shell。
+
+### DT5：验证真实 DeepSeek 对话
+
+**文件：** `../../.mewcode/config.yaml`（用户仅在 IDE 中替换占位 Key）
+**依赖：** DT4、用户完成本地 Key 替换
+
+**步骤：**
+
+1. 检查占位符已被用户本地替换，但不读取、不打印 Key。
+2. 在 tmux 启动 MewCode 并选择第三项。
+3. 发送一条真实、短小的对话请求。
+4. 观察正文按流式增量显示，完成后输入框恢复。
+5. 输入 `/exit` 并确认终端状态恢复。
+
+**验证：** tmux 观察到 DeepSeek 返回正文、完成耗时和恢复后的输入框；任何输出均不包含 API Key。
+
+### 增量执行顺序
+
+```text
+DT1 + DT2 → DT3 → DT4 → 用户在 IDE 中替换 Key → DT5
 ```

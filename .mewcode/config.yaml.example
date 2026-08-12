@@ -12,3 +12,10 @@ providers:
     base_url: https://api.openai.com/v1
     api_key: replace-me
     thinking: false
+
+  - name: deepseek-openai
+    protocol: openai
+    model: deepseek-v4-flash
+    base_url: https://api.deepseek.com
+    api_key: replace-with-deepseek-api-key
+    thinking: false

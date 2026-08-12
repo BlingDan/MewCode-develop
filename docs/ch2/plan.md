@@ -8,7 +8,7 @@
    确定项目配置路径，加载并校验配置，创建应用模型与终端运行时。配置失败时输出安全、可读的启动错误。
 
 2. **配置层 `config`**  
-   将 YAML 映射为强类型配置，校验 provider 列表、六个字段、名称唯一性和协议值。只读取当前工作目录下的 `.mewcode/config.yaml`。
+   将 YAML 映射为强类型配置，校验 provider 列表、六个字段、名称唯一性和协议值。只读取当前工作目录下的 `../../.mewcode/config.yaml`。
 
 3. **会话层 `conversation`**  
    保存当前进程内的纯文本用户/助手消息，为 provider 提供不可修改的历史快照。
@@ -239,7 +239,7 @@ public final class MarkdownRenderer {
 
 **行为：**
 
-- 入口固定传入 `.mewcode/config.yaml`。
+- 入口固定传入 `../../.mewcode/config.yaml`。
 - SnakeYAML 将 snake_case 字段绑定到 JavaBean。
 - 校验 `providers` 存在且非空。
 - 每项校验 `name`、`protocol`、`model`、`api_key` 非空。
@@ -408,7 +408,7 @@ public final class MarkdownRenderer {
 
 **流程：**
 
-1. 加载 `.mewcode/config.yaml`。
+1. 加载 `../../.mewcode/config.yaml`。
 2. 创建 `MewCodeModel`。
 3. 创建 `Program`。
 4. 运行 TUI。
@@ -626,7 +626,7 @@ Mewcode-develop/
 - `StreamPollMessage` 作为 `MewCodeModel` 的嵌套 record，不单独建文件。
 - `ConfigException` 作为 `ConfigLoader` 的静态内部类。
 - 不创建 `agent`、`tool`、`permission`、`mcp`、`remote`、`session` 或 `dialog` 目录。
-- `.mewcode/config.yaml` 保存真实密钥并被忽略；仓库只提交 example。
+- `../../.mewcode/config.yaml` 保存真实密钥并被忽略；仓库只提交 example。
 
 ## 技术决策
 
@@ -690,3 +690,101 @@ providers:
 ```
 
 `base_url` 可省略；示例密钥只使用占位符。
+
+---
+
+## 配置增量设计：DeepSeek OpenAI 兼容接口
+
+### 架构概览
+
+本次不新增模块。配置与请求链路保持不变：
+
+```text
+.mewcode/config.yaml
+        ↓
+ConfigLoader 校验
+        ↓
+Provider 选择页
+        ↓
+LlmClients（protocol: openai）
+        ↓
+OpenAiClient（自定义 base_url）
+        ↓
+DeepSeek /chat/completions 流式接口
+```
+
+版本库中的 `../../.mewcode/config.yaml.example` 只提供相同字段的安全示例，不参与运行。Java 源码、依赖和协议分派均不修改。
+
+### 核心配置结构
+
+两份配置新增完全相同的 provider 结构：
+
+```yaml
+- name: deepseek-openai
+  protocol: openai
+  model: deepseek-v4-flash
+  base_url: https://api.deepseek.com
+  api_key: replace-with-deepseek-api-key
+  thinking: false
+```
+
+字段含义：
+
+- `protocol: openai` 复用 `LlmClients` 到 `OpenAiClient` 的现有分派。
+- OpenAI SDK 在 `base_url` 后请求 `/chat/completions`。
+- `thinking: false` 明确记录当前行为；现有 OpenAI 客户端不会发送 DeepSeek 专用 thinking 参数。
+- 本地文件中的占位符由用户在 IDE 中替换；example 永远保留占位符。
+
+### 模块设计
+
+#### 本地运行配置
+
+**文件：** `../../.mewcode/config.yaml`
+
+**职责：** 提供三个可选 provider。追加 DeepSeek 项，不改动现有项；真实 Key 由用户本地替换。
+
+#### 安全示例配置
+
+**文件：** `../../.mewcode/config.yaml.example`
+
+**职责：** 展示标准 Anthropic、OpenAI、DeepSeek 三种配置；所有 Key 均为占位符。
+
+#### 既有配置层
+
+**组件：** `ConfigLoader`
+
+**行为：** 不修改。现有协议白名单包含 `openai`，官方 HTTPS 地址合法，名称唯一，新增配置可直接通过。
+
+#### 既有 LLM 层
+
+**组件：** `LlmClients`、`OpenAiClient`
+
+**行为：** 不修改。选择 DeepSeek 后按 OpenAI 协议构造客户端；自定义 `base_url` 覆盖 OpenAI 默认地址并保持流式 Chat Completions 路径。
+
+### 模块交互
+
+1. 启动时读取三个 provider。
+2. 选择页按原顺序显示 Claude、OpenAI、DeepSeek。
+3. 用户向下移动两次并确认 DeepSeek。
+4. 用户提交消息后，现有 OpenAI SDK 向 DeepSeek 官方端点发起流式请求。
+5. 流事件继续通过现有 `StreamEvent` 和 TUI 路径展示。
+
+### 文件组织
+
+```text
+.mewcode/
+├── config.yaml          # 本机运行配置，Git 忽略
+└── config.yaml.example  # 仓库安全示例
+```
+
+### 技术决策
+
+| 决策点 | 选择 | 理由 |
+|---|---|---|
+| 协议 | `openai` | DeepSeek 官方兼容 Chat Completions，现有客户端可直接复用 |
+| 模型 | `deepseek-v4-flash` | 用户指定，DeepSeek 官方当前有效模型 |
+| Base URL | `https://api.deepseek.com` | DeepSeek 官方 OpenAI 格式端点 |
+| Provider 策略 | 追加第三项 | 保留现有配置，支持回退和对照测试 |
+| Key 管理 | 本地占位后由用户替换 | 避免密钥进入对话、补丁和 Git |
+| Thinking | 本轮关闭 | 当前客户端不发送 DeepSeek 专用 thinking 参数，避免配置含义误导 |
+| 测试 | 配置加载 + Java 21 tmux | 同时验证结构正确和 TUI 可选择性 |

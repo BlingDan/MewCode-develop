@@ -20,7 +20,7 @@ MewCode 是一个从零构建的、类似 Claude Code 的终端 AI 助手。本�
 ## 功能需求
 
 - **F1 配置加载**  
-  启动时从项目当前目录下的 `.mewcode/config.yaml` 读取 `providers` 列表。每项包含六个字段：`name`、`protocol`、`model`、`base_url`、`api_key`、可选的 `thinking`。`base_url` 可留空以使用协议默认地址；`api_key` 按 YAML 原值读取，不解析环境变量。配置缺失、格式错误或必要字段无效时，显示明确错误并终止启动。
+  启动时从项目当前目录下的 `../../.mewcode/config.yaml` 读取 `providers` 列表。每项包含六个字段：`name`、`protocol`、`model`、`base_url`、`api_key`、可选的 `thinking`。`base_url` 可留空以使用协议默认地址；`api_key` 按 YAML 原值读取，不解析环境变量。配置缺失、格式错误或必要字段无效时，显示明确错误并终止启动。
 
 - **F2 Provider 选择**  
   只有一个 provider 时直接进入对话；存在多个 provider 时，启动后显示可用方向键操作的选择列表，列出各 provider 的名称与模型。用户确认后，该 provider 在本次会话内保持不变。
@@ -111,7 +111,7 @@ MewCode 是一个从零构建的、类似 Claude Code 的终端 AI 助手。本�
 ## 验收标准
 
 - **AC1（F1）配置加载**  
-  在项目目录提供合法的 `.mewcode/config.yaml` 且只有一个 provider 时，程序可直接进入对话。分别测试文件缺失、YAML 损坏、列表为空、名称重复、协议未知及必要字段缺失，程序均显示能定位问题的错误并以非零状态退出，不出现未处理异常堆栈。
+  在项目目录提供合法的 `../../.mewcode/config.yaml` 且只有一个 provider 时，程序可直接进入对话。分别测试文件缺失、YAML 损坏、列表为空、名称重复、协议未知及必要字段缺失，程序均显示能定位问题的错误并以非零状态退出，不出现未处理异常堆栈。
 
 - **AC2（F2）Provider 选择**  
   配置两个 provider 后启动，界面显示包含名称和模型的选择列表；方向键能够改变选中项，按 `Enter` 后进入对话，状态栏显示所选 provider，且会话过程中不会自行切换。
@@ -150,10 +150,85 @@ MewCode 是一个从零构建的、类似 Claude Code 的终端 AI 助手。本�
   使用延迟响应和长流式回复测试时，动画及计时持续更新，窗口仍可调整、对话仍可滚动、`Ctrl+C` 仍可退出，界面没有持续冻结。
 
 - **AC14（N5）密钥保护**  
-  在正常调用、配置错误、鉴权失败和异常响应场景中检查全部终端输出，均找不到完整 API 密钥；真实 `.mewcode/config.yaml` 不会被版本控制追踪。
+  在正常调用、配置错误、鉴权失败和异常响应场景中检查全部终端输出，均找不到完整 API 密钥；真实 `../../.mewcode/config.yaml` 不会被版本控制追踪。
 
 - **AC15（N6、N7）终端兼容**  
   在常见 ANSI 终端中运行并动态改变窗口宽度，布局能够重新适配，窄屏不崩溃。每种退出路径结束后，终端输入、光标和回显均恢复正常。
 
 - **AC16（N8、N9）边界与扩展性**  
   Anthropic 与 OpenAI 均通过同一对话入口完成上述场景；最终程序不包含任何用户可触达的工具调用、文件操作、MCP、权限、远程模式或会话持久化功能。
+
+---
+
+## 配置增量：DeepSeek OpenAI 兼容接口
+
+### 背景
+
+当前项目配置包含 Anthropic 与标准 OpenAI provider，但本地尚未配置可用的对应 API Key。用户已有 DeepSeek API Key，且 DeepSeek 官方提供 OpenAI Chat Completions 兼容接口，现有 `openai` 协议可以直接复用。
+
+### 目标
+
+- 保留现有 Claude 与 OpenAI provider。
+- 新增可选择的 DeepSeek OpenAI 兼容 provider。
+- 使用 `deepseek-v4-flash` 模型和 DeepSeek 官方端点。
+- 真实 API Key 只保存在被 Git 忽略的本地配置中，仓库模板只使用占位符。
+
+### 功能需求
+
+- **DF1 本地 Provider**
+  在 `../../.mewcode/config.yaml` 末尾新增 `deepseek-openai`，使用 `protocol: openai`、`model: deepseek-v4-flash`、`base_url: https://api.deepseek.com`、`thinking: false`。
+
+- **DF2 密钥处理**
+  新增项先使用 `replace-with-deepseek-api-key`。用户在 IDE 中本地替换后才能进行真实调用，任何日志、报告和版本库文件都不得包含真实 Key。
+
+- **DF3 示例模板**
+  在 `../../.mewcode/config.yaml.example` 中加入同样的 DeepSeek 示例，并始终使用占位符。
+
+- **DF4 兼容行为**
+  保留现有 Claude 与 OpenAI provider，不改变顺序或字段；DeepSeek 作为第三项出现在启动选择页。
+
+- **DF5 实现边界**
+  复用现有 OpenAI Chat Completions 客户端，不新增协议类型，不修改 Java 业务逻辑。
+
+### 非功能需求
+
+- **DN1 密钥安全**
+  真实 DeepSeek Key 只能存在于被 Git 忽略的 `../../.mewcode/config.yaml`，不得进入 example、终端捕获、测试报告或 Git diff。
+
+- **DN2 最小改动**
+  除两份 YAML 配置外不修改源码、依赖和运行逻辑。
+
+- **DN3 配置兼容**
+  修改后必须继续通过现有配置加载校验，三个 provider 名称保持唯一。
+
+- **DN4 官方端点**
+  仅使用 DeepSeek 官方 OpenAI 兼容地址 `https://api.deepseek.com`，不使用历史 `/v1` 或第三方代理地址。
+
+- **DN5 可回退性**
+  原 Claude/OpenAI 配置保持原样，DeepSeek 配置不可用时仍可选择其他 provider。
+
+### 不做的事
+
+- 不新增 `deepseek` 协议或专用 Java 客户端。
+- 不删除或替换现有 Claude/OpenAI provider。
+- 不接入 DeepSeek Anthropic 兼容接口。
+- 不扩展 OpenAI thinking/reasoning 参数，也不解析 `reasoning_content`。
+- 不把真实 API Key 写入聊天、模板或版本控制。
+- 不处理此前审查发现的流式终止、scrollback 等代码问题。
+
+### 验收标准
+
+- **DAC1（DF1、DF3、DN3）**
+  两份 YAML 均包含第三个 `deepseek-openai` provider，字段值与 DF1 一致，并能通过现有配置加载校验。
+
+- **DAC2（DF2、DN1）**
+  `../../.mewcode/config.yaml.example` 只含占位密钥；`../../.mewcode/config.yaml` 继续被 Git 忽略，Git diff 中不存在真实 Key。
+
+- **DAC3（DF4）**
+  使用 Java 21 启动 MewCode 后，provider 选择页依次显示 Claude、OpenAI、DeepSeek Flash 三项。
+
+- **DAC4（DF1、DF2）**
+  用户在本地替换 DeepSeek Key 后，通过 tmux 选择 DeepSeek，发送真实对话请求，能够收到流式正文并安全退出。
+
+- **DAC5（DF5、DN2、DN5）**
+  `./gradlew test` 全部通过，现有 Claude/OpenAI 行为未回归。

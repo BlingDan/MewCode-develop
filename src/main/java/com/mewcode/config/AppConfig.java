@@ -7,6 +7,7 @@ import java.util.List;
 public final class AppConfig {
 
     private List<ProviderConfig> providers = new ArrayList<>();
+    private AgentConfig agent = new AgentConfig();
 
     public List<ProviderConfig> getProviders() {
         return providers;
@@ -14,5 +15,13 @@ public final class AppConfig {
 
     public void setProviders(List<ProviderConfig> providers) {
         this.providers = providers == null ? new ArrayList<>() : providers;
+    }
+
+    public AgentConfig getAgent() {
+        return agent;
+    }
+
+    public void setAgent(AgentConfig agent) {
+        this.agent = agent == null ? new AgentConfig() : agent;
     }
 }

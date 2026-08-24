@@ -2,6 +2,7 @@ package com.mewcode.llm;
 
 import com.mewcode.config.ProviderConfig;
 import com.mewcode.conversation.ConversationManager;
+import com.mewcode.conversation.ThinkingBlock;
 import com.mewcode.prompt.PromptBuilder;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -44,13 +45,32 @@ class AnthropicClientTest {
 
             assertInstanceOf(StreamEvent.ThinkingDelta.class, events.get(0));
             assertEquals("HIDDEN_THOUGHT", ((StreamEvent.ThinkingDelta) events.get(0)).text());
-            assertEquals("Hello ", ((StreamEvent.TextDelta) events.get(1)).text());
-            assertEquals("Claude", ((StreamEvent.TextDelta) events.get(2)).text());
-            assertInstanceOf(StreamEvent.StreamEnd.class, events.get(3));
+            var text = events.stream()
+                    .filter(event -> event instanceof StreamEvent.TextDelta)
+                    .map(event -> ((StreamEvent.TextDelta) event).text())
+                    .toList();
+            assertEquals(List.of("Hello ", "Claude"), text);
+            var usage = events.stream()
+                    .filter(event -> event instanceof StreamEvent.Usage)
+                    .map(event -> (StreamEvent.Usage) event)
+                    .findFirst()
+                    .orElseThrow();
+            assertEquals(8, usage.inputTokens().orElseThrow());
+            assertEquals(12, usage.outputTokens().orElseThrow());
+            assertInstanceOf(StreamEvent.StreamEnd.class, events.getLast());
             assertTrue(body.get().contains(projectRoot));
             assertTrue(body.get().contains("\"thinking\""));
             assertTrue(body.get().contains("first"));
             assertTrue(body.get().contains("second"));
+
+            var withThinking = new ConversationManager();
+            withThinking.addAssistantMessage(List.of(
+                    new ThinkingBlock("HIDDEN_THOUGHT", "dGVzdA==")));
+            withThinking.addUserMessage("continue");
+            collect(new AnthropicClient(provider,
+                    PromptBuilder.buildSystemPrompt(Path.of(projectRoot))).stream(withThinking));
+            assertTrue(body.get().contains("HIDDEN_THOUGHT"), body.get());
+            assertTrue(body.get().contains("dGVzdA=="), body.get());
         } finally {
             server.stop(0);
         }
@@ -78,7 +98,12 @@ class AnthropicClientTest {
             assertEquals("toolu_1", call.toolUseId());
             assertEquals("ReadFile", call.toolName());
             assertEquals("/tmp/main.py", call.arguments().get("path"));
-            assertEquals("tool_use", ((StreamEvent.StreamEnd) events.get(1)).stopReason());
+            var end = events.stream()
+                    .filter(event -> event instanceof StreamEvent.StreamEnd)
+                    .map(event -> (StreamEvent.StreamEnd) event)
+                    .findFirst()
+                    .orElseThrow();
+            assertEquals("tool_use", end.stopReason());
             assertTrue(body.get().contains("\"tools\""), body.get());
             assertTrue(body.get().contains("ReadFile"), body.get());
         } finally {

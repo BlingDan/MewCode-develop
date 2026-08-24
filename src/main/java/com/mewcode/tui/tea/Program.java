@@ -63,6 +63,8 @@ public class Program {
 
         running = true;
 
+        // Ctrl+C 统一由 INT 信号转换为按键消息。部分终端同时会把 0x03 放入
+        // raw reader，因此 parseInput 不再重复投递同一个 Ctrl+C。
         terminal.handle(Terminal.Signal.INT, sig ->
                 msgQueue.offer(new KeyPressMessage("ctrl+c", null)));
         terminal.handle(Terminal.Signal.WINCH, sig -> {
@@ -267,7 +269,7 @@ public class Program {
         }
         if (c == 0x0D || c == 0x0A) return key("enter");
         if (c == 0x09) return key("tab");
-        if (c == 0x03) return key("ctrl+c");
+        // Ctrl+C 由上面的 INT handler 统一处理，避免同一次按键重复入队。
         if (c == 0x08) return key("ctrl+h");
         if (c == 0x0F) return key("ctrl+o");
         if (c >= 1 && c <= 26) return key("ctrl+" + (char) ('a' + c - 1));

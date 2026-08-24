@@ -1,5 +1,7 @@
 package com.mewcode.tool;
 
+import com.mewcode.agent.CancellationToken;
+import com.mewcode.agent.ToolPolicy;
 import com.mewcode.tool.impl.EditFileTool;
 import com.mewcode.tool.impl.GlobTool;
 import com.mewcode.tool.impl.GrepTool;
@@ -133,6 +135,47 @@ class ToolExecutorTest {
         }
     }
 
+    @Test
+    void rejectsToolDisabledByPlanPolicyBeforeExecution() {
+        var executions = new AtomicInteger();
+        var registry = new ToolRegistry();
+        registry.register(new TestTool("Write", false, executions, null, 0, null, null, false));
+        var token = new CancellationToken();
+
+        try (var executor = new ToolExecutor(registry, context())) {
+            ToolInvocationResult result = executor.executeSingle(
+                    new ToolCall("write-1", "Write", Map.of()),
+                    ToolPolicy.forMode(com.mewcode.agent.AgentMode.PLAN), token);
+
+            assertTrue(result.result().isError());
+            assertTrue(result.result().content().contains("当前模式"));
+            assertEquals(0, executions.get());
+        }
+    }
+
+    @Test
+    void cancellationReturnsWithoutWaitingForToolTimeout() throws Exception {
+        var started = new CountDownLatch(1);
+        var registry = new ToolRegistry();
+        registry.register(new TestTool("Blocking", true, new AtomicInteger(), started,
+                10_000, null));
+        var token = new CancellationToken();
+
+        try (var executor = new ToolExecutor(registry, context())) {
+            try (var waiter = Executors.newVirtualThreadPerTaskExecutor()) {
+                Future<List<ToolInvocationResult>> future = waiter.submit(() -> executor.executeBatch(
+                        List.of(new ToolCall("blocking-1", "Blocking", Map.of())),
+                        ToolPolicy.forMode(com.mewcode.agent.AgentMode.EXECUTE), token));
+                assertTrue(started.await(1, TimeUnit.SECONDS));
+                token.cancel();
+
+                List<ToolInvocationResult> result = future.get(1, TimeUnit.SECONDS);
+                assertTrue(result.getFirst().result().isError());
+                assertTrue(result.getFirst().result().content().contains("取消"));
+            }
+        }
+    }
+
     private ToolExecutionContext context() {
         return new ToolExecutionContext(tempDir, Duration.ofSeconds(2), new FileStateCache());
     }
@@ -145,6 +188,7 @@ class ToolExecutorTest {
         private final int delayMillis;
         private final String validation;
         private final CountDownLatch release;
+        private final boolean readOnly;
 
         private TestTool(String name, boolean safe, AtomicInteger executions,
                          CountDownLatch started, int delayMillis, String validation) {
@@ -154,6 +198,12 @@ class ToolExecutorTest {
         private TestTool(String name, boolean safe, AtomicInteger executions,
                          CountDownLatch started, int delayMillis, String validation,
                          CountDownLatch release) {
+            this(name, safe, executions, started, delayMillis, validation, release, true);
+        }
+
+        private TestTool(String name, boolean safe, AtomicInteger executions,
+                         CountDownLatch started, int delayMillis, String validation,
+                         CountDownLatch release, boolean readOnly) {
             this.name = name;
             this.safe = safe;
             this.executions = executions;
@@ -161,6 +211,7 @@ class ToolExecutorTest {
             this.delayMillis = delayMillis;
             this.validation = validation;
             this.release = release;
+            this.readOnly = readOnly;
         }
 
         @Override
@@ -199,7 +250,7 @@ class ToolExecutorTest {
         }
 
         @Override
-        public boolean isReadOnly() { return true; }
+        public boolean isReadOnly() { return readOnly; }
 
         @Override
         public boolean isDestructive() { return false; }

@@ -7,6 +7,7 @@ import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.models.messages.MessageParam;
 import com.anthropic.models.messages.RawMessageStreamEvent;
 import com.anthropic.models.messages.TextBlockParam;
+import com.anthropic.models.messages.ThinkingBlockParam;
 import com.anthropic.models.messages.ThinkingConfigEnabled;
 import com.anthropic.models.messages.Tool;
 import com.anthropic.models.messages.ToolResultBlockParam;
@@ -16,6 +17,7 @@ import com.mewcode.conversation.ContentBlock;
 import com.mewcode.conversation.ConversationManager;
 import com.mewcode.conversation.Message;
 import com.mewcode.conversation.TextBlock;
+import com.mewcode.conversation.ThinkingBlock;
 import com.mewcode.conversation.ToolResultBlock;
 import com.mewcode.conversation.ToolUseBlock;
 
@@ -23,8 +25,11 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalLong;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /** Anthropic Messages API 适配器。 */
 public final class AnthropicClient implements LlmClient {
@@ -53,13 +58,35 @@ public final class AnthropicClient implements LlmClient {
     }
 
     @Override
-    public BlockingQueue<StreamEvent> stream(List<Message> messages,
-                                             List<Map<String, Object>> apiTools) {
+    public CancellableLlmStream openStream(List<Message> messages,
+                                           List<Map<String, Object>> apiTools) {
+        return openStream(messages, apiTools, systemPrompt);
+    }
+
+    @Override
+    public CancellableLlmStream openStream(ConversationManager conversation,
+                                           List<Map<String, Object>> apiTools,
+                                           String prompt) {
+        return openStream(conversation.getMessages(), apiTools, prompt);
+    }
+
+    private CancellableLlmStream openStream(List<Message> messages,
+                                            List<Map<String, Object>> apiTools,
+                                            String prompt) {
         var queue = new LinkedBlockingQueue<StreamEvent>(QUEUE_CAPACITY);
         List<Message> snapshot = messages == null ? List.of() : List.copyOf(messages);
         List<Map<String, Object>> tools = apiTools == null ? List.of() : List.copyOf(apiTools);
-        Thread.startVirtualThread(() -> streamInCurrentThread(snapshot, tools, queue));
-        return queue;
+        var control = new StreamControl();
+        Thread worker = Thread.startVirtualThread(() ->
+                streamInCurrentThread(snapshot, tools, prompt, queue, control));
+        control.worker(worker);
+        return new CancellableLlmStream(queue, control::close);
+    }
+
+    @Override
+    public BlockingQueue<StreamEvent> stream(List<Message> messages,
+                                             List<Map<String, Object>> apiTools) {
+        return openStream(messages, apiTools).events();
     }
 
     @Override
@@ -70,12 +97,14 @@ public final class AnthropicClient implements LlmClient {
 
     private void streamInCurrentThread(List<Message> messages,
                                        List<Map<String, Object>> apiTools,
-                                       BlockingQueue<StreamEvent> queue) {
+                                       String prompt,
+                                       BlockingQueue<StreamEvent> queue,
+                                       StreamControl control) {
         try {
             MessageCreateParams.Builder params = MessageCreateParams.builder()
                     .model(model)
                     .maxTokens(thinking ? THINKING_MAX_TOKENS : DEFAULT_MAX_TOKENS)
-                    .system(systemPrompt)
+                    .system(prompt == null ? systemPrompt : prompt)
                     .messages(buildMessages(messages));
             for (Map<String, Object> definition : apiTools) {
                 params.addTool(toAnthropicTool(definition));
@@ -87,20 +116,34 @@ public final class AnthropicClient implements LlmClient {
             }
 
             String stopReason = "end_turn";
+            OptionalLong inputTokens = OptionalLong.empty();
+            OptionalLong outputTokens = OptionalLong.empty();
             var accumulator = new ToolCallAccumulator();
             var blockIndexToId = new HashMap<Long, String>();
             try (StreamResponse<RawMessageStreamEvent> response =
                          client.messages().createStreaming(params.build())) {
+                control.response(response);
+                if (control.isClosed()) return;
                 var iterator = response.stream().iterator();
                 while (iterator.hasNext()) {
+                    if (control.isClosed()) return;
                     RawMessageStreamEvent event = iterator.next();
-                    if (event.isContentBlockStart()) {
+                    if (event.isMessageStart()) {
+                        var usage = event.asMessageStart().message().usage();
+                        inputTokens = OptionalLong.of(usage.inputTokens());
+                        outputTokens = OptionalLong.of(usage.outputTokens());
+                    } else if (event.isContentBlockStart()) {
                         var block = event.asContentBlockStart().contentBlock();
                         if (block.isToolUse()) {
                             var toolUse = block.asToolUse();
                             String id = toolUse.id();
                             blockIndexToId.put(event.asContentBlockStart().index(), id);
                             accumulator.start(id, toolUse.name());
+                        } else if (block.isThinking()) {
+                            String signature = block.asThinking().signature();
+                            if (!signature.isBlank()) {
+                                putEvent(queue, new StreamEvent.ThinkingDelta("", signature));
+                            }
                         }
                     } else if (event.isContentBlockDelta()) {
                         var deltaEvent = event.asContentBlockDelta();
@@ -109,6 +152,9 @@ public final class AnthropicClient implements LlmClient {
                             putEvent(queue, new StreamEvent.TextDelta(delta.asText().text()));
                         } else if (delta.isThinking()) {
                             putEvent(queue, new StreamEvent.ThinkingDelta(delta.asThinking().thinking()));
+                        } else if (delta.isSignature()) {
+                            putEvent(queue, new StreamEvent.ThinkingDelta("",
+                                    delta.asSignature().signature()));
                         } else if (delta.isInputJson()) {
                             String id = blockIndexToId.get(deltaEvent.index());
                             if (id != null) accumulator.append(id, delta.asInputJson().partialJson());
@@ -120,15 +166,20 @@ public final class AnthropicClient implements LlmClient {
                     } else if (event.isMessageDelta()) {
                         var reason = event.asMessageDelta().delta().stopReason();
                         if (reason.isPresent()) stopReason = reason.get().asString();
+                        outputTokens = OptionalLong.of(event.asMessageDelta().usage().outputTokens());
                     }
                 }
             }
+            if (control.isClosed()) return;
             for (StreamEvent event : accumulator.finishAll()) putEvent(queue, event);
+            if (inputTokens.isPresent() || outputTokens.isPresent()) {
+                putEvent(queue, new StreamEvent.Usage(inputTokens, outputTokens));
+            }
             putEvent(queue, new StreamEvent.StreamEnd(stopReason));
         } catch (InterruptedException error) {
-            Thread.currentThread().interrupt();
+            if (!control.isClosed()) Thread.currentThread().interrupt();
         } catch (Exception error) {
-            putError(queue, safeError(error));
+            if (!control.isClosed()) putError(queue, safeError(error));
         }
     }
 
@@ -149,6 +200,12 @@ public final class AnthropicClient implements LlmClient {
                             .id(toolUse.toolUseId())
                             .name(toolUse.toolName())
                             .input(input)
+                            .build()));
+                } else if (block instanceof ThinkingBlock thinkingBlock
+                        && !thinkingBlock.signature().isBlank()) {
+                    blocks.add(ContentBlockParam.ofThinking(ThinkingBlockParam.builder()
+                            .thinking(thinkingBlock.text())
+                            .signature(thinkingBlock.signature())
                             .build()));
                 } else if (block instanceof ToolResultBlock toolResult) {
                     blocks.add(ContentBlockParam.ofToolResult(ToolResultBlockParam.builder()
@@ -236,6 +293,45 @@ public final class AnthropicClient implements LlmClient {
             queue.put(new StreamEvent.Error(message));
         } catch (InterruptedException error) {
             Thread.currentThread().interrupt();
+        }
+    }
+
+    private static final class StreamControl {
+        private final AtomicBoolean closed = new AtomicBoolean();
+        private final AtomicReference<AutoCloseable> response = new AtomicReference<>();
+        private final AtomicReference<Thread> worker = new AtomicReference<>();
+
+        private void worker(Thread thread) {
+            worker.set(thread);
+            if (closed.get()) thread.interrupt();
+        }
+
+        private void response(AutoCloseable value) {
+            if (!response.compareAndSet(null, value)) return;
+            if (closed.get()) closeQuietly(value);
+        }
+
+        private boolean isClosed() {
+            return closed.get();
+        }
+
+        private void close() {
+            if (!closed.compareAndSet(false, true)) return;
+            AutoCloseable currentResponse = response.get();
+            if (currentResponse != null) {
+                Thread.startVirtualThread(() -> closeQuietly(currentResponse));
+            }
+            Thread thread = worker.get();
+            if (thread != null) thread.interrupt();
+        }
+
+        private static void closeQuietly(AutoCloseable closeable) {
+            if (closeable == null) return;
+            try {
+                closeable.close();
+            } catch (Exception ignored) {
+                // provider close 是 best-effort。
+            }
         }
     }
 }

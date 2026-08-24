@@ -1,6 +1,10 @@
 package com.mewcode.tui;
 
 import com.mewcode.agent.AgentEvent;
+import com.mewcode.agent.AgentEventStream;
+import com.mewcode.agent.AgentLoopConfig;
+import com.mewcode.agent.AgentMode;
+import com.mewcode.agent.AgentRun;
 import com.mewcode.agent.AgentTurnCoordinator;
 import com.mewcode.config.ProviderConfig;
 import com.mewcode.conversation.ConversationManager;
@@ -23,7 +27,6 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
 import java.util.Objects;
@@ -34,10 +37,13 @@ public final class MewCodeModel implements Model {
     public static final String VERSION = "0.1.0";
     private static final Duration POLL_INTERVAL = Duration.ofMillis(50);
     private static final String[] SPINNER = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
+    // streaming view 还要保留状态栏、输入框和 spinner，正文只能占剩余行数。
+    private static final int STREAMING_FIXED_LINES = 10;
 
     private final List<ProviderConfig> providers;
     private final Path projectRoot;
     private final BiFunction<ProviderConfig, String, LlmClient> clientFactory;
+    private final AgentLoopConfig loopConfig;
     private final ConversationManager conversation = new ConversationManager();
     private final List<ChatMessage> chatMessages = new ArrayList<>();
     private final StringBuilder inputBuffer = new StringBuilder();
@@ -46,7 +52,8 @@ public final class MewCodeModel implements Model {
     private AppState state;
     private ProviderConfig selectedProvider;
     private LlmClient client;
-    private BlockingQueue<AgentEvent> streamQueue;
+    private AgentRun activeRun;
+    private AgentEventStream streamEvents;
     private ToolExecutor toolExecutor;
     private AgentTurnCoordinator coordinator;
     private int providerCursor;
@@ -61,6 +68,10 @@ public final class MewCodeModel implements Model {
     private boolean bannerPrinted;
     private boolean singleProviderPending;
     private String initializationError;
+    private AgentMode agentMode = AgentMode.EXECUTE;
+    private int currentIteration;
+    private String pendingStreamError;
+    private String usageLabel = "Token 用量：unknown";
 
     public record StreamPollMessage() implements Message {}
 
@@ -74,17 +85,25 @@ public final class MewCodeModel implements Model {
 
     MewCodeModel(List<ProviderConfig> providers,
                  BiFunction<ProviderConfig, String, LlmClient> clientFactory) {
-        this(providers, currentProjectRoot(), clientFactory);
+        this(providers, currentProjectRoot(), clientFactory, new AgentLoopConfig());
     }
 
     MewCodeModel(List<ProviderConfig> providers,
                  Path projectRoot,
                  BiFunction<ProviderConfig, String, LlmClient> clientFactory) {
+        this(providers, projectRoot, clientFactory, new AgentLoopConfig());
+    }
+
+    public MewCodeModel(List<ProviderConfig> providers,
+                        Path projectRoot,
+                        BiFunction<ProviderConfig, String, LlmClient> clientFactory,
+                        AgentLoopConfig loopConfig) {
         this.providers = providers == null ? List.of() : List.copyOf(providers);
         this.projectRoot = Objects.requireNonNull(projectRoot, "projectRoot")
                 .toAbsolutePath()
                 .normalize();
         this.clientFactory = Objects.requireNonNull(clientFactory, "clientFactory");
+        this.loopConfig = Objects.requireNonNull(loopConfig, "loopConfig").copy();
         if (this.providers.size() == 1) {
             selectedProvider = this.providers.getFirst();
             state = AppState.CHAT;
@@ -102,7 +121,11 @@ public final class MewCodeModel implements Model {
     @Override
     public UpdateResult<MewCodeModel> update(Message message) {
         if (message instanceof KeyPressMessage key && "ctrl+c".equals(key.key())) {
+            if (streaming) return cancelStream();
             return UpdateResult.from(this, QuitMessage::new);
+        }
+        if (message instanceof KeyPressMessage key && "escape".equals(key.key())) {
+            return streaming ? cancelStream() : UpdateResult.from(this);
         }
 
         if (message instanceof WindowSizeMessage size) {
@@ -173,7 +196,9 @@ public final class MewCodeModel implements Model {
                     ? ToolApiProtocol.ANTHROPIC
                     : ToolApiProtocol.OPENAI;
             coordinator = new AgentTurnCoordinator(
-                    client, registry, toolExecutor, conversation, protocol);
+                    client, registry, toolExecutor, conversation, protocol,
+                    loopConfig,
+                    mode -> PromptBuilder.buildSystemPrompt(projectRoot, mode));
             initializationError = null;
         } catch (RuntimeException error) {
             client = null;
@@ -240,6 +265,16 @@ public final class MewCodeModel implements Model {
         if ("/exit".equals(text.trim())) {
             return UpdateResult.from(this, QuitMessage::new);
         }
+        if ("/plan".equals(text.trim())) {
+            agentMode = AgentMode.PLAN;
+            return UpdateResult.from(this,
+                    Command.println(Styles.DIM.render("已切换到 Plan Mode：只允许读类工具。")));
+        }
+        if ("/do".equals(text.trim())) {
+            agentMode = AgentMode.EXECUTE;
+            return UpdateResult.from(this,
+                    Command.println(Styles.DIM.render("已切换到 Execute Mode：允许全部工具。")));
+        }
         if (client == null || coordinator == null) {
             String message = initializationError != null
                     ? initializationError
@@ -253,13 +288,21 @@ public final class MewCodeModel implements Model {
         requestStartMillis = System.currentTimeMillis();
         spinnerVerb = SpinnerVerbs.random();
         spinnerFrame = 0;
+        currentIteration = 0;
+        pendingStreamError = null;
+        usageLabel = "Token 用量：unknown";
         streaming = true;
 
         try {
-            streamQueue = coordinator.start(text);
+            activeRun = coordinator.startRun(text, agentMode);
+            streamEvents = activeRun.events();
         } catch (RuntimeException error) {
-            streamQueue = new java.util.concurrent.LinkedBlockingQueue<>();
-            streamQueue.offer(new AgentEvent.Error("Unable to start provider request."));
+            activeRun = null;
+            streamEvents = null;
+            String detail = error.getMessage() == null
+                    ? error.getClass().getSimpleName()
+                    : error.getMessage();
+            return failStream("无法启动 Agent Loop：" + safeTerminalText(detail));
         }
 
         return UpdateResult.from(this, Command.batch(
@@ -268,27 +311,33 @@ public final class MewCodeModel implements Model {
     }
 
     private UpdateResult<MewCodeModel> pollStream() {
-        if (!streaming || streamQueue == null) return UpdateResult.from(this);
+        if (!streaming || streamEvents == null) return UpdateResult.from(this);
 
         spinnerFrame++;
         var printCommands = new ArrayList<Command>();
         AgentEvent event;
         try {
-            while ((event = streamQueue.poll(10, TimeUnit.MILLISECONDS)) != null) {
+            while ((event = streamEvents.poll(10, TimeUnit.MILLISECONDS)) != null) {
                 switch (event) {
-                    case AgentEvent.ThinkingDelta ignored -> { }
-                    case AgentEvent.TextDelta text -> streamBuffer.append(text.text());
-                    case AgentEvent.ToolStarted started -> printCommands.add(
+                    case AgentEvent.StreamText text -> streamBuffer.append(text.text());
+                    case AgentEvent.ToolUse started -> printCommands.add(
                             renderToolStarted(started));
-                    case AgentEvent.ToolCompleted completed -> printCommands.add(
+                    case AgentEvent.ToolResult completed -> printCommands.add(
                             renderToolCompleted(completed));
-                    case AgentEvent.Completed end -> {
+                    case AgentEvent.TurnComplete turn -> {
+                        currentIteration = turn.round();
+                        printCommands.add(Command.println(Styles.DIM.render(
+                                "  Agent 正在推进第 %d 轮…".formatted(turn.round()))));
+                    }
+                    case AgentEvent.Usage usage -> usageLabel = formatUsage(usage);
+                    case AgentEvent.LoopComplete ignored -> {
                         return withLeadingCommands(printCommands,
-                                completeStream(end.stopReason()));
+                                pendingStreamError == null
+                                        ? completeStream()
+                                        : failStream(pendingStreamError));
                     }
                     case AgentEvent.Error error -> {
-                        return withLeadingCommands(printCommands,
-                                failStream(error.message()));
+                        pendingStreamError = error.message();
                     }
                 }
             }
@@ -301,14 +350,17 @@ public final class MewCodeModel implements Model {
         return UpdateResult.from(this, sequence(printCommands));
     }
 
-    private Command renderToolStarted(AgentEvent.ToolStarted event) {
+    private Command renderToolStarted(AgentEvent.ToolUse event) {
         String line = ToolDisplayFormatter.invocation(
-                event.toolName(), event.arguments(), toolDisplayColumns());
+                event.toolName(), event.input(), toolDisplayColumns());
         return Command.println(Styles.TOOL.render(line));
     }
 
-    private Command renderToolCompleted(AgentEvent.ToolCompleted event) {
-        var summary = ToolDisplayFormatter.result(event.result(), toolDisplayColumns());
+    private Command renderToolCompleted(AgentEvent.ToolResult event) {
+        var summary = ToolDisplayFormatter.result(
+                new com.mewcode.tool.ToolResult(event.result(), event.isError(),
+                        java.util.Map.of("durationMs", event.durationMillis())),
+                toolDisplayColumns());
         var style = summary.isError() ? Styles.ERROR : Styles.TOOL_RESULT;
         return Command.println(style.render(summary.text()));
     }
@@ -333,22 +385,42 @@ public final class MewCodeModel implements Model {
         return Command.batch(commands.toArray(Command[]::new));
     }
 
-    private UpdateResult<MewCodeModel> completeStream(String stopReason) {
+    private UpdateResult<MewCodeModel> completeStream() {
         String rawText = streamBuffer.toString();
         double elapsed = elapsedSeconds();
+        String finalUsage = usageLabel;
         chatMessages.add(new ChatMessage("assistant", rawText, elapsed));
         String rendered = MarkdownRenderer.render(rawText, Math.max(width - 4, 20));
         resetStream();
         String output = Styles.ASSISTANT.render("● ") + rendered.stripTrailing()
-                + "\n" + Styles.DIM.render("  Completed in %.1fs".formatted(elapsed));
-        if ("max_tokens".equals(stopReason) || "length".equals(stopReason)) {
-            output += "\n" + Styles.DIM.render("  Response stopped at the model output limit.");
-        }
+                + "\n" + Styles.DIM.render(
+                "  Completed in %.1fs · %s".formatted(elapsed, finalUsage));
         return UpdateResult.from(this, Command.println(output));
+    }
+
+    private UpdateResult<MewCodeModel> cancelStream() {
+        if (!streaming) return UpdateResult.from(this);
+        if (activeRun != null) activeRun.cancel();
+
+        double elapsed = elapsedSeconds();
+        String finalUsage = usageLabel;
+        var output = new StringBuilder();
+        if (!streamBuffer.isEmpty()) {
+            output.append(Styles.ASSISTANT.render("● "))
+                    .append(safeTerminalText(streamBuffer.toString()))
+                    .append("\n")
+                    .append(Styles.DIM.render("  本轮已取消，部分响应未写入历史"))
+                    .append("\n");
+        }
+        output.append(Styles.DIM.render(
+                "  已取消本轮 Agent Loop（耗时 %.1fs · %s）".formatted(elapsed, finalUsage)));
+        resetStream();
+        return UpdateResult.from(this, Command.println(output.toString()));
     }
 
     private UpdateResult<MewCodeModel> failStream(String safeMessage) {
         double elapsed = elapsedSeconds();
+        String finalUsage = usageLabel;
         var output = new StringBuilder();
         if (!streamBuffer.isEmpty()) {
             output.append(Styles.ASSISTANT.render("● "))
@@ -359,15 +431,20 @@ public final class MewCodeModel implements Model {
         }
         chatMessages.add(new ChatMessage("error", safeMessage, elapsed));
         output.append(renderError(safeMessage, elapsed));
+        output.append("\n").append(Styles.DIM.render("  " + finalUsage));
         resetStream();
         return UpdateResult.from(this, Command.println(output.toString()));
     }
 
     private void resetStream() {
         streaming = false;
-        streamQueue = null;
+        activeRun = null;
+        streamEvents = null;
         streamBuffer.setLength(0);
         spinnerFrame = 0;
+        currentIteration = 0;
+        pendingStreamError = null;
+        usageLabel = "Token 用量：unknown";
     }
 
     private String viewProviderSelection() {
@@ -387,17 +464,23 @@ public final class MewCodeModel implements Model {
 
     private String viewChat() {
         var view = new StringBuilder();
-        view.append(Styles.DIM.render("● Ready for conversation and tools"));
+        view.append(Styles.DIM.render("● Ready for conversation and tools · "
+                + modeLabel()));
         view.append('\n');
 
         if (streaming) {
             if (!streamBuffer.isEmpty()) {
                 view.append('\n').append(Styles.ASSISTANT.render("● "))
-                        .append(safeTerminalText(streamBuffer.toString())).append('\n');
+                        .append(streamingPreview()).append('\n');
             }
             String frame = SPINNER[spinnerFrame % SPINNER.length];
+            String iteration = currentIteration == 0
+                    ? "准备第 1 轮"
+                    : "第 %d 轮".formatted(currentIteration);
             view.append('\n').append(Styles.DIM.render(
-                    "%s %s… (%.0fs)".formatted(frame, spinnerVerb, elapsedSeconds())));
+                    "%s %s… · %s · (%.0fs)".formatted(
+                            frame, spinnerVerb, iteration, elapsedSeconds())));
+            view.append('\n').append(Styles.DIM.render("  " + usageLabel));
             view.append('\n');
         } else if (initializationError != null) {
             view.append('\n').append(Styles.ERROR.render("✖ " + initializationError)).append('\n');
@@ -445,6 +528,82 @@ public final class MewCodeModel implements Model {
         return Styles.STATUS.render(left + " ".repeat(spaces) + right);
     }
 
+    private String modeLabel() {
+        return agentMode == AgentMode.PLAN ? "Plan Mode（只读）" : "Execute Mode";
+    }
+
+    /**
+     * 动态区只显示长响应的尾部，避免整个 view 超过终端高度后无法回退光标，
+     * 进而把每次刷新都追加到 scrollback。完整响应仍由 completeStream 一次性输出。
+     */
+    private String streamingPreview() {
+        String text = safeTerminalText(streamBuffer.toString());
+        int maxLines = Math.max(1, height - STREAMING_FIXED_LINES);
+        int textWidth = Math.max(width - 2, 8);
+        return tailByPhysicalLines(text, textWidth, maxLines);
+    }
+
+    private static String tailByPhysicalLines(String text, int width, int maxLines) {
+        if (text.isEmpty()) return "";
+        if (physicalLines(text, width) <= maxLines) return text;
+        if (maxLines <= 1) return tailCharacters(lastLogicalLine(text), width, 1);
+
+        String[] logicalLines = text.split("\\n", -1);
+        int budget = maxLines - 1; // 预留一行给省略标记
+        var suffix = new ArrayList<String>();
+        for (int index = logicalLines.length - 1; index >= 0 && budget > 0; index--) {
+            String line = logicalLines[index];
+            int lineCount = physicalLines(line, width);
+            if (lineCount <= budget) {
+                suffix.add(line);
+                budget -= lineCount;
+            } else {
+                suffix.add(tailCharacters(line, width, budget));
+                budget = 0;
+            }
+        }
+        java.util.Collections.reverse(suffix);
+        return "…\n" + String.join("\n", suffix);
+    }
+
+    private static String lastLogicalLine(String text) {
+        int newline = text.lastIndexOf('\n');
+        return newline < 0 ? text : text.substring(newline + 1);
+    }
+
+    private static String tailCharacters(String value, int width, int maxLines) {
+        int budget = Math.max(1, width * Math.max(1, maxLines));
+        int start = value.length();
+        int used = 0;
+        for (int index = value.length(); index > 0;) {
+            int codePoint = value.codePointBefore(index);
+            int characterWidth = com.mewcode.tui.tea.Program.displayWidth(
+                    new String(Character.toChars(codePoint)));
+            if (used + characterWidth > budget) break;
+            used += characterWidth;
+            index -= Character.charCount(codePoint);
+            start = index;
+        }
+        return value.substring(start);
+    }
+
+    private static int physicalLines(String value, int width) {
+        int total = 0;
+        for (String line : value.split("\\n", -1)) {
+            total += Math.max(1, (int) Math.ceil(
+                    (double) com.mewcode.tui.tea.Program.displayWidth(line) / width));
+        }
+        return Math.max(1, total);
+    }
+
+    private static String formatUsage(AgentEvent.Usage usage) {
+        String input = usage.inputTokens().isPresent()
+                ? Long.toString(usage.inputTokens().getAsLong()) : "unknown";
+        String output = usage.outputTokens().isPresent()
+                ? Long.toString(usage.outputTokens().getAsLong()) : "unknown";
+        return "Token 用量：输入 %s · 输出 %s".formatted(input, output);
+    }
+
     private String renderBanner() {
         String model = selectedProvider == null ? "" : selectedProvider.getModel();
         return Styles.BANNER.render(" /\\_/\\    MewCode " + VERSION) + "\n"
@@ -487,6 +646,7 @@ public final class MewCodeModel implements Model {
     }
 
     private static String safeTerminalText(String text) {
+        if (text == null) return "";
         var safe = new StringBuilder(text.length());
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);

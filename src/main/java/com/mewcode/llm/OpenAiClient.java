@@ -6,6 +6,7 @@ import com.mewcode.conversation.ContentBlock;
 import com.mewcode.conversation.ConversationManager;
 import com.mewcode.conversation.Message;
 import com.mewcode.conversation.TextBlock;
+import com.mewcode.conversation.ThinkingBlock;
 import com.mewcode.conversation.ToolResultBlock;
 import com.mewcode.conversation.ToolUseBlock;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
@@ -20,12 +21,16 @@ import com.openai.models.chat.completions.ChatCompletionMessageFunctionToolCall;
 import com.openai.models.chat.completions.ChatCompletionMessageToolCall;
 import com.openai.models.chat.completions.ChatCompletionTool;
 import com.openai.models.chat.completions.ChatCompletionToolMessageParam;
+import com.openai.models.chat.completions.ChatCompletionStreamOptions;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalLong;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /** OpenAI Chat Completions 及兼容端点的流式适配器。 */
 public final class OpenAiClient implements LlmClient {
@@ -50,13 +55,35 @@ public final class OpenAiClient implements LlmClient {
     }
 
     @Override
-    public BlockingQueue<StreamEvent> stream(List<Message> messages,
-                                             List<Map<String, Object>> apiTools) {
+    public CancellableLlmStream openStream(List<Message> messages,
+                                           List<Map<String, Object>> apiTools) {
+        return openStream(messages, apiTools, systemPrompt);
+    }
+
+    @Override
+    public CancellableLlmStream openStream(ConversationManager conversation,
+                                           List<Map<String, Object>> apiTools,
+                                           String prompt) {
+        return openStream(conversation.getMessages(), apiTools, prompt);
+    }
+
+    private CancellableLlmStream openStream(List<Message> messages,
+                                            List<Map<String, Object>> apiTools,
+                                            String prompt) {
         var queue = new LinkedBlockingQueue<StreamEvent>(QUEUE_CAPACITY);
         List<Message> snapshot = messages == null ? List.of() : List.copyOf(messages);
         List<Map<String, Object>> tools = apiTools == null ? List.of() : List.copyOf(apiTools);
-        Thread.startVirtualThread(() -> streamInCurrentThread(snapshot, tools, queue));
-        return queue;
+        var control = new StreamControl();
+        Thread worker = Thread.startVirtualThread(() ->
+                streamInCurrentThread(snapshot, tools, prompt, queue, control));
+        control.worker(worker);
+        return new CancellableLlmStream(queue, control::close);
+    }
+
+    @Override
+    public BlockingQueue<StreamEvent> stream(List<Message> messages,
+                                             List<Map<String, Object>> apiTools) {
+        return openStream(messages, apiTools).events();
     }
 
     @Override
@@ -67,11 +94,16 @@ public final class OpenAiClient implements LlmClient {
 
     private void streamInCurrentThread(List<Message> messages,
                                        List<Map<String, Object>> apiTools,
-                                       BlockingQueue<StreamEvent> queue) {
+                                       String prompt,
+                                       BlockingQueue<StreamEvent> queue,
+                                       StreamControl control) {
         try {
             var params = ChatCompletionCreateParams.builder()
                     .model(model)
-                    .addSystemMessage(systemPrompt);
+                    .streamOptions(ChatCompletionStreamOptions.builder()
+                            .includeUsage(true)
+                            .build())
+                    .addSystemMessage(prompt == null ? systemPrompt : prompt);
             for (Map<String, Object> definition : apiTools) {
                 params.addTool(toOpenAiTool(definition));
             }
@@ -83,11 +115,21 @@ public final class OpenAiClient implements LlmClient {
             var indexToId = new HashMap<Long, String>();
             try (StreamResponse<ChatCompletionChunk> response =
                          client.chat().completions().createStreaming(params.build())) {
-                response.stream()
-                        .flatMap(chunk -> chunk.choices().stream())
-                        .forEach(choice -> {
-                            choice.delta().content().ifPresent(text -> putEvent(queue,
+                control.response(response);
+                if (control.isClosed()) return;
+                response.stream().forEach(chunk -> {
+                    if (control.isClosed()) return;
+                    chunk.usage().ifPresent(usage -> putEvent(queue, new StreamEvent.Usage(
+                            OptionalLong.of(usage.promptTokens()),
+                            OptionalLong.of(usage.completionTokens()))));
+                    chunk.choices().forEach(choice -> {
+                    choice.delta().content().ifPresent(text -> putEvent(queue,
                                     new StreamEvent.TextDelta(text)));
+                            String reasoning = additionalString(
+                                    choice.delta()._additionalProperties().get("reasoning_content"));
+                            if (!reasoning.isBlank()) {
+                                putEvent(queue, new StreamEvent.ThinkingDelta(reasoning));
+                            }
                             choice.delta().toolCalls().ifPresent(toolCalls -> {
                                 for (var toolCall : toolCalls) {
                                     long index = toolCall.index();
@@ -104,11 +146,13 @@ public final class OpenAiClient implements LlmClient {
                                 }
                             });
                         });
+                    });
             }
+            if (control.isClosed()) return;
             for (StreamEvent event : accumulator.finishAll()) putEvent(queue, event);
             putEvent(queue, new StreamEvent.StreamEnd("end_turn"));
         } catch (Exception error) {
-            putError(queue, safeError(error));
+            if (!control.isClosed()) putError(queue, safeError(error));
         }
     }
 
@@ -129,6 +173,16 @@ public final class OpenAiClient implements LlmClient {
                             .build();
                     assistant.addToolCall(ChatCompletionMessageToolCall.ofFunction(call));
                 }
+            }
+            String reasoning = message.content().stream()
+                    .filter(ThinkingBlock.class::isInstance)
+                    .map(ThinkingBlock.class::cast)
+                    .map(ThinkingBlock::text)
+                    .filter(value -> !value.isBlank())
+                    .reduce("", String::concat);
+            if (!reasoning.isBlank()) {
+                assistant.putAdditionalProperty("reasoning_content",
+                        com.openai.core.JsonValue.from(reasoning));
             }
             params.addMessage(assistant.build());
             return;
@@ -185,6 +239,16 @@ public final class OpenAiClient implements LlmClient {
         }
     }
 
+    private static String additionalString(com.openai.core.JsonValue value) {
+        if (value == null) return "";
+        try {
+            String result = value.convert(String.class);
+            return result == null ? "" : result;
+        } catch (RuntimeException ignored) {
+            return "";
+        }
+    }
+
     private static void putEvent(BlockingQueue<StreamEvent> queue, StreamEvent event) {
         try {
             queue.put(event);
@@ -227,5 +291,44 @@ public final class OpenAiClient implements LlmClient {
     }
 
     private static final class StreamInterruptedException extends RuntimeException {
+    }
+
+    private static final class StreamControl {
+        private final AtomicBoolean closed = new AtomicBoolean();
+        private final AtomicReference<AutoCloseable> response = new AtomicReference<>();
+        private final AtomicReference<Thread> worker = new AtomicReference<>();
+
+        private void worker(Thread thread) {
+            worker.set(thread);
+            if (closed.get()) thread.interrupt();
+        }
+
+        private void response(AutoCloseable value) {
+            if (!response.compareAndSet(null, value)) return;
+            if (closed.get()) closeQuietly(value);
+        }
+
+        private boolean isClosed() {
+            return closed.get();
+        }
+
+        private void close() {
+            if (!closed.compareAndSet(false, true)) return;
+            AutoCloseable currentResponse = response.get();
+            if (currentResponse != null) {
+                Thread.startVirtualThread(() -> closeQuietly(currentResponse));
+            }
+            Thread thread = worker.get();
+            if (thread != null) thread.interrupt();
+        }
+
+        private static void closeQuietly(AutoCloseable closeable) {
+            if (closeable == null) return;
+            try {
+                closeable.close();
+            } catch (Exception ignored) {
+                // provider close 是 best-effort。
+            }
+        }
     }
 }

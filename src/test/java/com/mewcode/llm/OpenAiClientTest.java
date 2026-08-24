@@ -2,6 +2,8 @@ package com.mewcode.llm;
 
 import com.mewcode.config.ProviderConfig;
 import com.mewcode.conversation.ConversationManager;
+import com.mewcode.conversation.TextBlock;
+import com.mewcode.conversation.ThinkingBlock;
 import com.mewcode.prompt.PromptBuilder;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -45,7 +47,14 @@ class OpenAiClientTest {
 
             assertEquals("Hello ", ((StreamEvent.TextDelta) events.get(0)).text());
             assertEquals("OpenAI", ((StreamEvent.TextDelta) events.get(1)).text());
-            assertInstanceOf(StreamEvent.StreamEnd.class, events.get(2));
+            var usage = events.stream()
+                    .filter(event -> event instanceof StreamEvent.Usage)
+                    .map(event -> (StreamEvent.Usage) event)
+                    .findFirst()
+                    .orElseThrow();
+            assertEquals(11, usage.inputTokens().orElseThrow());
+            assertEquals(3, usage.outputTokens().orElseThrow());
+            assertInstanceOf(StreamEvent.StreamEnd.class, events.getLast());
             assertTrue(body.get().contains(projectRoot));
             assertTrue(body.get().contains("first"));
             assertTrue(body.get().contains("second"));
@@ -76,6 +85,52 @@ class OpenAiClientTest {
                     .stream(history));
 
             assertTrue(body.get().contains(projectRoot), body.get());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void preservesDeepSeekReasoningContentForTheNextRequest() throws Exception {
+        String fixture = """
+                data: {"id":"chatcmpl-reasoning","object":"chat.completion.chunk","created":1710000000,"model":"deepseek-chat","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"inspect first"},"finish_reason":null}]}
+
+                data: {"id":"chatcmpl-reasoning","object":"chat.completion.chunk","created":1710000000,"model":"deepseek-chat","choices":[{"index":0,"delta":{"content":"Done"},"finish_reason":null}]}
+
+                data: {"id":"chatcmpl-reasoning","object":"chat.completion.chunk","created":1710000000,"model":"deepseek-chat","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+                data: [DONE]
+                """;
+        var bodies = new ArrayList<String>();
+        HttpServer server = server(exchange -> {
+            bodies.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            respond(exchange, 200, "text/event-stream", fixture);
+        });
+        try {
+            ProviderConfig provider = provider(server, "deepseek-key");
+            provider.setProtocol("deepseek");
+            var client = new OpenAiClient(provider, "system");
+            var first = new ConversationManager();
+            first.addUserMessage("inspect");
+            List<StreamEvent> events = collect(client.stream(first));
+
+            var reasoning = events.stream()
+                    .filter(event -> event instanceof StreamEvent.ThinkingDelta)
+                    .map(event -> ((StreamEvent.ThinkingDelta) event).text())
+                    .findFirst()
+                    .orElseThrow();
+            assertEquals("inspect first", reasoning);
+
+            var second = new ConversationManager();
+            second.addUserMessage("inspect");
+            second.addAssistantMessage(List.of(
+                    new ThinkingBlock(reasoning, ""), new TextBlock("Done")));
+            second.addUserMessage("continue");
+            collect(client.stream(second));
+
+            assertEquals(2, bodies.size());
+            assertTrue(bodies.getLast().contains("reasoning_content"), bodies.getLast());
+            assertTrue(bodies.getLast().contains("inspect first"), bodies.getLast());
         } finally {
             server.stop(0);
         }

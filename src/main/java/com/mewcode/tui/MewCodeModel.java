@@ -1,11 +1,16 @@
 package com.mewcode.tui;
 
+import com.mewcode.agent.AgentEvent;
+import com.mewcode.agent.AgentTurnCoordinator;
 import com.mewcode.config.ProviderConfig;
 import com.mewcode.conversation.ConversationManager;
 import com.mewcode.llm.LlmClient;
 import com.mewcode.llm.LlmClients;
-import com.mewcode.llm.StreamEvent;
 import com.mewcode.prompt.PromptBuilder;
+import com.mewcode.tool.FileStateCache;
+import com.mewcode.tool.ToolApiProtocol;
+import com.mewcode.tool.ToolExecutor;
+import com.mewcode.tool.ToolRegistry;
 import com.mewcode.tui.tea.Command;
 import com.mewcode.tui.tea.KeyPressMessage;
 import com.mewcode.tui.tea.Message;
@@ -14,13 +19,16 @@ import com.mewcode.tui.tea.QuitMessage;
 import com.mewcode.tui.tea.UpdateResult;
 import com.mewcode.tui.tea.WindowSizeMessage;
 
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
+import java.util.Objects;
 
-/** Pure-chat TUI model for MewCode's first milestone. */
+/** MewCode 终端交互模型，负责展示文本流和工具回合状态。 */
 public final class MewCodeModel implements Model {
 
     public static final String VERSION = "0.1.0";
@@ -28,6 +36,7 @@ public final class MewCodeModel implements Model {
     private static final String[] SPINNER = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
 
     private final List<ProviderConfig> providers;
+    private final Path projectRoot;
     private final BiFunction<ProviderConfig, String, LlmClient> clientFactory;
     private final ConversationManager conversation = new ConversationManager();
     private final List<ChatMessage> chatMessages = new ArrayList<>();
@@ -37,7 +46,9 @@ public final class MewCodeModel implements Model {
     private AppState state;
     private ProviderConfig selectedProvider;
     private LlmClient client;
-    private BlockingQueue<StreamEvent> streamQueue;
+    private BlockingQueue<AgentEvent> streamQueue;
+    private ToolExecutor toolExecutor;
+    private AgentTurnCoordinator coordinator;
     private int providerCursor;
     private int inputCursor;
     private int spinnerFrame;
@@ -54,13 +65,26 @@ public final class MewCodeModel implements Model {
     public record StreamPollMessage() implements Message {}
 
     public MewCodeModel(List<ProviderConfig> providers) {
-        this(providers, LlmClients::create);
+        this(providers, currentProjectRoot(), LlmClients::create);
+    }
+
+    public MewCodeModel(List<ProviderConfig> providers, Path projectRoot) {
+        this(providers, projectRoot, LlmClients::create);
     }
 
     MewCodeModel(List<ProviderConfig> providers,
                  BiFunction<ProviderConfig, String, LlmClient> clientFactory) {
+        this(providers, currentProjectRoot(), clientFactory);
+    }
+
+    MewCodeModel(List<ProviderConfig> providers,
+                 Path projectRoot,
+                 BiFunction<ProviderConfig, String, LlmClient> clientFactory) {
         this.providers = providers == null ? List.of() : List.copyOf(providers);
-        this.clientFactory = clientFactory;
+        this.projectRoot = Objects.requireNonNull(projectRoot, "projectRoot")
+                .toAbsolutePath()
+                .normalize();
+        this.clientFactory = Objects.requireNonNull(clientFactory, "clientFactory");
         if (this.providers.size() == 1) {
             selectedProvider = this.providers.getFirst();
             state = AppState.CHAT;
@@ -138,10 +162,22 @@ public final class MewCodeModel implements Model {
 
     private void initializeProvider() {
         try {
-            client = clientFactory.apply(selectedProvider, PromptBuilder.buildSystemPrompt());
+            client = clientFactory.apply(selectedProvider, PromptBuilder.buildSystemPrompt(projectRoot));
+            if (toolExecutor != null) toolExecutor.close();
+            var registry = ToolRegistry.createDefault();
+            toolExecutor = new ToolExecutor(
+                    registry,
+                    projectRoot,
+                    new FileStateCache());
+            ToolApiProtocol protocol = "anthropic".equalsIgnoreCase(selectedProvider.getProtocol())
+                    ? ToolApiProtocol.ANTHROPIC
+                    : ToolApiProtocol.OPENAI;
+            coordinator = new AgentTurnCoordinator(
+                    client, registry, toolExecutor, conversation, protocol);
             initializationError = null;
         } catch (RuntimeException error) {
             client = null;
+            coordinator = null;
             initializationError = "Provider initialization failed.";
         }
     }
@@ -204,7 +240,7 @@ public final class MewCodeModel implements Model {
         if ("/exit".equals(text.trim())) {
             return UpdateResult.from(this, QuitMessage::new);
         }
-        if (client == null) {
+        if (client == null || coordinator == null) {
             String message = initializationError != null
                     ? initializationError
                     : "No provider is available.";
@@ -213,7 +249,6 @@ public final class MewCodeModel implements Model {
         }
 
         chatMessages.add(new ChatMessage("user", text, 0));
-        conversation.addUserMessage(text);
         streamBuffer.setLength(0);
         requestStartMillis = System.currentTimeMillis();
         spinnerVerb = SpinnerVerbs.random();
@@ -221,10 +256,10 @@ public final class MewCodeModel implements Model {
         streaming = true;
 
         try {
-            streamQueue = client.stream(conversation);
+            streamQueue = coordinator.start(text);
         } catch (RuntimeException error) {
             streamQueue = new java.util.concurrent.LinkedBlockingQueue<>();
-            streamQueue.offer(new StreamEvent.Error("Unable to start provider request."));
+            streamQueue.offer(new AgentEvent.Error("Unable to start provider request."));
         }
 
         return UpdateResult.from(this, Command.batch(
@@ -236,27 +271,71 @@ public final class MewCodeModel implements Model {
         if (!streaming || streamQueue == null) return UpdateResult.from(this);
 
         spinnerFrame++;
-        StreamEvent event;
-        while ((event = streamQueue.poll()) != null) {
-            switch (event) {
-                case StreamEvent.ThinkingDelta ignored -> { }
-                case StreamEvent.TextDelta text -> streamBuffer.append(text.text());
-                case StreamEvent.StreamEnd end -> {
-                    return completeStream(end.stopReason());
-                }
-                case StreamEvent.Error error -> {
-                    return failStream(error.message());
+        var printCommands = new ArrayList<Command>();
+        AgentEvent event;
+        try {
+            while ((event = streamQueue.poll(10, TimeUnit.MILLISECONDS)) != null) {
+                switch (event) {
+                    case AgentEvent.ThinkingDelta ignored -> { }
+                    case AgentEvent.TextDelta text -> streamBuffer.append(text.text());
+                    case AgentEvent.ToolStarted started -> printCommands.add(
+                            renderToolStarted(started));
+                    case AgentEvent.ToolCompleted completed -> printCommands.add(
+                            renderToolCompleted(completed));
+                    case AgentEvent.Completed end -> {
+                        return withLeadingCommands(printCommands,
+                                completeStream(end.stopReason()));
+                    }
+                    case AgentEvent.Error error -> {
+                        return withLeadingCommands(printCommands,
+                                failStream(error.message()));
+                    }
                 }
             }
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            return withLeadingCommands(printCommands,
+                    failStream("Streaming was interrupted."));
         }
-        return UpdateResult.from(this,
-                Command.tick(POLL_INTERVAL, ignored -> new StreamPollMessage()));
+        printCommands.add(Command.tick(POLL_INTERVAL, ignored -> new StreamPollMessage()));
+        return UpdateResult.from(this, sequence(printCommands));
+    }
+
+    private Command renderToolStarted(AgentEvent.ToolStarted event) {
+        String line = ToolDisplayFormatter.invocation(
+                event.toolName(), event.arguments(), toolDisplayColumns());
+        return Command.println(Styles.TOOL.render(line));
+    }
+
+    private Command renderToolCompleted(AgentEvent.ToolCompleted event) {
+        var summary = ToolDisplayFormatter.result(event.result(), toolDisplayColumns());
+        var style = summary.isError() ? Styles.ERROR : Styles.TOOL_RESULT;
+        return Command.println(style.render(summary.text()));
+    }
+
+    private int toolDisplayColumns() {
+        return Math.max(8, Math.min(ToolDisplayFormatter.DEFAULT_MAX_COLUMNS,
+                Math.max(width - 4, 8)));
+    }
+
+    private UpdateResult<MewCodeModel> withLeadingCommands(
+            List<Command> leading,
+            UpdateResult<MewCodeModel> terminal) {
+        if (leading.isEmpty()) return terminal;
+        var commands = new ArrayList<>(leading);
+        if (terminal.command() != null) commands.add(terminal.command());
+        return UpdateResult.from(this, sequence(commands));
+    }
+
+    private static Command sequence(List<Command> commands) {
+        if (commands.isEmpty()) return null;
+        if (commands.size() == 1) return commands.getFirst();
+        return Command.batch(commands.toArray(Command[]::new));
     }
 
     private UpdateResult<MewCodeModel> completeStream(String stopReason) {
         String rawText = streamBuffer.toString();
         double elapsed = elapsedSeconds();
-        conversation.addAssistantMessage(rawText);
         chatMessages.add(new ChatMessage("assistant", rawText, elapsed));
         String rendered = MarkdownRenderer.render(rawText, Math.max(width - 4, 20));
         resetStream();
@@ -308,7 +387,7 @@ public final class MewCodeModel implements Model {
 
     private String viewChat() {
         var view = new StringBuilder();
-        view.append(Styles.DIM.render("● Ready for pure conversation"));
+        view.append(Styles.DIM.render("● Ready for conversation and tools"));
         view.append('\n');
 
         if (streaming) {
@@ -368,10 +447,13 @@ public final class MewCodeModel implements Model {
 
     private String renderBanner() {
         String model = selectedProvider == null ? "" : selectedProvider.getModel();
-        String cwd = System.getProperty("user.dir");
         return Styles.BANNER.render(" /\\_/\\    MewCode " + VERSION) + "\n"
                 + Styles.BANNER.render("( o.o )   " + model) + "\n"
-                + Styles.BANNER.render(" > ^ <    " + cwd);
+                + Styles.BANNER.render(" > ^ <    " + projectRoot);
+    }
+
+    private static Path currentProjectRoot() {
+        return Path.of(".").toAbsolutePath().normalize();
     }
 
     private static String renderUser(String text) {

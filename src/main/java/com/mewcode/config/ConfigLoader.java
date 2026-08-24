@@ -16,12 +16,16 @@ import java.util.Set;
 /** Loads the project-local MewCode YAML configuration. */
 public final class ConfigLoader {
 
-    private static final Set<String> PROTOCOLS = Set.of("anthropic", "openai");
+    private static final Set<String> PROTOCOLS = Set.of("anthropic", "openai", "deepseek");
 
     private ConfigLoader() {}
 
     public static AppConfig load(String path) throws ConfigException {
-        Path configPath = Path.of(path);
+        return load(Path.of(path));
+    }
+
+    public static AppConfig load(Path path) throws ConfigException {
+        Path configPath = path.toAbsolutePath().normalize();
         if (!Files.isRegularFile(configPath)) {
             throw new ConfigException("Config file not found: " + configPath);
         }
@@ -64,7 +68,7 @@ public final class ConfigLoader {
             require(prefix, "api_key", provider.getApiKey());
 
             if (!PROTOCOLS.contains(provider.getProtocol())) {
-                throw new ConfigException(prefix + ".protocol must be anthropic or openai");
+                throw new ConfigException(prefix + ".protocol must be anthropic, openai, or deepseek");
             }
             if (!names.add(provider.getName())) {
                 throw new ConfigException(prefix + ".name must be unique");

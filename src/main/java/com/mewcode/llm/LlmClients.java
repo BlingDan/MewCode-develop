@@ -10,7 +10,7 @@ public final class LlmClients {
     public static LlmClient create(ProviderConfig provider, String systemPrompt) {
         return switch (provider.getProtocol()) {
             case "anthropic" -> new AnthropicClient(provider, systemPrompt);
-            case "openai" -> new OpenAiClient(provider, systemPrompt);
+            case "openai", "deepseek" -> new OpenAiClient(provider, systemPrompt);
             default -> throw new IllegalArgumentException("Unsupported provider protocol");
         };
     }

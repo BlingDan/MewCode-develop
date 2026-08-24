@@ -24,6 +24,7 @@ dependencies {
     implementation("com.github.ajalt.mordant:mordant-markdown:3.0.2")
     implementation("com.anthropic:anthropic-java:2.34.0")
     implementation("com.openai:openai-java:4.37.0")
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.18.2")
     implementation("org.yaml:snakeyaml:2.2")
 
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")

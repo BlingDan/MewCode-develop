@@ -16,6 +16,18 @@ public final class ConversationManager {
         messages.add(new Message("assistant", text));
     }
 
+    public synchronized void addAssistantMessage(List<ContentBlock> content) {
+        messages.add(new Message("assistant", content));
+    }
+
+    public synchronized void addToolResults(List<ToolResultBlock> results) {
+        messages.add(new Message("user", new ArrayList<>(results)));
+    }
+
+    public synchronized void addMessage(Message message) {
+        messages.add(message);
+    }
+
     public synchronized List<Message> getMessages() {
         return List.copyOf(messages);
     }

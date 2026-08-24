@@ -28,13 +28,22 @@ class ConfigLoaderTest {
                     thinking: true
                 """);
 
-        AppConfig loaded = ConfigLoader.load(config.toString());
+        AppConfig loaded = ConfigLoader.load(config);
 
         assertEquals(2, loaded.getProviders().size());
         assertFalse(loaded.getProviders().get(0).isThinking());
         assertTrue(loaded.getProviders().get(1).isThinking());
         assertEquals("openai", loaded.getProviders().get(1).getProtocol());
         assertFalse(loaded.getProviders().get(0).toString().contains("secret-one"));
+    }
+
+    @Test
+    void acceptsDeepSeekAsAnOpenAiCompatibleProtocol() throws Exception {
+        Path config = write(validProvider().replace("protocol: anthropic", "protocol: deepseek"));
+
+        AppConfig loaded = ConfigLoader.load(config.toString());
+
+        assertEquals("deepseek", loaded.getProviders().getFirst().getProtocol());
     }
 
     @Test

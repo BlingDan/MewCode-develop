@@ -4,6 +4,8 @@ import com.mewcode.config.ConfigLoader;
 import com.mewcode.tui.MewCodeModel;
 import com.mewcode.tui.tea.Program;
 
+import java.nio.file.Path;
+
 /** MewCode 终端应用入口。 */
 public final class MewCode {
 
@@ -16,15 +18,18 @@ public final class MewCode {
     }
 
     static int run() {
+        Path projectRoot = Path.of(System.getProperty("user.dir"))
+                .toAbsolutePath()
+                .normalize();
         final com.mewcode.config.AppConfig config;
         try {
-            config = ConfigLoader.load(".mewcode/config.yaml");
+            config = ConfigLoader.load(projectRoot.resolve(".mewcode/config.yaml"));
         } catch (ConfigLoader.ConfigException error) {
             System.err.println("MewCode: " + error.getMessage());
             return 2;
         }
 
-        var model = new MewCodeModel(config.getProviders());
+        var model = new MewCodeModel(config.getProviders(), projectRoot);
         var program = new Program(model);
 
         System.out.print("\033[?25l");

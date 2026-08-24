@@ -2,15 +2,18 @@ package com.mewcode.llm;
 
 import com.mewcode.config.ProviderConfig;
 import com.mewcode.conversation.ConversationManager;
+import com.mewcode.prompt.PromptBuilder;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -30,21 +33,80 @@ class OpenAiClientTest {
         try {
             ProviderConfig provider = provider(server, "integration-secret");
             provider.setThinking(true);
+            String projectRoot = Path.of("/tmp/mewcode-openai-project")
+                    .toAbsolutePath().normalize().toString();
             var history = new ConversationManager();
             history.addUserMessage("first");
             history.addAssistantMessage("answer");
             history.addUserMessage("second");
 
-            List<StreamEvent> events = collect(new OpenAiClient(provider, "SYSTEM_MARKER").stream(history));
+            List<StreamEvent> events = collect(new OpenAiClient(
+                    provider, PromptBuilder.buildSystemPrompt(Path.of(projectRoot))).stream(history));
 
             assertEquals("Hello ", ((StreamEvent.TextDelta) events.get(0)).text());
             assertEquals("OpenAI", ((StreamEvent.TextDelta) events.get(1)).text());
             assertInstanceOf(StreamEvent.StreamEnd.class, events.get(2));
-            assertTrue(body.get().contains("SYSTEM_MARKER"));
+            assertTrue(body.get().contains(projectRoot));
             assertTrue(body.get().contains("first"));
             assertTrue(body.get().contains("second"));
             assertFalse(body.get().contains("reasoning"));
             assertFalse(body.get().contains("thinking"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void deepSeekUsesTheSameRootAwareOpenAiRequest() throws Exception {
+        String fixture = resource("/sse/openai-chat.txt");
+        var body = new AtomicReference<String>();
+        HttpServer server = server(exchange -> {
+            body.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            respond(exchange, 200, "text/event-stream", fixture);
+        });
+        try {
+            ProviderConfig provider = provider(server, "deepseek-key");
+            provider.setProtocol("deepseek");
+            String projectRoot = Path.of("/tmp/mewcode-deepseek-project")
+                    .toAbsolutePath().normalize().toString();
+            var history = new ConversationManager();
+            history.addUserMessage("hello");
+
+            collect(new OpenAiClient(provider, PromptBuilder.buildSystemPrompt(Path.of(projectRoot)))
+                    .stream(history));
+
+            assertTrue(body.get().contains(projectRoot), body.get());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void streamsToolUseAndSendsProviderToolDefinitions() throws Exception {
+        String fixture = resource("/sse/openai-tool-use.txt");
+        var body = new AtomicReference<String>();
+        HttpServer server = server(exchange -> {
+            body.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            respond(exchange, 200, "text/event-stream", fixture);
+        });
+        try {
+            var history = new ConversationManager();
+            history.addUserMessage("read the file");
+            List<StreamEvent> events = collect(new OpenAiClient(
+                    provider(server, "tool-key"), "system").stream(history,
+                    List.of(Map.of("type", "function", "function", Map.of(
+                            "name", "ReadFile",
+                            "description", "read a file",
+                            "parameters", Map.of("type", "object"))))));
+
+            assertInstanceOf(StreamEvent.ToolCallComplete.class, events.get(0));
+            var call = (StreamEvent.ToolCallComplete) events.get(0);
+            assertEquals("call_1", call.toolUseId());
+            assertEquals("ReadFile", call.toolName());
+            assertEquals("/tmp/main.py", call.arguments().get("path"));
+            assertInstanceOf(StreamEvent.StreamEnd.class, events.get(1));
+            assertTrue(body.get().contains("\"tools\""), body.get());
+            assertTrue(body.get().contains("ReadFile"), body.get());
         } finally {
             server.stop(0);
         }

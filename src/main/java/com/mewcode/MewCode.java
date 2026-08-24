@@ -29,7 +29,8 @@ public final class MewCode {
             return 2;
         }
 
-        var model = new MewCodeModel(config.getProviders(), projectRoot);
+        var model = new MewCodeModel(config.getProviders(), projectRoot,
+                com.mewcode.llm.LlmClients::create, config.getAgent().getLoop());
         var program = new Program(model);
 
         System.out.print("\033[?25l");

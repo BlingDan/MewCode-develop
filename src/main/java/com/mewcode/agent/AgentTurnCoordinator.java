@@ -1,26 +1,26 @@
 package com.mewcode.agent;
 
-import com.mewcode.conversation.ContentBlock;
 import com.mewcode.conversation.ConversationManager;
-import com.mewcode.conversation.TextBlock;
 import com.mewcode.conversation.ToolResultBlock;
-import com.mewcode.conversation.ToolUseBlock;
+import com.mewcode.llm.CancellableLlmStream;
 import com.mewcode.llm.LlmClient;
-import com.mewcode.llm.StreamEvent;
 import com.mewcode.tool.ToolApiProtocol;
 import com.mewcode.tool.ToolCall;
 import com.mewcode.tool.ToolExecutor;
 import com.mewcode.tool.ToolInvocationResult;
 import com.mewcode.tool.ToolRegistry;
+import com.mewcode.tool.ToolResult;
 
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.function.Function;
 
-/** 编排一次模型请求、工具执行和一次结果回灌后的最终请求。 */
+/** 编排持续的 ReAct Agent Loop。 */
 public final class AgentTurnCoordinator {
 
     private static final int QUEUE_CAPACITY = 512;
@@ -30,166 +30,233 @@ public final class AgentTurnCoordinator {
     private final ToolExecutor executor;
     private final ConversationManager conversation;
     private final ToolApiProtocol protocol;
+    private final AgentLoopConfig config;
+    private final Function<AgentMode, String> systemPromptProvider;
 
     public AgentTurnCoordinator(LlmClient client,
                                 ToolRegistry registry,
                                 ToolExecutor executor,
                                 ConversationManager conversation,
                                 ToolApiProtocol protocol) {
-        this.client = client;
-        this.registry = registry;
-        this.executor = executor;
-        this.conversation = conversation;
-        this.protocol = protocol;
+        this(client, registry, executor, conversation, protocol,
+                new AgentLoopConfig(), mode -> null);
     }
 
+    public AgentTurnCoordinator(LlmClient client,
+                                ToolRegistry registry,
+                                ToolExecutor executor,
+                                ConversationManager conversation,
+                                ToolApiProtocol protocol,
+                                AgentLoopConfig config) {
+        this(client, registry, executor, conversation, protocol, config, mode -> null);
+    }
+
+    public AgentTurnCoordinator(LlmClient client,
+                                ToolRegistry registry,
+                                ToolExecutor executor,
+                                ConversationManager conversation,
+                                ToolApiProtocol protocol,
+                                AgentLoopConfig config,
+                                Function<AgentMode, String> systemPromptProvider) {
+        this.client = Objects.requireNonNull(client, "client");
+        this.registry = Objects.requireNonNull(registry, "registry");
+        this.executor = Objects.requireNonNull(executor, "executor");
+        this.conversation = Objects.requireNonNull(conversation, "conversation");
+        this.protocol = Objects.requireNonNull(protocol, "protocol");
+        this.config = Objects.requireNonNull(config, "config").copy();
+        this.config.validate();
+        this.systemPromptProvider = Objects.requireNonNull(systemPromptProvider,
+                "systemPromptProvider");
+    }
+
+    /** 兼容现有 TUI/测试的队列入口；新代码应使用 startRun。 */
     public BlockingQueue<AgentEvent> start(String userText) {
+        AgentRun run = startRun(userText, AgentMode.EXECUTE);
         var queue = new LinkedBlockingQueue<AgentEvent>(QUEUE_CAPACITY);
+        Thread.startVirtualThread(() -> bridge(run.events(), queue));
+        return queue;
+    }
+
+    public AgentRun startRun(String userText, AgentMode mode) {
+        Objects.requireNonNull(userText, "userText");
+        AgentMode effectiveMode = mode == null ? AgentMode.EXECUTE : mode;
+        var run = new AgentRun();
         try {
             conversation.addUserMessage(userText);
-            List<Map<String, Object>> schemas = registry.toAPIFormate(protocol);
-            BlockingQueue<com.mewcode.llm.StreamEvent> firstStream =
-                    client.stream(conversation, schemas);
-            Thread.startVirtualThread(() -> runTurn(firstStream, queue));
-        } catch (RuntimeException error) {
-            put(queue, new AgentEvent.Error("Unable to start provider request."));
+            Thread.startVirtualThread(() -> runLoop(run, effectiveMode));
+        } catch (Throwable error) {
+            finish(run, 0, "Agent Loop 启动失败：" + safeMessage(error),
+                    AgentEvent.ErrorCategory.LOOP);
         }
-        return queue;
+        return run;
     }
 
     public ConversationManager conversation() {
         return conversation;
     }
 
-    private void runTurn(BlockingQueue<StreamEvent> firstStream,
-                         BlockingQueue<AgentEvent> output) {
-        try {
-            Turn first = consume(firstStream, output);
-            if (first.error() != null) {
-                put(output, new AgentEvent.Error(first.error()));
-                return;
-            }
-            if (first.calls().isEmpty()) {
-                conversation.addAssistantMessage(first.blocks());
-                put(output, new AgentEvent.Completed(first.stopReason()));
-                return;
-            }
+    public AgentLoopConfig config() {
+        return config.copy();
+    }
 
-            conversation.addAssistantMessage(first.blocks());
-            List<ToolCall> executableCalls = new ArrayList<>();
-            for (int i = 0; i < first.calls().size(); i++) {
-                if (!first.parseErrors().containsKey(first.calls().get(i).toolUseId())) {
-                    executableCalls.add(first.calls().get(i));
+    private void runLoop(AgentRun run, AgentMode mode) {
+        var usage = new TokenUsageAccumulator();
+        var collector = new TurnStreamCollector(usage);
+        var policy = ToolPolicy.forMode(mode);
+        int completedRounds = 0;
+        int unknownToolRounds = 0;
+
+        try {
+            while (!run.cancellationToken().isCancelled()
+                    && completedRounds < config.getMaxIterations()) {
+                int round = completedRounds + 1;
+                List<Map<String, Object>> schemas = registry.toAPIFormate(
+                        protocol, policy::isAllowed);
+                String systemPrompt = systemPromptProvider.apply(mode);
+                CancellableLlmStream stream = systemPrompt == null
+                        ? client.openStream(conversation, schemas)
+                        : client.openStream(conversation, schemas, systemPrompt);
+                CollectedTurn turn = collector.collect(run, stream, round);
+
+                if (run.cancellationToken().isCancelled()) {
+                    finish(run, completedRounds, null, null);
+                    return;
+                }
+                if (!turn.complete()) {
+                    finish(run, completedRounds,
+                            turn.error() == null ? "LLM 流未完整结束。" : turn.error(),
+                            AgentEvent.ErrorCategory.PROVIDER);
+                    return;
+                }
+
+                completedRounds = round;
+                run.events().publish(new AgentEvent.TurnComplete(round));
+                if (turn.calls().isEmpty()) {
+                    conversation.addAssistantMessage(turn.blocks());
+                    finish(run, completedRounds, null, null);
+                    return;
+                }
+
+                List<ToolCall> executableCalls = turn.calls().stream()
+                        .filter(call -> !turn.parseErrors().containsKey(call.toolUseId()))
+                        .toList();
+                List<ToolInvocationResult> executed = executor.executeBatch(
+                        executableCalls, policy, run.cancellationToken());
+                List<ToolResultBlock> resultBlocks = ToolResultAssembler.assemble(
+                        turn.calls(), executed, turn.parseErrors());
+                // 工具调用和结果必须成对提交，取消发生在工具执行期间也不能留下悬空 assistant 消息。
+                conversation.addToolTurn(turn.blocks(), resultBlocks);
+                emitResults(run, turn.calls(), resultBlocks, executed);
+
+                if (run.cancellationToken().isCancelled()) {
+                    finish(run, completedRounds, null, null);
+                    return;
+                }
+
+                boolean hasExecutableKnownTool = executableCalls.stream()
+                        .anyMatch(call -> registry.get(call.toolName())
+                                .filter(policy::isAllowed)
+                                .isPresent());
+                unknownToolRounds = hasExecutableKnownTool ? 0 : unknownToolRounds + 1;
+                if (unknownToolRounds >= config.getUnknownToolRoundLimit()) {
+                    finish(run, completedRounds,
+                            "连续 " + config.getUnknownToolRoundLimit()
+                                    + " 轮没有可执行的已知工具，Agent Loop 已停止。",
+                            AgentEvent.ErrorCategory.LOOP);
+                    return;
+                }
+                if (completedRounds >= config.getMaxIterations()) {
+                    finish(run, completedRounds,
+                            "已达到最大迭代次数 " + config.getMaxIterations()
+                                    + "，Agent Loop 已停止。",
+                            AgentEvent.ErrorCategory.LOOP);
+                    return;
                 }
             }
-            List<ToolInvocationResult> executed = executor.executeBatch(executableCalls);
-            List<ToolResultBlock> resultBlocks = ToolResultAssembler.assemble(
-                    first.calls(), executed, first.parseErrors());
-            conversation.addToolResults(resultBlocks);
-            emitResults(output, first.calls(), resultBlocks, executed);
 
-            // 最终答复阶段不再提供工具定义，确保本章不会开启第二轮工具执行。
-            Turn finalTurn = consume(client.stream(conversation, List.of()), output);
-            if (finalTurn.error() != null) {
-                put(output, new AgentEvent.Error(finalTurn.error()));
-                return;
+            if (run.cancellationToken().isCancelled()) {
+                finish(run, completedRounds, null, null);
+            } else {
+                finish(run, completedRounds,
+                        "已达到最大迭代次数 " + config.getMaxIterations()
+                                + "，Agent Loop 已停止。",
+                        AgentEvent.ErrorCategory.LOOP);
             }
-            if (!finalTurn.calls().isEmpty()) {
-                put(output, new AgentEvent.Error(
-                        "本章只支持一次工具结果回灌，未继续执行模型再次请求的工具调用。"));
-                return;
+        } catch (InterruptedException error) {
+            if (!run.cancellationToken().isCancelled()) {
+                Thread.currentThread().interrupt();
+                finish(run, completedRounds, "Agent Loop 被线程中断。",
+                        AgentEvent.ErrorCategory.LOOP);
+            } else {
+                finish(run, completedRounds, null, null);
             }
-            conversation.addAssistantMessage(finalTurn.blocks());
-            put(output, new AgentEvent.Completed(finalTurn.stopReason()));
-        } catch (Exception error) {
-            put(output, new AgentEvent.Error("Agent 回合执行失败："
-                    + safeMessage(error) + "。"));
-        }
-    }
-
-    private static Turn consume(BlockingQueue<StreamEvent> stream,
-                                BlockingQueue<AgentEvent> output) throws InterruptedException {
-        var blocks = new ArrayList<ContentBlock>();
-        var calls = new ArrayList<ToolCall>();
-        var parseErrors = new HashMap<String, String>();
-        while (true) {
-            StreamEvent event = stream.take();
-            if (event instanceof StreamEvent.TextDelta text) {
-                appendText(blocks, text.text());
-                put(output, new AgentEvent.TextDelta(text.text()));
-            } else if (event instanceof StreamEvent.ThinkingDelta thinking) {
-                put(output, new AgentEvent.ThinkingDelta(thinking.text()));
-            } else if (event instanceof StreamEvent.ToolCallComplete toolCall) {
-                var call = new ToolCall(toolCall.toolUseId(), toolCall.toolName(), toolCall.arguments());
-                calls.add(call);
-                blocks.add(new ToolUseBlock(call.toolUseId(), call.toolName(), call.arguments()));
-                put(output, new AgentEvent.ToolStarted(
-                        call.toolUseId(), call.toolName(), call.arguments()));
-            } else if (event instanceof StreamEvent.ToolCallParseError parseError) {
-                String id = parseError.toolUseId() == null ? "invalid-tool-call" : parseError.toolUseId();
-                var call = new ToolCall(id, parseError.toolName(), Map.of());
-                calls.add(call);
-                blocks.add(new ToolUseBlock(id, parseError.toolName(), Map.of()));
-                parseErrors.put(id, parseError.message());
-                put(output, new AgentEvent.ToolStarted(id, parseError.toolName(), Map.of()));
-            } else if (event instanceof StreamEvent.Error error) {
-                return new Turn(List.copyOf(blocks), List.copyOf(calls), parseErrors,
-                        "", error.message());
-            } else if (event instanceof StreamEvent.StreamEnd end) {
-                return new Turn(List.copyOf(blocks), List.copyOf(calls), parseErrors,
-                        end.stopReason(), null);
+        } catch (Throwable error) {
+            if (run.cancellationToken().isCancelled()) {
+                finish(run, completedRounds, null, null);
+            } else {
+                finish(run, completedRounds, "Agent Loop 执行失败：" + safeMessage(error),
+                        AgentEvent.ErrorCategory.LOOP);
             }
         }
     }
 
-    private static void emitResults(BlockingQueue<AgentEvent> output,
+    private static void emitResults(AgentRun run,
                                     List<ToolCall> calls,
                                     List<ToolResultBlock> blocks,
                                     List<ToolInvocationResult> executed) {
-        var results = new HashMap<String, ToolResultBlock>();
-        for (ToolResultBlock block : blocks) results.putIfAbsent(block.toolUseId(), block);
-        for (ToolCall call : calls) {
-            ToolResultBlock block = results.get(call.toolUseId());
-            if (block != null) {
-                var result = new com.mewcode.tool.ToolResult(block.content(), block.isError(), Map.of());
-                for (ToolInvocationResult invocation : executed) {
-                    if (invocation.toolUseId().equals(call.toolUseId())) {
-                        result = invocation.result();
-                        break;
-                    }
-                }
-                put(output, new AgentEvent.ToolCompleted(call.toolUseId(), call.toolName(), result));
-            }
+        var byId = new java.util.HashMap<String, ArrayDeque<ToolInvocationResult>>();
+        for (ToolInvocationResult invocation : executed) {
+            byId.computeIfAbsent(invocation.toolUseId(), ignored -> new ArrayDeque<>())
+                    .addLast(invocation);
+        }
+        for (int i = 0; i < calls.size(); i++) {
+            ToolCall call = calls.get(i);
+            ToolResultBlock block = blocks.get(i);
+            var invocations = byId.get(call.toolUseId());
+            ToolInvocationResult invocation = invocations == null
+                    ? null : invocations.pollFirst();
+            ToolResult result = invocation == null
+                    ? new ToolResult(block.content(), block.isError(), Map.of())
+                    : invocation.result();
+            run.events().publish(new AgentEvent.ToolResult(
+                    call.toolUseId(), call.toolName(), result.content(), result.isError(),
+                    durationMillis(result)));
         }
     }
 
-    private static void appendText(List<ContentBlock> blocks, String text) {
-        if (text == null || text.isEmpty()) return;
-        if (!blocks.isEmpty() && blocks.getLast() instanceof TextBlock previous) {
-            blocks.set(blocks.size() - 1, new TextBlock(previous.text() + text));
-        } else {
-            blocks.add(new TextBlock(text));
-        }
+    private static long durationMillis(ToolResult result) {
+        Object value = result.metadata().get("durationMs");
+        return value instanceof Number number ? Math.max(0, number.longValue()) : 0;
     }
 
-    private static void put(BlockingQueue<AgentEvent> queue, AgentEvent event) {
+    private static void finish(AgentRun run,
+                               int totalRounds,
+                               String errorMessage,
+                               AgentEvent.ErrorCategory category) {
+        if (errorMessage != null && category != null) {
+            run.events().publish(new AgentEvent.Error(errorMessage, category));
+        }
+        run.events().publish(new AgentEvent.LoopComplete(totalRounds));
+        run.complete();
+    }
+
+    private static void bridge(AgentEventStream source,
+                               BlockingQueue<AgentEvent> target) {
         try {
-            queue.put(event);
+            while (true) {
+                AgentEvent event = source.next();
+                if (event == null) return;
+                target.put(event);
+            }
         } catch (InterruptedException error) {
             Thread.currentThread().interrupt();
         }
     }
 
-    private static String safeMessage(Exception error) {
+    private static String safeMessage(Throwable error) {
         String message = error.getMessage();
-        return message == null || message.isBlank() ? error.getClass().getSimpleName() : message;
-    }
-
-    private record Turn(
-            List<ContentBlock> blocks,
-            List<ToolCall> calls,
-            Map<String, String> parseErrors,
-            String stopReason,
-            String error) {
+        return message == null || message.isBlank()
+                ? error.getClass().getSimpleName()
+                : message;
     }
 }

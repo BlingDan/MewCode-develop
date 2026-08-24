@@ -4,5 +4,6 @@ data: {"id":"chatcmpl-test","object":"chat.completion.chunk","created":171000000
 
 data: {"id":"chatcmpl-test","object":"chat.completion.chunk","created":1710000000,"model":"gpt-test","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
 
-data: [DONE]
+data: {"id":"chatcmpl-test","object":"chat.completion.chunk","created":1710000000,"model":"gpt-test","choices":[],"usage":{"prompt_tokens":11,"completion_tokens":3,"total_tokens":14}}
 
+data: [DONE]

@@ -49,19 +49,19 @@ class AgentTurnCoordinatorTest {
             BlockingQueue<AgentEvent> events = coordinator.start("inspect");
             List<AgentEvent> seen = awaitCompletion(events);
 
-            assertTrue(seen.stream().anyMatch(event -> event instanceof AgentEvent.ToolCompleted
-                    && ((AgentEvent.ToolCompleted) event).toolUseId().equals("call-read")));
-            assertTrue(seen.stream().anyMatch(event -> event instanceof AgentEvent.ToolCompleted
-                    && ((AgentEvent.ToolCompleted) event).toolUseId().equals("call-search")));
+            assertTrue(seen.stream().anyMatch(event -> event instanceof AgentEvent.ToolResult
+                    && ((AgentEvent.ToolResult) event).requestId().equals("call-read")));
+            assertTrue(seen.stream().anyMatch(event -> event instanceof AgentEvent.ToolResult
+                    && ((AgentEvent.ToolResult) event).requestId().equals("call-search")));
             var started = seen.stream()
-                    .filter(event -> event instanceof AgentEvent.ToolStarted)
-                    .map(event -> (AgentEvent.ToolStarted) event)
+                    .filter(event -> event instanceof AgentEvent.ToolUse)
+                    .map(event -> (AgentEvent.ToolUse) event)
                     .toList();
-            assertEquals(Map.of("value", "one"), started.get(0).arguments());
-            assertEquals(Map.of("value", "two"), started.get(1).arguments());
+            assertEquals(Map.of("value", "one"), started.get(0).input());
+            assertEquals(Map.of("value", "two"), started.get(1).input());
             assertEquals(2, client.calls.size());
             assertFalse(client.toolRequests.get(0).isEmpty());
-            assertTrue(client.toolRequests.get(1).isEmpty());
+            assertFalse(client.toolRequests.get(1).isEmpty());
             assertEquals(1, client.calls.get(0).getMessages().size());
             assertEquals(3, client.calls.get(1).getMessages().size());
 
@@ -80,14 +80,16 @@ class AgentTurnCoordinatorTest {
     }
 
     @Test
-    void doesNotStartAThirdRequestWhenFinalResponseUsesAnotherTool() throws Exception {
+    void keepsLoopingWhenTheNextResponseRequestsAnotherTool() throws Exception {
         var first = queue(
                 new StreamEvent.ToolCallComplete("call-1", "Echo", Map.of("value", "one")),
                 new StreamEvent.StreamEnd("tool_use"));
         var second = queue(
                 new StreamEvent.ToolCallComplete("call-2", "Echo", Map.of("value", "two")),
                 new StreamEvent.StreamEnd("tool_use"));
-        var client = new QueueClient(List.of(first, second));
+        var third = queue(new StreamEvent.TextDelta("Finished."),
+                new StreamEvent.StreamEnd("end_turn"));
+        var client = new QueueClient(List.of(first, second, third));
         var registry = new ToolRegistry();
         registry.register(new EchoTool());
         var conversation = new ConversationManager();
@@ -98,15 +100,18 @@ class AgentTurnCoordinatorTest {
                     ToolApiProtocol.OPENAI);
             List<AgentEvent> events = awaitCompletion(coordinator.start("one round only"));
 
-            assertEquals(2, client.calls.size());
-            assertTrue(client.toolRequests.get(1).isEmpty());
-            assertInstanceOf(AgentEvent.Error.class, events.getLast());
-            assertTrue(((AgentEvent.Error) events.getLast()).message().contains("一次工具结果回灌"));
+            assertEquals(3, client.calls.size());
+            assertFalse(client.toolRequests.get(1).isEmpty());
+            assertEquals(1, events.stream()
+                    .filter(event -> event instanceof AgentEvent.LoopComplete)
+                    .count());
+            assertTrue(events.stream().anyMatch(event -> event instanceof AgentEvent.StreamText text
+                    && text.text().equals("Finished.")));
         }
     }
 
     @Test
-    void parseFailureStillEmitsToolStartedWithEmptyArguments() throws Exception {
+    void parseFailureStillEmitsToolUseWithEmptyArguments() throws Exception {
         var first = queue(
                 new StreamEvent.ToolCallParseError("call-invalid", "Echo", "invalid JSON"),
                 new StreamEvent.StreamEnd("tool_use"));
@@ -123,13 +128,13 @@ class AgentTurnCoordinatorTest {
             List<AgentEvent> events = awaitCompletion(coordinator.start("invalid"));
 
             var started = events.stream()
-                    .filter(event -> event instanceof AgentEvent.ToolStarted)
-                    .map(event -> (AgentEvent.ToolStarted) event)
+                    .filter(event -> event instanceof AgentEvent.ToolUse)
+                    .map(event -> (AgentEvent.ToolUse) event)
                     .findFirst()
                     .orElseThrow();
-            assertEquals("call-invalid", started.toolUseId());
+            assertEquals("call-invalid", started.requestId());
             assertEquals("Echo", started.toolName());
-            assertTrue(started.arguments().isEmpty());
+            assertTrue(started.input().isEmpty());
         }
     }
 
@@ -139,7 +144,7 @@ class AgentTurnCoordinatorTest {
             AgentEvent event = queue.poll(3, TimeUnit.SECONDS);
             assertNotNull(event, "agent turn timed out");
             result.add(event);
-            if (event instanceof AgentEvent.Completed || event instanceof AgentEvent.Error) return result;
+            if (event instanceof AgentEvent.LoopComplete) return result;
         }
     }
 

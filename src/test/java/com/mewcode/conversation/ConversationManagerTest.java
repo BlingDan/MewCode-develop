@@ -33,4 +33,20 @@ class ConversationManagerTest {
         assertEquals(1, snapshot.size());
         assertEquals(2, history.getMessages().size());
     }
+
+    @Test
+    void commitsAssistantToolTurnAndResultsAsOneHistoryOperation() {
+        var history = new ConversationManager();
+        var assistant = java.util.List.<ContentBlock>of(
+                new TextBlock("inspect"),
+                new ToolUseBlock("call-1", "ReadFile", java.util.Map.of("path", "/tmp/a")));
+        var results = java.util.List.of(new ToolResultBlock("call-1", "content", false));
+
+        history.addToolTurn(assistant, results);
+
+        assertEquals(2, history.getMessages().size());
+        assertEquals("assistant", history.getMessages().get(0).role());
+        assertEquals("user", history.getMessages().get(1).role());
+        assertInstanceOf(ToolResultBlock.class, history.getMessages().get(1).content().getFirst());
+    }
 }

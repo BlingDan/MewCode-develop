@@ -16,10 +16,12 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalLong;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -126,6 +128,25 @@ class MewCodeModelTest {
     }
 
     @Test
+    void planAndDoAreLocalPersistentModeSwitches() {
+        var client = new QueueClient();
+        var model = model(List.of(provider("one", "model-one")), client);
+        model.update(new WindowSizeMessage(80, 24));
+
+        type(model, "/plan");
+        var plan = model.update(key("enter"));
+        assertNotNull(plan.command());
+        assertTrue(model.view().contains("Plan Mode"));
+        assertEquals(0, client.calls.get());
+
+        type(model, "/do");
+        var execute = model.update(key("enter"));
+        assertNotNull(execute.command());
+        assertTrue(model.view().contains("Execute Mode"));
+        assertEquals(0, client.calls.get());
+    }
+
+    @Test
     void usesTheExplicitRootForPromptAndBanner() {
         var prompt = new AtomicReference<String>();
         var model = new MewCodeModel(
@@ -162,7 +183,7 @@ class MewCodeModelTest {
     }
 
     @Test
-    void altEnterSubmitsMultilineAndLocksSecondSubmit() {
+    void altEnterSubmitsMultilineAndLocksSecondSubmit() throws Exception {
         var client = new QueueClient();
         var model = model(List.of(provider("one", "model-one")), client);
         model.update(new WindowSizeMessage(80, 24));
@@ -173,6 +194,7 @@ class MewCodeModelTest {
         model.update(key("enter"));
         model.update(key("enter"));
 
+        awaitCalls(client, 1);
         assertEquals(1, client.calls.get());
         assertEquals("first\nsecond", client.lastConversation.get().getMessages().getFirst().textContent());
         assertTrue(model.view().contains("Waiting for response"));
@@ -205,7 +227,47 @@ class MewCodeModelTest {
     }
 
     @Test
-    void errorRecoversAndAllowsAnotherRequest() {
+    void keepsStreamingViewWithinViewportForLongResponses() throws Exception {
+        var queue = new LinkedBlockingQueue<StreamEvent>();
+        var client = new QueueClient(queue);
+        var model = model(List.of(provider("one", "model-one")), client);
+        int width = 80;
+        int height = 20;
+        model.update(new WindowSizeMessage(width, height));
+        type(model, "long response");
+        model.update(key("enter"));
+        awaitCalls(client, 1);
+
+        for (int i = 0; i < 80; i++) {
+            queue.offer(new StreamEvent.TextDelta("line-" + i + "\n"));
+        }
+        model.update(new MewCodeModel.StreamPollMessage());
+
+        assertTrue(physicalLines(model.view(), width) <= height,
+                () -> "streaming view exceeded terminal height: "
+                        + physicalLines(model.view(), width));
+    }
+
+    @Test
+    void rendersCumulativeUsageWhileStreaming() throws Exception {
+        var queue = new LinkedBlockingQueue<StreamEvent>();
+        var client = new QueueClient(queue);
+        var model = model(List.of(provider("one", "model-one")), client);
+        model.update(new WindowSizeMessage(80, 24));
+        type(model, "usage");
+        model.update(key("enter"));
+        awaitCalls(client, 1);
+
+        queue.offer(new StreamEvent.Usage(OptionalLong.of(11), OptionalLong.of(3)));
+        model.update(new MewCodeModel.StreamPollMessage());
+
+        assertTrue(model.view().contains("输入 11"));
+        assertTrue(model.view().contains("输出 3"));
+        model.update(key("escape"));
+    }
+
+    @Test
+    void errorRecoversAndAllowsAnotherRequest() throws Exception {
         var first = new LinkedBlockingQueue<StreamEvent>();
         var second = new LinkedBlockingQueue<StreamEvent>();
         var client = new QueueClient(first, second);
@@ -213,19 +275,22 @@ class MewCodeModelTest {
         model.update(new WindowSizeMessage(80, 24));
         type(model, "first");
         model.update(key("enter"));
+        awaitCalls(client, 1);
 
         first.offer(new StreamEvent.Error("Authentication failed."));
+        awaitIdle(model);
         var result = model.update(new MewCodeModel.StreamPollMessage());
 
-        assertNotNull(result.command());
+        assertNotNull(result);
         assertTrue(model.view().contains("Send a message..."));
         type(model, "second");
         model.update(key("enter"));
+        awaitCalls(client, 2);
         assertEquals(2, client.calls.get());
     }
 
     @Test
-    void ctrlCAlwaysReturnsQuitCommand() {
+    void ctrlCQuitsWhenIdleButCancelsTheActiveLoop() throws Exception {
         var model = model(List.of(provider("one", "model-one")), new QueueClient());
         model.update(new WindowSizeMessage(80, 24));
         assertNotNull(model.update(key("ctrl+c")).command());
@@ -233,10 +298,26 @@ class MewCodeModelTest {
         type(model, "hello");
         model.update(key("enter"));
         assertNotNull(model.update(key("ctrl+c")).command());
+        assertTrue(model.view().contains("Send a message..."));
     }
 
     @Test
-    void editsMultilineInputAtTheCursor() {
+    void escapeCancelsTheActiveLoopAndReturnsToIdle() throws Exception {
+        var client = new QueueClient(new LinkedBlockingQueue<>());
+        var model = model(List.of(provider("one", "model-one")), client);
+        model.update(new WindowSizeMessage(80, 24));
+
+        type(model, "hello");
+        model.update(key("enter"));
+        awaitCalls(client, 1);
+
+        assertNotNull(model.update(key("escape")).command());
+        assertTrue(model.view().contains("Send a message..."));
+        assertEquals(1, client.calls.get());
+    }
+
+    @Test
+    void editsMultilineInputAtTheCursor() throws Exception {
         var client = new QueueClient();
         var model = model(List.of(provider("one", "model-one")), client);
         model.update(new WindowSizeMessage(80, 24));
@@ -253,12 +334,13 @@ class MewCodeModelTest {
         type(model, ">");
         model.update(key("backspace"));
         model.update(key("enter"));
+        awaitCalls(client, 1);
 
         assertEquals("abc\n<xy", client.lastMessages.get().getFirst().textContent());
     }
 
     @Test
-    void nonExitSlashInputIsSentAndPartialErrorIsNotAssistantHistory() {
+    void nonExitSlashInputIsSentAndPartialErrorIsNotAssistantHistory() throws Exception {
         var first = new LinkedBlockingQueue<StreamEvent>();
         var second = new LinkedBlockingQueue<StreamEvent>();
         var client = new QueueClient(first, second);
@@ -267,13 +349,15 @@ class MewCodeModelTest {
 
         type(model, "/help");
         model.update(key("enter"));
+        awaitCalls(client, 1);
         assertEquals("/help", client.lastMessages.get().getFirst().textContent());
 
         first.offer(new StreamEvent.TextDelta("partial-secret"));
         first.offer(new StreamEvent.Error("Connection interrupted."));
-        model.update(new MewCodeModel.StreamPollMessage());
+        awaitIdle(model);
         type(model, "next");
         model.update(key("enter"));
+        awaitCalls(client, 2);
 
         assertEquals(List.of(new Message("user", "/help"), new Message("user", "next")),
                 client.lastMessages.get());
@@ -317,6 +401,23 @@ class MewCodeModelTest {
         return printed;
     }
 
+    private static void awaitCalls(QueueClient client, int expected) throws Exception {
+        for (int attempt = 0; attempt < 100; attempt++) {
+            if (client.calls.get() >= expected) return;
+            Thread.sleep(10);
+        }
+        fail("expected " + expected + " provider calls, got " + client.calls.get());
+    }
+
+    private static void awaitIdle(MewCodeModel model) throws Exception {
+        for (int attempt = 0; attempt < 150; attempt++) {
+            model.update(new MewCodeModel.StreamPollMessage());
+            if (model.view().contains("Send a message...")) return;
+            Thread.sleep(10);
+        }
+        fail("agent turn did not return to idle");
+    }
+
     private static void collectPrintLines(Command command, List<String> output) {
         if (command instanceof Command.PrintLine line) {
             output.add(line.text());
@@ -331,6 +432,19 @@ class MewCodeModelTest {
         }
         return -1;
     }
+
+    private static int physicalLines(String value, int width) {
+        int total = 0;
+        for (String line : value.split("\\n", -1)) {
+            String plain = ANSI_ESCAPE.matcher(line).replaceAll("");
+            total += Math.max(1, (int) Math.ceil(
+                    (double) com.mewcode.tui.tea.Program.displayWidth(plain) / width));
+        }
+        return total;
+    }
+
+    private static final Pattern ANSI_ESCAPE = Pattern.compile(
+            "\\033\\[[0-9;]*[a-zA-Z]|\\033\\][^\\007\\033]*(?:\\007|\\033\\\\\\\\)");
 
     private static final class QueueClient implements LlmClient {
         private final ArrayDeque<BlockingQueue<StreamEvent>> queues = new ArrayDeque<>();

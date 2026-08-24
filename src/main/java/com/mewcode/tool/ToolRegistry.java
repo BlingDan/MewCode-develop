@@ -12,6 +12,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Predicate;
 import java.util.concurrent.ConcurrentHashMap;
 
 /** 集中注册工具并生成 provider 无关的 API 定义。 */
@@ -41,8 +42,14 @@ public final class ToolRegistry {
 
     /** 兼容既有方案中的方法名，生成当前 provider 所需的工具定义。 */
     public List<Map<String, Object>> toAPIFormate(ToolApiProtocol protocol) {
+        return toAPIFormate(protocol, tool -> true);
+    }
+
+    public List<Map<String, Object>> toAPIFormate(ToolApiProtocol protocol,
+                                                  Predicate<Tool> filter) {
         var result = new ArrayList<Map<String, Object>>();
         for (Tool tool : getAll()) {
+            if (filter != null && !filter.test(tool)) continue;
             if (protocol == ToolApiProtocol.ANTHROPIC) {
                 result.add(anthropicDefinition(tool));
             } else {

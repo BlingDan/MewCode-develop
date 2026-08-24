@@ -5,7 +5,7 @@ import com.mewcode.tool.ToolCall;
 import com.mewcode.tool.ToolInvocationResult;
 import com.mewcode.tool.ToolResult;
 
-import java.util.LinkedHashMap;
+import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Map;
 
@@ -19,9 +19,10 @@ public final class ToolResultAssembler {
             List<ToolCall> allCalls,
             List<ToolInvocationResult> executed,
             Map<String, String> parseErrors) {
-        var byId = new LinkedHashMap<String, ToolResult>();
+        var byId = new java.util.HashMap<String, ArrayDeque<ToolResult>>();
         for (ToolInvocationResult result : executed) {
-            byId.putIfAbsent(result.toolUseId(), result.result());
+            byId.computeIfAbsent(result.toolUseId(), ignored -> new ArrayDeque<>())
+                    .addLast(result.result());
         }
         var blocks = new java.util.ArrayList<ToolResultBlock>();
         for (ToolCall call : allCalls) {
@@ -30,7 +31,8 @@ public final class ToolResultAssembler {
                 blocks.add(new ToolResultBlock(call.toolUseId(), parseError, true));
                 continue;
             }
-            ToolResult result = byId.get(call.toolUseId());
+            var results = byId.get(call.toolUseId());
+            ToolResult result = results == null ? null : results.pollFirst();
             if (result == null) {
                 result = ToolResult.error("工具没有返回结果，请重试该调用。");
             }

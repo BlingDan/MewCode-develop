@@ -47,6 +47,43 @@ class ConfigLoaderTest {
     }
 
     @Test
+    void loadsAgentLoopDefaultsWhenAgentSectionIsMissing() throws Exception {
+        AppConfig loaded = ConfigLoader.load(write(validProvider()));
+
+        assertEquals(20, loaded.getAgent().getLoop().getMaxIterations());
+        assertEquals(3, loaded.getAgent().getLoop().getUnknownToolRoundLimit());
+    }
+
+    @Test
+    void loadsConfiguredAgentLoopLimitsWithHyphenatedKeys() throws Exception {
+        Path config = write("""
+                agent:
+                  loop:
+                    max-iterations: 7
+                    unknown-tool-round-limit: 5
+                """ + validProvider());
+
+        AppConfig loaded = ConfigLoader.load(config);
+
+        assertEquals(7, loaded.getAgent().getLoop().getMaxIterations());
+        assertEquals(5, loaded.getAgent().getLoop().getUnknownToolRoundLimit());
+    }
+
+    @Test
+    void rejectsNonPositiveAgentLoopLimits() throws Exception {
+        Path config = write("""
+                agent:
+                  loop:
+                    max-iterations: 0
+                """ + validProvider());
+
+        var error = assertThrows(ConfigLoader.ConfigException.class,
+                () -> ConfigLoader.load(config));
+
+        assertTrue(error.getMessage().contains("max_iterations"));
+    }
+
+    @Test
     void rejectsMissingFileWithoutStackDetails() {
         var error = assertThrows(ConfigLoader.ConfigException.class,
                 () -> ConfigLoader.load(tempDir.resolve("missing.yaml").toString()));

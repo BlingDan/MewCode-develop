@@ -24,6 +24,13 @@ public final class ConversationManager {
         messages.add(new Message("user", new ArrayList<>(results)));
     }
 
+    /** 原子提交一轮完整的 assistant 工具调用和对应结果。 */
+    public synchronized void addToolTurn(List<ContentBlock> assistantContent,
+                                          List<ToolResultBlock> results) {
+        messages.add(new Message("assistant", assistantContent));
+        messages.add(new Message("user", new ArrayList<>(results)));
+    }
+
     public synchronized void addMessage(Message message) {
         messages.add(message);
     }

@@ -53,6 +53,18 @@ public final class ConfigLoader {
     }
 
     private static void validate(AppConfig config) throws ConfigException {
+        if (config.getAgent() == null || config.getAgent().getLoop() == null) {
+            throw new ConfigException("agent.loop must be an object");
+        }
+        try {
+            config.getAgent().getLoop().validate();
+        } catch (IllegalArgumentException error) {
+            String field = error.getMessage() != null && error.getMessage().startsWith("maxIterations")
+                    ? "max_iterations"
+                    : "unknown_tool_round_limit";
+            throw new ConfigException("agent.loop." + field + " must be positive");
+        }
+
         if (config.getProviders() == null || config.getProviders().isEmpty()) {
             throw new ConfigException("providers must contain at least one entry");
         }
@@ -106,7 +118,7 @@ public final class ConfigLoader {
             var result = new StringBuilder();
             boolean upper = false;
             for (char c : value.toCharArray()) {
-                if (c == '_') {
+                if (c == '_' || c == '-') {
                     upper = true;
                 } else {
                     result.append(upper ? Character.toUpperCase(c) : c);

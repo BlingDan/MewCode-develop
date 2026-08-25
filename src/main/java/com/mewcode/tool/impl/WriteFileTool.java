@@ -84,6 +84,7 @@ public final class WriteFileTool implements Tool {
         return PathGuard.validatePathArgument(input.get("path"), context.projectRoot());
     }
 
+    /** 校验路径和已有文件快照后写入文本，并返回实际写入摘要。 */
     @Override
     public ToolResult execute(ToolExecutionContext context, Map<String, Object> input) {
         String pathError = PathGuard.validatePath(input.get("path"), context.projectRoot(), false);

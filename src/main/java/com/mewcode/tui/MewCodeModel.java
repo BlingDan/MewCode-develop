@@ -31,7 +31,13 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
 import java.util.Objects;
 
-/** MewCode 终端交互模型，负责展示文本流和工具回合状态。 */
+/**
+ * MewCode 终端交互模型，负责把 AgentEvent 投影为可重绘的 UI 状态。
+ *
+ * <p>模型不直接调用 provider 或工具：提交消息时启动 {@link AgentRun}，后续由定时
+ * {@link StreamPollMessage} 消费事件。流式 buffer 只用于实时预览和完整响应收尾，
+ * 最终历史由 Agent 协调器维护，取消时不会把半截 assistant 文本写入会话。</p>
+ */
 public final class MewCodeModel implements Model {
 
     public static final String VERSION = "0.1.0";
@@ -113,11 +119,16 @@ public final class MewCodeModel implements Model {
         }
     }
 
+    /** 初始化阶段请求一次窗口尺寸，随后再创建 provider。 */
     @Override
     public Command init() {
         return Command.checkWindowSize();
     }
 
+    /**
+     * 处理单条 TUI 消息。
+     * Ctrl+C 在流式态只取消当前 Loop，在空闲态才产生 Quit；Esc 只取消当前 Loop。
+     */
     @Override
     public UpdateResult<MewCodeModel> update(Message message) {
         if (message instanceof KeyPressMessage key && "ctrl+c".equals(key.key())) {
@@ -155,6 +166,7 @@ public final class MewCodeModel implements Model {
                 : handleChatKey(key);
     }
 
+    /** 返回当前模式的完整视图；流式长文本由动态区预览限制在终端高度内。 */
     @Override
     public String view() {
         if (!ready) return "";
@@ -183,6 +195,7 @@ public final class MewCodeModel implements Model {
         };
     }
 
+    /** 创建 provider、默认工具注册表和 Agent 协调器；失败只阻塞当前会话而不崩溃 TUI。 */
     private void initializeProvider() {
         try {
             client = clientFactory.apply(selectedProvider, PromptBuilder.buildSystemPrompt(projectRoot));
@@ -256,6 +269,7 @@ public final class MewCodeModel implements Model {
         return UpdateResult.from(this);
     }
 
+    /** 处理一条输入：slash 命令本地生效，普通文本启动异步 Agent Loop。 */
     private UpdateResult<MewCodeModel> submit() {
         String text = inputBuffer.toString();
         if (text.isBlank()) return UpdateResult.from(this);
@@ -310,6 +324,7 @@ public final class MewCodeModel implements Model {
                 Command.tick(POLL_INTERVAL, ignored -> new StreamPollMessage())));
     }
 
+    /** 批量消费事件并转换为 UI 命令；定时 tick 保证没有事件时 spinner 仍会刷新。 */
     private UpdateResult<MewCodeModel> pollStream() {
         if (!streaming || streamEvents == null) return UpdateResult.from(this);
 
@@ -385,6 +400,7 @@ public final class MewCodeModel implements Model {
         return Command.batch(commands.toArray(Command[]::new));
     }
 
+    /** 正常收到 LoopComplete 后一次性渲染完整响应，并把它放入 UI 历史。 */
     private UpdateResult<MewCodeModel> completeStream() {
         String rawText = streamBuffer.toString();
         double elapsed = elapsedSeconds();
@@ -398,6 +414,7 @@ public final class MewCodeModel implements Model {
         return UpdateResult.from(this, Command.println(output));
     }
 
+    /** 取消当前 AgentRun；已显示的部分文本仅保留在终端提示，不写入会话历史。 */
     private UpdateResult<MewCodeModel> cancelStream() {
         if (!streaming) return UpdateResult.from(this);
         if (activeRun != null) activeRun.cancel();
@@ -418,6 +435,7 @@ public final class MewCodeModel implements Model {
         return UpdateResult.from(this, Command.println(output.toString()));
     }
 
+    /** provider/Loop 出错时展示安全错误文本，并丢弃未完成的流式响应。 */
     private UpdateResult<MewCodeModel> failStream(String safeMessage) {
         double elapsed = elapsedSeconds();
         String finalUsage = usageLabel;
@@ -436,6 +454,7 @@ public final class MewCodeModel implements Model {
         return UpdateResult.from(this, Command.println(output.toString()));
     }
 
+    /** 清空本轮临时状态，使取消或完成后可以继续输入下一条消息。 */
     private void resetStream() {
         streaming = false;
         activeRun = null;
@@ -462,6 +481,7 @@ public final class MewCodeModel implements Model {
         return view.toString();
     }
 
+    /** 渲染聊天态；动态区和输入框必须保持有界，避免终端 scrollback 重复追加。 */
     private String viewChat() {
         var view = new StringBuilder();
         view.append(Styles.DIM.render("● Ready for conversation and tools · "

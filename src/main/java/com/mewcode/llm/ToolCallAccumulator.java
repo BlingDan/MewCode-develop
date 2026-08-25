@@ -14,21 +14,25 @@ public final class ToolCallAccumulator {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private final Map<String, Entry> entries = new LinkedHashMap<>();
 
+    /** 为一个工具调用创建独立参数缓冲区；同 ID 的后续片段复用首次记录的名称。 */
     public synchronized void start(String id, String name) {
         if (id == null || id.isBlank()) return;
         entries.putIfAbsent(id, new Entry(name == null ? "" : name));
     }
 
+    /** 判断 provider 是否已经发过指定调用 ID 的开始片段。 */
     public synchronized boolean has(String id) {
         return entries.containsKey(id);
     }
 
+    /** 追加一个参数 JSON 片段，不在片段级别尝试解析。 */
     public synchronized void append(String id, String partialJson) {
         if (id == null || partialJson == null) return;
         Entry entry = entries.get(id);
         if (entry != null) entry.json().append(partialJson);
     }
 
+    /** 结束并解析一个调用，解析失败会转换为可回写给模型的错误事件。 */
     public synchronized StreamEvent finish(String id) {
         Entry entry = entries.remove(id);
         if (entry == null) {
@@ -37,6 +41,7 @@ public final class ToolCallAccumulator {
         return parse(id, entry);
     }
 
+    /** 收尾所有尚未收到结束片段的调用，保持它们首次出现的顺序。 */
     public synchronized List<StreamEvent> finishAll() {
         var events = new ArrayList<StreamEvent>();
         for (String id : new ArrayList<>(entries.keySet())) {

@@ -67,6 +67,7 @@ public final class OpenAiClient implements LlmClient {
         return openStream(conversation.getMessages(), apiTools, prompt);
     }
 
+    /** 创建后台 worker，把 SDK 的同步 SSE 迭代转换为可取消事件流。 */
     private CancellableLlmStream openStream(List<Message> messages,
                                             List<Map<String, Object>> apiTools,
                                             String prompt) {
@@ -92,6 +93,7 @@ public final class OpenAiClient implements LlmClient {
         return stream(conversation.getMessages(), apiTools);
     }
 
+    /** 在 worker 线程中消费 Chat Completions；取消同时关闭响应和中断线程。 */
     private void streamInCurrentThread(List<Message> messages,
                                        List<Map<String, Object>> apiTools,
                                        String prompt,
@@ -156,6 +158,7 @@ public final class OpenAiClient implements LlmClient {
         }
     }
 
+    /** 将 provider 无关消息转换为 OpenAI assistant/user/tool 消息。 */
     private static void addMessage(ChatCompletionCreateParams.Builder params, Message message) {
         if ("assistant".equals(message.role())) {
             var assistant = ChatCompletionAssistantMessageParam.builder();

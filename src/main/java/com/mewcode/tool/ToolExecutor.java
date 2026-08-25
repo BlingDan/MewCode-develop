@@ -17,7 +17,13 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-/** 负责工具校验、超时、取消、错误隔离和批量调度。 */
+/**
+ * 负责工具校验、超时、取消、错误隔离和批量调度。
+ *
+ * <p>连续的安全调用会组成一个并发批次；有副作用或无法确认安全性的调用会形成
+ * 串行屏障。执行结果始终按输入调用顺序返回，避免并发只改变耗时而改变模型所见的
+ * tool-result 顺序。</p>
+ */
 public final class ToolExecutor implements AutoCloseable {
 
     private static final long POLL_MILLIS = 50;
@@ -35,11 +41,16 @@ public final class ToolExecutor implements AutoCloseable {
         this.baseContext = context;
     }
 
+    /** 使用 Execute Mode 的默认策略执行一次工具调用。 */
     public ToolInvocationResult executeSingle(ToolCall call) {
         return executeSingle(call, ToolPolicy.forMode(AgentMode.EXECUTE),
                 new CancellationToken());
     }
 
+    /**
+     * 执行一次工具调用：先做模式和参数校验，再在可取消任务中执行并轮询等待。
+     * 未知工具、禁止调用、超时和运行时异常都会变成模型可见的错误结果。
+     */
     public ToolInvocationResult executeSingle(ToolCall call,
                                                ToolPolicy policy,
                                                CancellationToken token) {
@@ -69,11 +80,16 @@ public final class ToolExecutor implements AutoCloseable {
         return awaitSingle(future, call, tool, token, started);
     }
 
+    /** 使用 Execute Mode 的默认策略执行一批调用。 */
     public List<ToolInvocationResult> executeBatch(List<ToolCall> calls) {
         return executeBatch(calls, ToolPolicy.forMode(AgentMode.EXECUTE),
                 new CancellationToken());
     }
 
+    /**
+     * 按安全性分批执行工具：同一安全批次可并发，副作用调用按模型顺序串行。
+     * 取消会取消当前批次所有 Future，并为尚未执行的调用补充取消结果。
+     */
     public List<ToolInvocationResult> executeBatch(List<ToolCall> calls,
                                                    ToolPolicy policy,
                                                    CancellationToken token) {
@@ -125,6 +141,7 @@ public final class ToolExecutor implements AutoCloseable {
         return executeSingle(call, policy, token);
     }
 
+    /** 等待并发批次中的一个槽位，同时周期性检查共享取消 token。 */
     private ToolInvocationResult awaitBatchResult(Future<ToolInvocationResult> future,
                                                   ToolCall call,
                                                   List<Future<ToolInvocationResult>> batch,
@@ -158,6 +175,7 @@ public final class ToolExecutor implements AutoCloseable {
         }
     }
 
+    /** 等待单个工具 Future，并把取消、超时和异常转换为结构化结果。 */
     private ToolInvocationResult awaitSingle(Future<ToolResult> future,
                                               ToolCall call,
                                               Tool tool,
@@ -204,6 +222,7 @@ public final class ToolExecutor implements AutoCloseable {
         }
     }
 
+    /** 只有已知且当前模式允许的工具才能参与安全并发批次。 */
     private boolean isSafe(ToolCall call, ToolPolicy policy) {
         return registry.get(call.toolName())
                 .filter(policy::isAllowed)
@@ -252,6 +271,7 @@ public final class ToolExecutor implements AutoCloseable {
         return message == null || message.isBlank() ? error.getClass().getSimpleName() : message;
     }
 
+    /** 关闭虚拟线程执行器，应用退出时释放仍在等待的工具任务。 */
     @Override
     public void close() {
         executor.close();

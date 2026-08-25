@@ -74,6 +74,7 @@ public final class ReadFileTool implements Tool {
         return validatePositiveInteger(input, "limit");
     }
 
+    /** 分页读取 UTF-8 文本；二进制文件和超出项目边界的路径会在执行前拒绝。 */
     @Override
     public ToolResult execute(ToolExecutionContext context, Map<String, Object> input) {
         String pathError = PathGuard.validatePath(input.get("path"), context.projectRoot(), true);

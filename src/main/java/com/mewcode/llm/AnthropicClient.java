@@ -70,6 +70,7 @@ public final class AnthropicClient implements LlmClient {
         return openStream(conversation.getMessages(), apiTools, prompt);
     }
 
+    /** 创建后台 worker，把 Messages API 的 SSE 转成统一事件流。 */
     private CancellableLlmStream openStream(List<Message> messages,
                                             List<Map<String, Object>> apiTools,
                                             String prompt) {
@@ -95,6 +96,7 @@ public final class AnthropicClient implements LlmClient {
         return stream(conversation.getMessages(), apiTools);
     }
 
+    /** 在 worker 线程中消费 Anthropic 消息流，并提取 message/response usage。 */
     private void streamInCurrentThread(List<Message> messages,
                                        List<Map<String, Object>> apiTools,
                                        String prompt,
@@ -183,6 +185,7 @@ public final class AnthropicClient implements LlmClient {
         }
     }
 
+    /** 将统一会话历史转换为 Anthropic 的分块消息格式。 */
     private static List<MessageParam> buildMessages(List<Message> messages) {
         var result = new ArrayList<MessageParam>();
         for (Message message : messages) {

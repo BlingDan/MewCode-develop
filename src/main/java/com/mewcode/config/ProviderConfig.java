@@ -1,6 +1,6 @@
 package com.mewcode.config;
 
-/** A single LLM provider entry from config.yaml. */
+/** config.yaml 中的一条 LLM provider 配置；{@code apiKey} 只用于建连，不参与日志展示。 */
 public final class ProviderConfig {
 
     private String name;

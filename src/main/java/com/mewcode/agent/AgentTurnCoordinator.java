@@ -20,7 +20,13 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.function.Function;
 
-/** 编排持续的 ReAct Agent Loop。 */
+/**
+ * 编排持续的 ReAct Agent Loop。
+ *
+ * <p>每一轮都遵循“调用 LLM → 收集完整响应 → 执行工具 → 回写工具结果”的顺序。
+ * 流式文本和工具状态通过 {@link AgentEventStream} 对外发布，只有完整的一轮工具调用
+ * 和结果才会提交到会话历史，保证取消或 provider 出错时历史仍然合法。</p>
+ */
 public final class AgentTurnCoordinator {
 
     private static final int QUEUE_CAPACITY = 512;
@@ -69,7 +75,10 @@ public final class AgentTurnCoordinator {
                 "systemPromptProvider");
     }
 
-    /** 兼容现有 TUI/测试的队列入口；新代码应使用 startRun。 */
+    /**
+     * 兼容现有 TUI/测试的队列入口；新代码应使用 {@link #startRun(String, AgentMode)}。
+     * 这个桥接入口只负责把新的事件流转成旧的阻塞队列，不改变 Loop 语义。
+     */
     public BlockingQueue<AgentEvent> start(String userText) {
         AgentRun run = startRun(userText, AgentMode.EXECUTE);
         var queue = new LinkedBlockingQueue<AgentEvent>(QUEUE_CAPACITY);
@@ -77,6 +86,13 @@ public final class AgentTurnCoordinator {
         return queue;
     }
 
+    /**
+     * 启动一次独立的异步运行。
+     *
+     * <p>用户消息在启动工作线程前写入历史，模式在本次运行开始时固定；返回的
+     * {@link AgentRun} 同时提供事件流和取消句柄。工作线程只负责 Loop，不阻塞 TUI
+     * 的消息处理线程。</p>
+     */
     public AgentRun startRun(String userText, AgentMode mode) {
         Objects.requireNonNull(userText, "userText");
         AgentMode effectiveMode = mode == null ? AgentMode.EXECUTE : mode;
@@ -91,14 +107,23 @@ public final class AgentTurnCoordinator {
         return run;
     }
 
+    /** 返回本次协调器持有的会话历史，供继续对话和测试读取。 */
     public ConversationManager conversation() {
         return conversation;
     }
 
+    /** 返回配置副本，避免调用方在运行中修改迭代上限。 */
     public AgentLoopConfig config() {
         return config.copy();
     }
 
+    /**
+     * 执行 ReAct 主循环。
+     *
+     * <p>收到无工具的完整 assistant 响应即正常结束；达到迭代上限、连续未知工具、
+     * 取消或异常也都从这里统一收口。工具结果按模型原始调用顺序回写，即使安全工具
+     * 在后台并发执行，也不会改变下一轮看到的消息顺序。</p>
+     */
     private void runLoop(AgentRun run, AgentMode mode) {
         var usage = new TokenUsageAccumulator();
         var collector = new TurnStreamCollector(usage);
@@ -200,6 +225,7 @@ public final class AgentTurnCoordinator {
         }
     }
 
+    /** 将工具结果事件恢复为模型调用顺序，避免并发执行导致 UI 顺序抖动。 */
     private static void emitResults(AgentRun run,
                                     List<ToolCall> calls,
                                     List<ToolResultBlock> blocks,
@@ -229,6 +255,7 @@ public final class AgentTurnCoordinator {
         return value instanceof Number number ? Math.max(0, number.longValue()) : 0;
     }
 
+    /** 统一发布错误、循环结束并关闭事件流；调用可重复但事件收口由 AgentRun 保证。 */
     private static void finish(AgentRun run,
                                int totalRounds,
                                String errorMessage,
@@ -240,6 +267,7 @@ public final class AgentTurnCoordinator {
         run.complete();
     }
 
+    /** 将新事件流桥接到旧 API 的阻塞队列，供历史调用方平滑迁移。 */
     private static void bridge(AgentEventStream source,
                                BlockingQueue<AgentEvent> target) {
         try {

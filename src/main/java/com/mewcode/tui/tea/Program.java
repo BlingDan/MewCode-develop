@@ -19,7 +19,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *  - view 从当前光标位置开始画，不用 \033[H]，不破坏之前的终端内容
  *  - 重绘时 cursor up 回到 view 起始行覆写
  *  - println 清除 view 后写文本，文本留在终端 scrollback
- *  - linesRendered 跟踪 view 中的 \n 数量（= 行数 - 1）
+ *  - linesRendered 跟踪 view 的物理行数（= 行数 - 1）
  */
 public class Program {
 
@@ -39,15 +39,18 @@ public class Program {
         this.model = model;
     }
 
+    /** 向主消息循环投递一条外部消息。 */
     public void send(Message msg) {
         msgQueue.offer(msg);
     }
 
+    /** 返回模型可用于动态内容的近似终端高度。 */
     public int getAvailableHeight() {
         int h = terminal != null ? terminal.getSize().getRows() : 24;
         return Math.max(h - 1, 3);
     }
 
+    /** 打开 raw terminal，启动输入线程，并串行驱动模型更新与渲染。 */
     public void run() {
         try {
             terminal = TerminalBuilder.builder().system(true).build();
@@ -96,7 +99,7 @@ public class Program {
         }
     }
 
-    /** Also runs from a JVM shutdown hook when the OS delivers SIGINT directly. */
+    /** JVM shutdown hook 或主循环退出时恢复终端状态，且整个过程幂等。 */
     private void restoreTerminal() {
         if (!terminalRestored.compareAndSet(false, true)) return;
         if (writer != null) {
@@ -113,9 +116,7 @@ public class Program {
     private static final java.util.regex.Pattern ANSI_PATTERN =
             java.util.regex.Pattern.compile("\033\\[[0-9;]*[a-zA-Z]|\033][^\007\033]*(?:\007|\033\\\\)");
 
-    /**
-     * 计算字符串在终端中的显示宽度（CJK 全角字符占 2 列）。
-     */
+    /** 计算字符串在终端中的显示宽度（CJK 全角字符占 2 列）。 */
     public static int displayWidth(String s) {
         int w = 0;
         for (int i = 0; i < s.length(); ) {
@@ -157,6 +158,7 @@ public class Program {
         return Math.max(0, total - 1);
     }
 
+    /** 覆写上一次 view；高度保护避免光标回退越过当前视口进入 scrollback。 */
     private void renderView() {
         String view = model.view();
         if (view.equals(lastViewContent)) return;
@@ -193,7 +195,7 @@ public class Program {
         writer.flush();
     }
 
-    // 清除当前 view 区域
+    /** 清除当前 view 区域，之后写出的 PrintLine 会留在终端 scrollback。 */
     private void clearView() {
         if (linesRendered > 0) {
             writer.print("\033[" + linesRendered + "A");
@@ -206,6 +208,7 @@ public class Program {
 
     // ── 命令执行 ────────────────────────────────────────────────────────
 
+    /** 执行模型返回的命令；Tick 在后台计时，实际消息仍回到主队列串行处理。 */
     private void executeCommand(Command cmd) {
         if (cmd == null) return;
         switch (cmd) {
@@ -241,6 +244,7 @@ public class Program {
 
     // ── 按键读取 ────────────────────────────────────────────────────────
 
+    /** 从 raw terminal 读取输入并转换为消息，不直接修改模型状态。 */
     private void keyReaderLoop() {
         NonBlockingReader reader = terminal.reader();
         try {
@@ -256,6 +260,7 @@ public class Program {
         }
     }
 
+    /** 将单个终端字节和后续 ANSI 序列解析为统一按键消息。 */
     private Message parseInput(int c, NonBlockingReader reader) throws IOException {
         if (c == 0x1B) {
             int next = reader.peek(80);
@@ -282,7 +287,7 @@ public class Program {
         return null;
     }
 
-    // SS3 格式方向键：\x1bOA/B/C/D（Windows Terminal 等常用此格式）
+    /** 解析 SS3 格式方向键：\x1bOA/B/C/D（Windows Terminal 等常用此格式）。 */
     private Message parseSS3(NonBlockingReader reader) throws IOException {
         int ch = reader.read(80);
         if (ch == -2 || ch == -1) return key("escape");
@@ -297,6 +302,7 @@ public class Program {
         };
     }
 
+    /** 解析 CSI 功能键、分页键、鼠标序列和 Shift+Tab。 */
     private Message parseCSI(NonBlockingReader reader) throws IOException {
         var buf = new StringBuilder();
         while (true) {

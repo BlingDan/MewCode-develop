@@ -23,6 +23,13 @@ public final class TurnStreamCollector {
         this.usage = usage;
     }
 
+    /**
+     * 消费一轮 provider 流。
+     *
+     * <p>文本增量立即发布给 UI，同时写入本地 buffer；工具参数先由 provider 适配层
+     * 拼装成完整调用，直到本轮收到结束事件才返回 {@link CollectedTurn}。取消时不提交
+     * 半截响应，并通过注册的 close hook 尽快关闭底层 HTTP 流。</p>
+     */
     public CollectedTurn collect(AgentRun run,
                                  CancellableLlmStream stream,
                                  int round) throws InterruptedException {
@@ -98,6 +105,7 @@ public final class TurnStreamCollector {
         }
     }
 
+    /** 把跨轮累计用量作为快照发布，未知维度仍保持 unknown。 */
     private void publishUsage(AgentRun run) {
         run.events().publish(new AgentEvent.Usage(usage.inputTokens(), usage.outputTokens()));
     }

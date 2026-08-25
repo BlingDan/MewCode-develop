@@ -7,7 +7,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.OptionalLong;
 
-/** 一轮 provider 流的完整领域快照。 */
+/**
+ * 一轮 provider 流的完整领域快照。
+ *
+ * <p>它是流式展示和会话提交之间的隔离层：只有 {@code complete=true} 的结果才允许
+ * 协调器进入下一步工具执行或写入历史。</p>
+ */
 public record CollectedTurn(
         List<ContentBlock> blocks,
         List<ToolCall> calls,

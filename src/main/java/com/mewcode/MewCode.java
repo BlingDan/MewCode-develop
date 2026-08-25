@@ -6,17 +6,19 @@ import com.mewcode.tui.tea.Program;
 
 import java.nio.file.Path;
 
-/** MewCode 终端应用入口。 */
+/** MewCode 终端应用入口，负责加载配置并组装 TUI、provider 和 Agent Loop。 */
 public final class MewCode {
 
     private MewCode() {
     }
 
+    /** JVM 入口；非零返回码交给 shell，终端清理统一在 {@link #run()} 中完成。 */
     public static void main(String[] args) {
         int exitCode = run();
         if (exitCode != 0) System.exit(exitCode);
     }
 
+    /** 启动一次终端会话并把配置/初始化错误转换为进程退出码。 */
     static int run() {
         Path projectRoot = Path.of(System.getProperty("user.dir"))
                 .toAbsolutePath()

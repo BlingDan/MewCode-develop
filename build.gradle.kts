@@ -2,6 +2,7 @@ plugins {
     java
     application
     id("com.gradleup.shadow") version "8.3.6"
+    id("com.diffplug.spotless") version "7.0.2"
 }
 
 java {
@@ -32,6 +33,34 @@ dependencies {
 
 tasks.withType<JavaCompile> {
     options.encoding = "UTF-8"
+}
+
+spotless {
+    java {
+        target(
+                "src/main/java/com/mewcode/prompt/**/*.java",
+                "src/main/java/com/mewcode/llm/PromptRequest.java",
+                "src/main/java/com/mewcode/llm/LlmClient.java",
+                "src/main/java/com/mewcode/llm/AnthropicClient.java",
+                "src/main/java/com/mewcode/llm/OpenAiClient.java",
+                "src/main/java/com/mewcode/agent/PromptRequestFactory.java",
+                "src/main/java/com/mewcode/agent/AgentTurnCoordinator.java",
+                "src/main/java/com/mewcode/tool/ToolPromptRules.java",
+                "src/main/java/com/mewcode/tool/ToolRegistry.java",
+                "src/main/java/com/mewcode/tool/impl/EditFileTool.java",
+                "src/main/java/com/mewcode/tool/impl/BashTool.java",
+                "src/main/java/com/mewcode/tui/MewCodeModel.java",
+                "src/test/java/com/mewcode/prompt/**/*.java",
+                "src/test/java/com/mewcode/llm/AnthropicClientTest.java",
+                "src/test/java/com/mewcode/llm/OpenAiClientTest.java",
+                "src/test/java/com/mewcode/agent/PromptRequestFactoryTest.java",
+                "src/test/java/com/mewcode/agent/AgentTurnCoordinatorTest.java",
+                "src/test/java/com/mewcode/tool/ToolPromptRulesTest.java",
+                "src/test/java/com/mewcode/tool/ToolRegistryTest.java",
+                "src/test/java/com/mewcode/tui/MewCodeModelTest.java")
+        googleJavaFormat("1.28.0")
+        removeUnusedImports()
+    }
 }
 
 tasks.test {

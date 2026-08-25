@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import com.mewcode.agent.AgentMode;
 import java.nio.file.Path;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -36,5 +37,25 @@ class PromptBuilderTest {
     assertFalse(planPrompt.contains("WriteFile"));
     assertFalse(executePrompt.contains("one tool result round"));
     assertTrue(executePrompt.contains("Continue"));
+  }
+
+  @Test
+  void exposesSevenFixedModulesInPriorityOrderAndThreeEmptySlots() {
+    assertEquals(
+        List.of(
+            "identity",
+            "system-constraints",
+            "task-mode",
+            "action-execution",
+            "tool-usage",
+            "tone",
+            "text-output",
+            "custom-instructions",
+            "activated-skills",
+            "long-term-memory"),
+        PromptBuilder.modules().stream().map(PromptModule::name).toList());
+    assertEquals(7, PromptBuilder.fixedModules().size());
+    assertTrue(
+        PromptBuilder.optionalModules().stream().allMatch(module -> module.content().isEmpty()));
   }
 }

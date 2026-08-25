@@ -25,6 +25,11 @@ class SystemPromptBundleTest {
             "early\n\nlate",
             "The current project root is: "
                 + Path.of("project").toAbsolutePath().normalize()
+                + "\nResolve user-provided relative paths against that project root before calling a tool."
+                + "\nFile paths and glob patterns passed to file and search tools must be absolute paths inside the project root."
+                + "\nFor example, `.trae/skills/mew-spec/SKILL.md` means "
+                + Path.of("project").toAbsolutePath().normalize()
+                + "/.trae/skills/mew-spec/SKILL.md."
                 + "\nos: test"),
         bundle.systemSegments());
     assertEquals(String.join("\n\n", bundle.systemSegments()), bundle.flattenedText());

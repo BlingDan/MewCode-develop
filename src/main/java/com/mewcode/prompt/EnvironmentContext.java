@@ -17,7 +17,16 @@ public record EnvironmentContext(Path projectRoot, Map<String, String> attribute
   /** 渲染为独立的 system 片段，属性按名称排序以保证输出稳定。 */
   public String render() {
     StringBuilder result =
-        new StringBuilder().append("The current project root is: ").append(projectRoot);
+        new StringBuilder()
+            .append("The current project root is: ")
+            .append(projectRoot)
+            .append(
+                "\nResolve user-provided relative paths against that project root before calling a tool.")
+            .append(
+                "\nFile paths and glob patterns passed to file and search tools must be absolute paths inside the project root.")
+            .append("\nFor example, `.trae/skills/mew-spec/SKILL.md` means ")
+            .append(projectRoot)
+            .append("/.trae/skills/mew-spec/SKILL.md.");
     String extra =
         attributes.entrySet().stream()
             .sorted(Map.Entry.comparingByKey(Comparator.naturalOrder()))

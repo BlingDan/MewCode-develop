@@ -4,12 +4,18 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-/** 文件工具的绝对路径和项目根目录边界校验。 */
+/**
+ * 文件工具的绝对路径和项目根目录边界校验。
+ *
+ * <p>先校验规范化路径，再检查符号链接的真实路径，避免模型通过相对路径、{@code ..}
+ * 或链接把读写范围带出项目根目录。</p>
+ */
 public final class PathGuard {
 
     private PathGuard() {
     }
 
+    /** 校验路径格式、项目边界、目标存在性和符号链接逃逸。 */
     public static String validatePath(Object raw, Path projectRoot, boolean mustExist) {
         Path root = normalizeRoot(projectRoot);
         if (!(raw instanceof String value) || value.isBlank()) {
@@ -55,7 +61,7 @@ public final class PathGuard {
         return null;
     }
 
-    /** 执行前的路径参数校验，不要求目标文件已经存在。 */
+    /** 校验写入类工具的路径参数；目标本身可以尚不存在。 */
     public static String validatePathArgument(Object raw, Path projectRoot) {
         Path root = normalizeRoot(projectRoot);
         if (!(raw instanceof String value) || value.isBlank()) {
@@ -67,6 +73,7 @@ public final class PathGuard {
         return validateAbsolutePath(path, value, root, "path");
     }
 
+    /** 校验搜索模式的绝对路径和项目边界，不执行文件系统访问。 */
     public static String validatePattern(Object raw, Path projectRoot) {
         Path root = normalizeRoot(projectRoot);
         if (!(raw instanceof String value) || value.isBlank()) {

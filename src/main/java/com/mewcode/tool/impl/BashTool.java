@@ -53,6 +53,7 @@ public final class BashTool implements Tool {
         return ToolInput.requireString(input, "command", " 请传入要执行的 shell 命令。");
     }
 
+    /** 在项目根目录执行命令，并把退出码、超时和截断信息转成工具结果。 */
     @Override
     public ToolResult execute(ToolExecutionContext context, Map<String, Object> input) {
         String command = (String) input.get("command");

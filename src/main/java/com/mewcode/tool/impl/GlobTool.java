@@ -61,6 +61,7 @@ public final class GlobTool implements Tool {
         return PathGuard.validatePatternArgument(input.get("pattern"), context.projectRoot());
     }
 
+    /** 在项目根目录内遍历 glob 结果，并过滤构建产物和超出数量上限的结果。 */
     @Override
     public ToolResult execute(ToolExecutionContext context, Map<String, Object> input) {
         String patternText = (String) input.get("pattern");

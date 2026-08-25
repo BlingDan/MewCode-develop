@@ -5,21 +5,28 @@ import java.util.Map;
 /** MewCode 本地工具的统一能力契约。 */
 public interface Tool {
 
+    /** 返回发送给模型并用于路由调用的稳定名称。 */
     String name();
 
+    /** 返回给模型看的用途和参数语义说明。 */
     String description();
 
+    /** 返回工具的风险分类，用于展示和调度策略。 */
     ToolCategory category();
 
+    /** 返回 provider 无关的 JSON Schema。 */
     Map<String, Object> inputSchema();
 
+    /** 在执行上下文中执行工具，结果必须是完整、可回灌模型的文本。 */
     ToolResult execute(ToolExecutionContext context, Map<String, Object> input);
 
+    /** 是否只读；Plan Mode 只允许此类工具。 */
     boolean isReadOnly();
 
+    /** 是否可能破坏数据或改变外部状态。 */
     boolean isDestructive();
 
-    /** 返回 true 表示该输入可以和其他安全调用并发执行。 */
+    /** 当前输入是否可以与相邻安全调用并发执行。 */
     boolean isConcurrencySafe(Map<String, Object> input);
 
     /** 返回 null 表示校验通过，否则返回面向模型的调整提示。 */

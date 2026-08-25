@@ -9,13 +9,19 @@ import java.nio.file.Path;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
-/** 系统 shell 执行器，负责超时、合并输出和截断。 */
+/**
+ * 系统 shell 执行器，负责超时、合并输出和截断。
+ *
+ * <p>命令的工作目录固定为项目根目录；标准错误合并到标准输出，超过上限的尾部会
+ * 被截断并添加标记，避免一次 Bash 调用耗尽模型上下文。</p>
+ */
 public final class CommandRunner {
 
     public static final int MAX_OUTPUT_CHARS = 20_000;
     private static final String TRUNCATION_MARKER = "\n[output truncated：超过最大输出长度]";
     private static final Set<String> EXIT_CODE_ONE_IS_NORMAL = Set.of("grep", "diff", "find");
 
+    /** 在项目根目录执行命令，并将超时、中断和截断状态一起返回。 */
     public Result run(String command, ToolExecutionContext context) throws IOException {
         String shell = System.getenv().getOrDefault("SHELL", "/bin/sh");
         if (!FilesSupport.isExecutable(shell)) shell = "/bin/sh";
@@ -43,6 +49,7 @@ public final class CommandRunner {
         return new Result(output.text(), process.exitValue(), false, output.truncated());
     }
 
+    /** 判断退出码是否表示工具失败；grep/find 等命令的 1 可表示“没有结果”。 */
     public static boolean isErrorExit(String command, int exitCode) {
         if (exitCode == 0) return false;
         if (exitCode == 1 && EXIT_CODE_ONE_IS_NORMAL.contains(firstCommand(command))) return false;

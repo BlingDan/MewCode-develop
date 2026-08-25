@@ -98,6 +98,7 @@ public final class GrepTool implements Tool {
         return null;
     }
 
+    /** 在允许的路径范围内执行正则搜索，并以带行号的分组文本返回匹配结果。 */
     @Override
     public ToolResult execute(ToolExecutionContext context, Map<String, Object> input) {
         String pathError = PathGuard.validatePath(input.get("path"), context.projectRoot(), true);

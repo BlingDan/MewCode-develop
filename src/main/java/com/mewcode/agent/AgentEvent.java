@@ -5,20 +5,26 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.OptionalLong;
 
-/** Agent Loop 对 UI 暴露的 provider 无关事件。 */
+/**
+ * Agent Loop 对 UI 暴露的 provider 无关事件。
+ *
+ * <p>事件按产生顺序进入单次运行的流：文本可以增量展示，工具结果一次性展示，
+ * {@link LoopComplete} 是本次交互的收口标记。取消不会伪装成错误事件，UI 由取消路径
+ * 自己展示“已取消”并回到空闲态。</p>
+ */
 public sealed interface AgentEvent
         permits AgentEvent.StreamText, AgentEvent.ToolUse, AgentEvent.ToolResult,
         AgentEvent.TurnComplete, AgentEvent.LoopComplete, AgentEvent.Usage,
         AgentEvent.Error {
 
-    /** 模型文本增量。 */
+    /** 模型文本增量，UI 可直接追加到当前流式输出。 */
     record StreamText(String text) implements AgentEvent {
         public StreamText {
             text = Objects.requireNonNullElse(text, "");
         }
     }
 
-    /** 模型请求调用工具。 */
+    /** 模型请求调用工具，input 是已经拼装完成的 JSON 对象。 */
     record ToolUse(String requestId,
                    String toolName,
                    Map<String, Object> input) implements AgentEvent {
@@ -31,7 +37,7 @@ public sealed interface AgentEvent
         }
     }
 
-    /** 工具执行完成；result 是完整的模型可见结果文本。 */
+    /** 工具执行完成；result 是完整的模型可见结果文本，不做工具结果二次流式化。 */
     record ToolResult(String requestId,
                       String toolName,
                       String result,
@@ -47,14 +53,14 @@ public sealed interface AgentEvent
         }
     }
 
-    /** 一轮 LLM 请求完整结束。 */
+    /** 一轮 LLM 请求完整结束，round 从 1 开始。 */
     record TurnComplete(int round) implements AgentEvent {
         public TurnComplete {
             if (round <= 0) throw new IllegalArgumentException("round must be positive");
         }
     }
 
-    /** 整个 Agent Loop 完成。 */
+    /** 整个 Agent Loop 完成；消费方收到它后可停止轮询。 */
     record LoopComplete(int totalRounds) implements AgentEvent {
         public LoopComplete {
             if (totalRounds < 0) {

@@ -78,6 +78,7 @@ public final class EditFileTool implements Tool {
         return PathGuard.validatePathArgument(input.get("path"), context.projectRoot());
     }
 
+    /** 校验文件快照后执行唯一原文替换，防止覆盖模型未读取或已变化的文件。 */
     @Override
     public ToolResult execute(ToolExecutionContext context, Map<String, Object> input) {
         String pathError = PathGuard.validatePath(input.get("path"), context.projectRoot(), true);

@@ -15,6 +15,12 @@ public final class ToolResultAssembler {
     private ToolResultAssembler() {
     }
 
+    /**
+     * 将并发执行结果按模型原始调用顺序组装成完整 tool-result 消息。
+     *
+     * <p>解析失败的调用没有进入执行器，但仍生成同 ID 的错误结果，确保 assistant
+     * 工具调用和 user 结果严格成对，下一轮 provider 不会收到悬空调用。</p>
+     */
     public static List<ToolResultBlock> assemble(
             List<ToolCall> allCalls,
             List<ToolInvocationResult> executed,

@@ -16,6 +16,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -186,6 +187,59 @@ class OpenAiClientTest {
       assertInstanceOf(StreamEvent.StreamEnd.class, events.get(1));
       assertTrue(body.get().contains("\"tools\""), body.get());
       assertTrue(body.get().contains("ReadFile"), body.get());
+    } finally {
+      server.stop(0);
+    }
+  }
+
+  @Test
+  void serializesStructuredSystemSegmentsToolsHistoryAndReminderSeparately() throws Exception {
+    String fixture = resource("/sse/openai-chat.txt");
+    var body = new AtomicReference<String>();
+    HttpServer server =
+        server(
+            exchange -> {
+              body.set(
+                  new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+              respond(exchange, 200, "text/event-stream", fixture);
+            });
+    try {
+      var history =
+          List.of(
+              new com.mewcode.conversation.Message("user", "original"),
+              new com.mewcode.conversation.Message("assistant", "previous"));
+      var reminder =
+          new com.mewcode.conversation.Message(
+              "user", "<system-reminder>\nround 1\n</system-reminder>");
+      var request =
+          new PromptRequest(
+              List.of("stable system", "stable environment"),
+              List.of(
+                  Map.of(
+                      "type",
+                      "function",
+                      "function",
+                      Map.of(
+                          "name",
+                          "ReadFile",
+                          "description",
+                          "read a file",
+                          "parameters",
+                          Map.of("type", "object")))),
+              history,
+              Optional.of(reminder));
+
+      collect(
+          new OpenAiClient(provider(server, "structured-key"), "legacy")
+              .openStream(request)
+              .events());
+
+      assertTrue(body.get().contains("stable system"), body.get());
+      assertTrue(body.get().contains("stable environment"), body.get());
+      assertTrue(body.get().contains("ReadFile"), body.get());
+      assertTrue(body.get().contains("original"), body.get());
+      assertTrue(body.get().contains("<system-reminder>"), body.get());
+      assertEquals(2, request.history().size());
     } finally {
       server.stop(0);
     }

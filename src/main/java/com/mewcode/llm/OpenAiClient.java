@@ -58,6 +58,14 @@ public final class OpenAiClient implements LlmClient {
   }
 
   @Override
+  public CancellableLlmStream openStream(PromptRequest request) {
+    if (request == null) throw new IllegalArgumentException("request must not be null");
+    var messages = new java.util.ArrayList<>(request.history());
+    request.reminder().ifPresent(messages::add);
+    return openStream(messages, request.tools(), request.systemSegments());
+  }
+
+  @Override
   public CancellableLlmStream openStream(
       ConversationManager conversation, List<Map<String, Object>> apiTools, String prompt) {
     return openStream(conversation.getMessages(), apiTools, prompt);
@@ -66,13 +74,20 @@ public final class OpenAiClient implements LlmClient {
   /** 创建后台 worker，把 SDK 的同步 SSE 迭代转换为可取消事件流。 */
   private CancellableLlmStream openStream(
       List<Message> messages, List<Map<String, Object>> apiTools, String prompt) {
+    String effectivePrompt = prompt == null ? systemPrompt : prompt;
+    List<String> systemSegments = effectivePrompt == null ? List.of() : List.of(effectivePrompt);
+    return openStream(messages, apiTools, systemSegments);
+  }
+
+  private CancellableLlmStream openStream(
+      List<Message> messages, List<Map<String, Object>> apiTools, List<String> systemSegments) {
     var queue = new LinkedBlockingQueue<StreamEvent>(QUEUE_CAPACITY);
     List<Message> snapshot = messages == null ? List.of() : List.copyOf(messages);
     List<Map<String, Object>> tools = apiTools == null ? List.of() : List.copyOf(apiTools);
     var control = new StreamControl();
     Thread worker =
         Thread.startVirtualThread(
-            () -> streamInCurrentThread(snapshot, tools, prompt, queue, control));
+            () -> streamInCurrentThread(snapshot, tools, systemSegments, queue, control));
     control.worker(worker);
     return new CancellableLlmStream(queue, control::close);
   }
@@ -93,15 +108,17 @@ public final class OpenAiClient implements LlmClient {
   private void streamInCurrentThread(
       List<Message> messages,
       List<Map<String, Object>> apiTools,
-      String prompt,
+      List<String> systemSegments,
       BlockingQueue<StreamEvent> queue,
       StreamControl control) {
     try {
       var params =
           ChatCompletionCreateParams.builder()
               .model(model)
-              .streamOptions(ChatCompletionStreamOptions.builder().includeUsage(true).build())
-              .addSystemMessage(prompt == null ? systemPrompt : prompt);
+              .streamOptions(ChatCompletionStreamOptions.builder().includeUsage(true).build());
+      for (String segment : systemSegments) {
+        params.addSystemMessage(segment);
+      }
       for (Map<String, Object> definition : apiTools) {
         params.addTool(toOpenAiTool(definition));
       }

@@ -51,10 +51,12 @@ spotless {
                 "src/main/java/com/mewcode/tool/impl/BashTool.java",
                 "src/main/java/com/mewcode/tui/MewCodeModel.java",
                 "src/test/java/com/mewcode/prompt/**/*.java",
+                "src/test/java/com/mewcode/llm/PromptRequestTest.java",
                 "src/test/java/com/mewcode/llm/AnthropicClientTest.java",
                 "src/test/java/com/mewcode/llm/OpenAiClientTest.java",
                 "src/test/java/com/mewcode/agent/PromptRequestFactoryTest.java",
                 "src/test/java/com/mewcode/agent/AgentTurnCoordinatorTest.java",
+                "src/test/java/com/mewcode/agent/AgentTurnCoordinatorPromptTest.java",
                 "src/test/java/com/mewcode/tool/ToolPromptRulesTest.java",
                 "src/test/java/com/mewcode/tool/ToolRegistryTest.java",
                 "src/test/java/com/mewcode/tui/MewCodeModelTest.java")

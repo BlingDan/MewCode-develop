@@ -14,6 +14,15 @@ import java.util.concurrent.BlockingQueue;
  */
 public interface LlmClient {
 
+  /** 打开结构化请求流；默认适配到旧的会话/字符串入口，不回写真实会话。 */
+  default CancellableLlmStream openStream(PromptRequest request) {
+    if (request == null) throw new IllegalArgumentException("request must not be null");
+    var compatibilityConversation = new ConversationManager();
+    for (Message message : request.history()) compatibilityConversation.addMessage(message);
+    request.reminder().ifPresent(compatibilityConversation::addMessage);
+    return openStream(compatibilityConversation, request.tools(), request.flattenedSystemPrompt());
+  }
+
   /** 打开基于普通消息列表的可取消流。 */
   default CancellableLlmStream openStream(
       List<Message> messages, List<Map<String, Object>> apiTools) {

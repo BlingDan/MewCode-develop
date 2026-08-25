@@ -69,6 +69,39 @@ class ToolRegistryTest {
     assertEquals(ToolCategory.SHELL, registry.get("one").orElseThrow().category());
   }
 
+  @Test
+  void apiDescriptionsRepeatTheCriticalToolRulesWithoutChangingSchemas() {
+    ToolRegistry registry = ToolRegistry.createDefault();
+
+    String editDescription =
+        (String)
+            registry.toAPIFormate(ToolApiProtocol.ANTHROPIC).stream()
+                .filter(tool -> "EditFile".equals(tool.get("name")))
+                .findFirst()
+                .orElseThrow()
+                .get("description");
+    String writeDescription =
+        (String)
+            registry.toAPIFormate(ToolApiProtocol.ANTHROPIC).stream()
+                .filter(tool -> "WriteFile".equals(tool.get("name")))
+                .findFirst()
+                .orElseThrow()
+                .get("description");
+    String bashDescription =
+        (String)
+            registry.toAPIFormate(ToolApiProtocol.OPENAI).stream()
+                .filter(tool -> "Bash".equals(((Map<?, ?>) tool.get("function")).get("name")))
+                .findFirst()
+                .orElseThrow()
+                .get("function")
+                .toString();
+
+    assertTrue(ToolPromptRules.globalInstructions().contains("专用工具"));
+    assertTrue(editDescription.contains(ToolPromptRules.editingRule()));
+    assertTrue(writeDescription.contains(ToolPromptRules.editingRule()));
+    assertTrue(bashDescription.contains(ToolPromptRules.dedicatedToolRule()));
+  }
+
   private record StubTool(String name, ToolCategory category) implements Tool {
     @Override
     public String description() {

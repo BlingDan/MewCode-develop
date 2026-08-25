@@ -5,7 +5,9 @@ import static org.junit.jupiter.api.Assertions.*;
 import com.mewcode.config.ProviderConfig;
 import com.mewcode.conversation.ConversationManager;
 import com.mewcode.conversation.Message;
+import com.mewcode.llm.CancellableLlmStream;
 import com.mewcode.llm.LlmClient;
+import com.mewcode.llm.PromptRequest;
 import com.mewcode.llm.StreamEvent;
 import com.mewcode.tui.tea.Command;
 import com.mewcode.tui.tea.KeyPressMessage;
@@ -231,8 +233,7 @@ class MewCodeModelTest {
     model.update(new MewCodeModel.StreamPollMessage());
 
     assertTrue(model.view().contains("Send a message..."));
-    assertEquals(
-        "Hello world", client.lastConversation.get().getMessages().getLast().textContent());
+    assertEquals("hello", client.lastMessages.get().getFirst().textContent());
   }
 
   @Test
@@ -462,6 +463,7 @@ class MewCodeModelTest {
     private final AtomicInteger calls = new AtomicInteger();
     private final AtomicReference<ConversationManager> lastConversation = new AtomicReference<>();
     private final AtomicReference<List<Message>> lastMessages = new AtomicReference<>();
+    private final AtomicReference<PromptRequest> lastRequest = new AtomicReference<>();
 
     @SafeVarargs
     private QueueClient(BlockingQueue<StreamEvent>... queues) {
@@ -474,6 +476,19 @@ class MewCodeModelTest {
       lastConversation.set(conversation);
       lastMessages.set(conversation.getMessages());
       return queues.isEmpty() ? new LinkedBlockingQueue<>() : queues.removeFirst();
+    }
+
+    @Override
+    public synchronized CancellableLlmStream openStream(PromptRequest request) {
+      calls.incrementAndGet();
+      lastRequest.set(request);
+      lastMessages.set(request.history());
+      var history = new ConversationManager();
+      request.history().forEach(history::addMessage);
+      lastConversation.set(history);
+      BlockingQueue<StreamEvent> response =
+          queues.isEmpty() ? new LinkedBlockingQueue<>() : queues.removeFirst();
+      return new CancellableLlmStream(response, () -> {});
     }
   }
 }

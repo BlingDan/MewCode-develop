@@ -3,6 +3,7 @@ package com.mewcode.tool.impl;
 import com.mewcode.tool.Tool;
 import com.mewcode.tool.ToolCategory;
 import com.mewcode.tool.ToolExecutionContext;
+import com.mewcode.tool.ToolPromptRules;
 import com.mewcode.tool.ToolResult;
 import com.mewcode.tool.support.CommandRunner;
 import com.mewcode.tool.support.ToolInput;
@@ -29,7 +30,8 @@ public final class BashTool implements Tool {
 
   @Override
   public String description() {
-    return "在项目根目录通过系统 shell 执行命令，返回合并后的 stdout/stderr 和退出码。";
+    return "在项目根目录通过系统 shell 执行命令，返回合并后的 stdout/stderr 和退出码。\n"
+        + ToolPromptRules.dedicatedToolRule();
   }
 
   @Override

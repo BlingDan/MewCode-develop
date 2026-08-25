@@ -85,7 +85,7 @@ public final class ToolRegistry {
   private static Map<String, Object> anthropicDefinition(Tool tool) {
     var definition = new LinkedHashMap<String, Object>();
     definition.put("name", tool.name());
-    definition.put("description", tool.description());
+    definition.put("description", ToolPromptRules.descriptionFor(tool));
     definition.put("input_schema", tool.inputSchema());
     return Map.copyOf(definition);
   }
@@ -93,7 +93,7 @@ public final class ToolRegistry {
   private static Map<String, Object> openAiDefinition(Tool tool) {
     var function = new LinkedHashMap<String, Object>();
     function.put("name", tool.name());
-    function.put("description", tool.description());
+    function.put("description", ToolPromptRules.descriptionFor(tool));
     function.put("parameters", tool.inputSchema());
     var definition = new LinkedHashMap<String, Object>();
     definition.put("type", "function");

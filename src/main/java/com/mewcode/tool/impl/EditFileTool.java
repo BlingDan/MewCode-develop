@@ -3,6 +3,7 @@ package com.mewcode.tool.impl;
 import com.mewcode.tool.Tool;
 import com.mewcode.tool.ToolCategory;
 import com.mewcode.tool.ToolExecutionContext;
+import com.mewcode.tool.ToolPromptRules;
 import com.mewcode.tool.ToolResult;
 import com.mewcode.tool.support.PathGuard;
 import com.mewcode.tool.support.TextFileSupport;
@@ -25,7 +26,7 @@ public final class EditFileTool implements Tool {
 
   @Override
   public String description() {
-    return "将文件中的 old_string 唯一精确替换为 new_string；目标文件必须先被读取且没有变化。";
+    return "将文件中的 old_string 唯一精确替换为 new_string；" + ToolPromptRules.editingRule();
   }
 
   @Override

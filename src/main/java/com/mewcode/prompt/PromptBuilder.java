@@ -1,6 +1,7 @@
 package com.mewcode.prompt;
 
 import com.mewcode.agent.AgentMode;
+import com.mewcode.tool.ToolPromptRules;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -57,7 +58,8 @@ public final class PromptBuilder {
             TOOL_USAGE_PRIORITY,
             "Prefer dedicated tools for reading, searching, editing, and running commands.\n"
                 + "Read the target file before editing it.\n"
-                + "Use ReadFile, Glob, and Grep instead of assembling their behavior with Bash."),
+                + "Use ReadFile, Glob, and Grep instead of assembling their behavior with Bash.\n"
+                + ToolPromptRules.globalInstructions()),
         new PromptModule(
             "tone",
             TONE_PRIORITY,

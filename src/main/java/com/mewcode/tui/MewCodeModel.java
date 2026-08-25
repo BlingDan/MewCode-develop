@@ -6,11 +6,13 @@ import com.mewcode.agent.AgentLoopConfig;
 import com.mewcode.agent.AgentMode;
 import com.mewcode.agent.AgentRun;
 import com.mewcode.agent.AgentTurnCoordinator;
+import com.mewcode.agent.PromptRequestFactory;
 import com.mewcode.config.ProviderConfig;
 import com.mewcode.conversation.ConversationManager;
 import com.mewcode.llm.LlmClient;
 import com.mewcode.llm.LlmClients;
 import com.mewcode.prompt.PromptBuilder;
+import com.mewcode.prompt.SystemPromptBundle;
 import com.mewcode.tool.FileStateCache;
 import com.mewcode.tool.ToolApiProtocol;
 import com.mewcode.tool.ToolExecutor;
@@ -46,6 +48,7 @@ public final class MewCodeModel implements Model {
 
   private final List<ProviderConfig> providers;
   private final Path projectRoot;
+  private final SystemPromptBundle systemPromptBundle;
   private final BiFunction<ProviderConfig, String, LlmClient> clientFactory;
   private final AgentLoopConfig loopConfig;
   private final ConversationManager conversation = new ConversationManager();
@@ -107,6 +110,7 @@ public final class MewCodeModel implements Model {
     this.providers = providers == null ? List.of() : List.copyOf(providers);
     this.projectRoot =
         Objects.requireNonNull(projectRoot, "projectRoot").toAbsolutePath().normalize();
+    this.systemPromptBundle = PromptBuilder.buildBundle(this.projectRoot);
     this.clientFactory = Objects.requireNonNull(clientFactory, "clientFactory");
     this.loopConfig = Objects.requireNonNull(loopConfig, "loopConfig").copy();
     if (this.providers.size() == 1) {
@@ -192,7 +196,7 @@ public final class MewCodeModel implements Model {
   /** 创建 provider、默认工具注册表和 Agent 协调器；失败只阻塞当前会话而不崩溃 TUI。 */
   private void initializeProvider() {
     try {
-      client = clientFactory.apply(selectedProvider, PromptBuilder.buildSystemPrompt(projectRoot));
+      client = clientFactory.apply(selectedProvider, systemPromptBundle.flattenedText());
       if (toolExecutor != null) toolExecutor.close();
       var registry = ToolRegistry.createDefault();
       toolExecutor = new ToolExecutor(registry, projectRoot, new FileStateCache());
@@ -208,7 +212,7 @@ public final class MewCodeModel implements Model {
               conversation,
               protocol,
               loopConfig,
-              mode -> PromptBuilder.buildSystemPrompt(projectRoot, mode));
+              new PromptRequestFactory(systemPromptBundle));
       initializationError = null;
     } catch (RuntimeException error) {
       client = null;

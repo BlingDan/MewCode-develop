@@ -35,6 +35,7 @@ public final class AgentTurnCoordinator {
   private final ToolApiProtocol protocol;
   private final AgentLoopConfig config;
   private final Function<AgentMode, String> systemPromptProvider;
+  private final PromptRequestFactory promptRequestFactory;
 
   public AgentTurnCoordinator(
       LlmClient client,
@@ -63,6 +64,38 @@ public final class AgentTurnCoordinator {
       ToolApiProtocol protocol,
       AgentLoopConfig config,
       Function<AgentMode, String> systemPromptProvider) {
+    this(client, registry, executor, conversation, protocol, config, systemPromptProvider, null);
+  }
+
+  /** 使用结构化提示请求启动协调器；旧字符串构造器继续保留原有语义。 */
+  public AgentTurnCoordinator(
+      LlmClient client,
+      ToolRegistry registry,
+      ToolExecutor executor,
+      ConversationManager conversation,
+      ToolApiProtocol protocol,
+      AgentLoopConfig config,
+      PromptRequestFactory promptRequestFactory) {
+    this(
+        client,
+        registry,
+        executor,
+        conversation,
+        protocol,
+        config,
+        mode -> null,
+        Objects.requireNonNull(promptRequestFactory, "promptRequestFactory"));
+  }
+
+  private AgentTurnCoordinator(
+      LlmClient client,
+      ToolRegistry registry,
+      ToolExecutor executor,
+      ConversationManager conversation,
+      ToolApiProtocol protocol,
+      AgentLoopConfig config,
+      Function<AgentMode, String> systemPromptProvider,
+      PromptRequestFactory promptRequestFactory) {
     this.client = Objects.requireNonNull(client, "client");
     this.registry = Objects.requireNonNull(registry, "registry");
     this.executor = Objects.requireNonNull(executor, "executor");
@@ -72,6 +105,7 @@ public final class AgentTurnCoordinator {
     this.config.validate();
     this.systemPromptProvider =
         Objects.requireNonNull(systemPromptProvider, "systemPromptProvider");
+    this.promptRequestFactory = promptRequestFactory;
   }
 
   /**
@@ -132,11 +166,19 @@ public final class AgentTurnCoordinator {
           && completedRounds < config.getMaxIterations()) {
         int round = completedRounds + 1;
         List<Map<String, Object>> schemas = registry.toAPIFormate(protocol, policy::isAllowed);
-        String systemPrompt = systemPromptProvider.apply(mode);
-        CancellableLlmStream stream =
-            systemPrompt == null
-                ? client.openStream(conversation, schemas)
-                : client.openStream(conversation, schemas, systemPrompt);
+        CancellableLlmStream stream;
+        if (promptRequestFactory != null) {
+          var request =
+              promptRequestFactory.create(
+                  mode, round, round == 1, conversation.getMessages(), schemas);
+          stream = client.openStream(request);
+        } else {
+          String systemPrompt = systemPromptProvider.apply(mode);
+          stream =
+              systemPrompt == null
+                  ? client.openStream(conversation, schemas)
+                  : client.openStream(conversation, schemas, systemPrompt);
+        }
         CollectedTurn turn = collector.collect(run, stream, round);
 
         if (run.cancellationToken().isCancelled()) {

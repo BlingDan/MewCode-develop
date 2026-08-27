@@ -11,6 +11,14 @@ import com.mewcode.config.ProviderConfig;
 import com.mewcode.conversation.ConversationManager;
 import com.mewcode.llm.LlmClient;
 import com.mewcode.llm.LlmClients;
+import com.mewcode.permission.BashSandbox;
+import com.mewcode.permission.BashSandboxFactory;
+import com.mewcode.permission.PathAuthorizationStore;
+import com.mewcode.permission.PermissionGate;
+import com.mewcode.permission.PermissionMode;
+import com.mewcode.permission.PermissionRequest;
+import com.mewcode.permission.PermissionResponse;
+import com.mewcode.permission.PermissionRuleEngine;
 import com.mewcode.prompt.PromptBuilder;
 import com.mewcode.prompt.SystemPromptBundle;
 import com.mewcode.tool.FileStateCache;
@@ -51,6 +59,10 @@ public final class MewCodeModel implements Model {
   private final SystemPromptBundle systemPromptBundle;
   private final BiFunction<ProviderConfig, String, LlmClient> clientFactory;
   private final AgentLoopConfig loopConfig;
+  private final PermissionMode configuredPermissionMode;
+  private final PermissionRuleEngine permissionRuleEngine;
+  private final PathAuthorizationStore pathAuthorizationStore;
+  private final BashSandbox bashSandbox;
   private final ConversationManager conversation = new ConversationManager();
   private final List<ChatMessage> chatMessages = new ArrayList<>();
   private final StringBuilder inputBuffer = new StringBuilder();
@@ -79,6 +91,7 @@ public final class MewCodeModel implements Model {
   private int currentIteration;
   private String pendingStreamError;
   private String usageLabel = "Token 用量：unknown";
+  private PermissionRequest pendingPermission;
 
   public record StreamPollMessage() implements Message {}
 
@@ -107,12 +120,39 @@ public final class MewCodeModel implements Model {
       Path projectRoot,
       BiFunction<ProviderConfig, String, LlmClient> clientFactory,
       AgentLoopConfig loopConfig) {
+    this(
+        providers,
+        projectRoot,
+        clientFactory,
+        loopConfig,
+        PermissionMode.DEFAULT,
+        new PermissionRuleEngine(),
+        new PathAuthorizationStore(projectRoot),
+        BashSandboxFactory.create());
+  }
+
+  public MewCodeModel(
+      List<ProviderConfig> providers,
+      Path projectRoot,
+      BiFunction<ProviderConfig, String, LlmClient> clientFactory,
+      AgentLoopConfig loopConfig,
+      PermissionMode permissionMode,
+      PermissionRuleEngine permissionRuleEngine,
+      PathAuthorizationStore pathAuthorizationStore,
+      BashSandbox bashSandbox) {
     this.providers = providers == null ? List.of() : List.copyOf(providers);
     this.projectRoot =
         Objects.requireNonNull(projectRoot, "projectRoot").toAbsolutePath().normalize();
     this.systemPromptBundle = PromptBuilder.buildBundle(this.projectRoot);
     this.clientFactory = Objects.requireNonNull(clientFactory, "clientFactory");
     this.loopConfig = Objects.requireNonNull(loopConfig, "loopConfig").copy();
+    this.configuredPermissionMode = Objects.requireNonNull(permissionMode, "permissionMode");
+    this.permissionRuleEngine =
+        Objects.requireNonNull(permissionRuleEngine, "permissionRuleEngine");
+    this.pathAuthorizationStore =
+        Objects.requireNonNull(pathAuthorizationStore, "pathAuthorizationStore");
+    this.bashSandbox = Objects.requireNonNull(bashSandbox, "bashSandbox");
+    this.agentMode = permissionMode == PermissionMode.PLAN ? AgentMode.PLAN : AgentMode.EXECUTE;
     if (this.providers.size() == 1) {
       selectedProvider = this.providers.getFirst();
       state = AppState.CHAT;
@@ -199,7 +239,8 @@ public final class MewCodeModel implements Model {
       client = clientFactory.apply(selectedProvider, systemPromptBundle.flattenedText());
       if (toolExecutor != null) toolExecutor.close();
       var registry = ToolRegistry.createDefault();
-      toolExecutor = new ToolExecutor(registry, projectRoot, new FileStateCache());
+      var gate = new PermissionGate();
+      toolExecutor = new ToolExecutor(registry, projectRoot, new FileStateCache(), gate);
       ToolApiProtocol protocol =
           "anthropic".equalsIgnoreCase(selectedProvider.getProtocol())
               ? ToolApiProtocol.ANTHROPIC
@@ -212,7 +253,12 @@ public final class MewCodeModel implements Model {
               conversation,
               protocol,
               loopConfig,
-              new PromptRequestFactory(systemPromptBundle));
+              new PromptRequestFactory(systemPromptBundle),
+              gate,
+              configuredPermissionMode,
+              permissionRuleEngine,
+              pathAuthorizationStore,
+              bashSandbox);
       initializationError = null;
     } catch (RuntimeException error) {
       client = null;
@@ -222,7 +268,9 @@ public final class MewCodeModel implements Model {
   }
 
   private UpdateResult<MewCodeModel> handleChatKey(KeyPressMessage message) {
-    if (streaming) return UpdateResult.from(this);
+    if (streaming) {
+      return pendingPermission == null ? UpdateResult.from(this) : handlePermissionKey(message);
+    }
 
     String key = message.key();
     return switch (key) {
@@ -259,6 +307,31 @@ public final class MewCodeModel implements Model {
     };
   }
 
+  private UpdateResult<MewCodeModel> handlePermissionKey(KeyPressMessage message) {
+    PermissionResponse response =
+        switch (message.key()) {
+          case "y" -> PermissionResponse.ALLOW_ONCE;
+          case "s" -> PermissionResponse.ALLOW_SESSION;
+          case "a" -> PermissionResponse.ALLOW_ALWAYS;
+          case "n" -> PermissionResponse.DENY;
+          default -> null;
+        };
+    if (response == null || activeRun == null || pendingPermission == null) {
+      return UpdateResult.from(this);
+    }
+    boolean resolved = activeRun.resolvePermission(pendingPermission.requestId(), response);
+    if (!resolved) return UpdateResult.from(this);
+    String messageText =
+        switch (response) {
+          case ALLOW_ONCE -> "已允许本次操作";
+          case ALLOW_SESSION -> "已允许本会话中的同类操作";
+          case ALLOW_ALWAYS -> "已永久允许同类操作";
+          case DENY -> "已拒绝本次操作";
+        };
+    pendingPermission = null;
+    return UpdateResult.from(this, Command.println(Styles.DIM.render(messageText)));
+  }
+
   private UpdateResult<MewCodeModel> insertCharacters(KeyPressMessage message) {
     if (message.runes() == null) return UpdateResult.from(this);
     for (char character : message.runes()) {
@@ -282,7 +355,8 @@ public final class MewCodeModel implements Model {
     }
     if ("/plan".equals(text.trim())) {
       agentMode = AgentMode.PLAN;
-      return UpdateResult.from(this, Command.println(Styles.DIM.render("已切换到 Plan Mode：只允许读类工具。")));
+      return UpdateResult.from(
+          this, Command.println(Styles.DIM.render("已切换到 Plan Mode：模型仅应执行只读操作，写操作仍需确认。")));
     }
     if ("/do".equals(text.trim())) {
       agentMode = AgentMode.EXECUTE;
@@ -337,6 +411,12 @@ public final class MewCodeModel implements Model {
           case AgentEvent.StreamText text -> streamBuffer.append(text.text());
           case AgentEvent.ToolUse started -> printCommands.add(renderToolStarted(started));
           case AgentEvent.ToolResult completed -> printCommands.add(renderToolCompleted(completed));
+          case AgentEvent.PermissionRequested request -> {
+            pendingPermission = request.request();
+            printCommands.add(
+                Command.println(
+                    Styles.ERROR.render(PermissionPromptFormatter.format(pendingPermission))));
+          }
           case AgentEvent.TurnComplete turn -> {
             currentIteration = turn.round();
             printCommands.add(
@@ -465,6 +545,7 @@ public final class MewCodeModel implements Model {
     currentIteration = 0;
     pendingStreamError = null;
     usageLabel = "Token 用量：unknown";
+    pendingPermission = null;
   }
 
   private String viewProviderSelection() {
@@ -504,6 +585,9 @@ public final class MewCodeModel implements Model {
                   "%s %s… · %s · (%.0fs)"
                       .formatted(frame, spinnerVerb, iteration, elapsedSeconds())));
       view.append('\n').append(Styles.DIM.render("  " + usageLabel));
+      if (pendingPermission != null) {
+        view.append('\n').append(Styles.ERROR.render("  等待权限确认：y 本次 / s 本会话 / a 永久 / n 拒绝"));
+      }
       view.append('\n');
     } else if (initializationError != null) {
       view.append('\n').append(Styles.ERROR.render("✖ " + initializationError)).append('\n');

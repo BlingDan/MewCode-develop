@@ -79,13 +79,16 @@ public final class EditFileTool implements Tool {
     if (input == null || !(input.get("new_string") instanceof String)) {
       return "参数 new_string 必须是字符串。请传入替换后的文本。";
     }
-    return PathGuard.validatePathArgument(input.get("path"), context.projectRoot());
+    return PathGuard.validatePathArgument(
+        input.get("path"), context.projectRoot(), context.externalPathAuthorized());
   }
 
   /** 校验文件快照后执行唯一原文替换，防止覆盖模型未读取或已变化的文件。 */
   @Override
   public ToolResult execute(ToolExecutionContext context, Map<String, Object> input) {
-    String pathError = PathGuard.validatePath(input.get("path"), context.projectRoot(), true);
+    String pathError =
+        PathGuard.validatePath(
+            input.get("path"), context.projectRoot(), true, context.externalPathAuthorized());
     if (pathError != null) return ToolResult.error(pathError);
     Path path = PathGuard.path(input.get("path"));
     try {

@@ -10,7 +10,7 @@ import com.mewcode.tool.support.ToolInput;
 import java.util.List;
 import java.util.Map;
 
-/** 通过系统 shell 执行命令。 */
+/** 通过 OS 级沙箱中的系统 shell 执行命令。 */
 public final class BashTool implements Tool {
 
   private final CommandRunner runner;
@@ -30,7 +30,7 @@ public final class BashTool implements Tool {
 
   @Override
   public String description() {
-    return "在项目根目录通过系统 shell 执行命令，返回合并后的 stdout/stderr 和退出码。\n"
+    return "在项目根目录通过 OS 级沙箱中的系统 shell 执行命令，返回合并后的 stdout/stderr 和退出码。\n"
         + ToolPromptRules.dedicatedToolRule();
   }
 

@@ -4,6 +4,12 @@ import com.mewcode.conversation.ConversationManager;
 import com.mewcode.conversation.ToolResultBlock;
 import com.mewcode.llm.CancellableLlmStream;
 import com.mewcode.llm.LlmClient;
+import com.mewcode.permission.BashSandbox;
+import com.mewcode.permission.PathAuthorizationStore;
+import com.mewcode.permission.PermissionContext;
+import com.mewcode.permission.PermissionGate;
+import com.mewcode.permission.PermissionMode;
+import com.mewcode.permission.PermissionRuleEngine;
 import com.mewcode.tool.ToolApiProtocol;
 import com.mewcode.tool.ToolCall;
 import com.mewcode.tool.ToolExecutor;
@@ -36,6 +42,11 @@ public final class AgentTurnCoordinator {
   private final AgentLoopConfig config;
   private final Function<AgentMode, String> systemPromptProvider;
   private final PromptRequestFactory promptRequestFactory;
+  private final PermissionGate permissionGate;
+  private final PermissionMode configuredPermissionMode;
+  private final PermissionRuleEngine permissionRuleEngine;
+  private final PathAuthorizationStore pathAuthorizationStore;
+  private final BashSandbox bashSandbox;
 
   public AgentTurnCoordinator(
       LlmClient client,
@@ -87,6 +98,36 @@ public final class AgentTurnCoordinator {
         Objects.requireNonNull(promptRequestFactory, "promptRequestFactory"));
   }
 
+  /** 创建启用五层权限系统的协调器。 */
+  public AgentTurnCoordinator(
+      LlmClient client,
+      ToolRegistry registry,
+      ToolExecutor executor,
+      ConversationManager conversation,
+      ToolApiProtocol protocol,
+      AgentLoopConfig config,
+      PromptRequestFactory promptRequestFactory,
+      PermissionGate permissionGate,
+      PermissionMode permissionMode,
+      PermissionRuleEngine permissionRuleEngine,
+      PathAuthorizationStore pathAuthorizationStore,
+      BashSandbox bashSandbox) {
+    this(
+        client,
+        registry,
+        executor,
+        conversation,
+        protocol,
+        config,
+        mode -> null,
+        Objects.requireNonNull(promptRequestFactory, "promptRequestFactory"),
+        Objects.requireNonNull(permissionGate, "permissionGate"),
+        Objects.requireNonNull(permissionMode, "permissionMode"),
+        Objects.requireNonNull(permissionRuleEngine, "permissionRuleEngine"),
+        Objects.requireNonNull(pathAuthorizationStore, "pathAuthorizationStore"),
+        Objects.requireNonNull(bashSandbox, "bashSandbox"));
+  }
+
   private AgentTurnCoordinator(
       LlmClient client,
       ToolRegistry registry,
@@ -96,6 +137,36 @@ public final class AgentTurnCoordinator {
       AgentLoopConfig config,
       Function<AgentMode, String> systemPromptProvider,
       PromptRequestFactory promptRequestFactory) {
+    this(
+        client,
+        registry,
+        executor,
+        conversation,
+        protocol,
+        config,
+        systemPromptProvider,
+        promptRequestFactory,
+        null,
+        null,
+        null,
+        null,
+        null);
+  }
+
+  private AgentTurnCoordinator(
+      LlmClient client,
+      ToolRegistry registry,
+      ToolExecutor executor,
+      ConversationManager conversation,
+      ToolApiProtocol protocol,
+      AgentLoopConfig config,
+      Function<AgentMode, String> systemPromptProvider,
+      PromptRequestFactory promptRequestFactory,
+      PermissionGate permissionGate,
+      PermissionMode permissionMode,
+      PermissionRuleEngine permissionRuleEngine,
+      PathAuthorizationStore pathAuthorizationStore,
+      BashSandbox bashSandbox) {
     this.client = Objects.requireNonNull(client, "client");
     this.registry = Objects.requireNonNull(registry, "registry");
     this.executor = Objects.requireNonNull(executor, "executor");
@@ -106,6 +177,11 @@ public final class AgentTurnCoordinator {
     this.systemPromptProvider =
         Objects.requireNonNull(systemPromptProvider, "systemPromptProvider");
     this.promptRequestFactory = promptRequestFactory;
+    this.permissionGate = permissionGate;
+    this.configuredPermissionMode = permissionMode;
+    this.permissionRuleEngine = permissionRuleEngine;
+    this.pathAuthorizationStore = pathAuthorizationStore;
+    this.bashSandbox = bashSandbox;
   }
 
   /**
@@ -129,6 +205,8 @@ public final class AgentTurnCoordinator {
     Objects.requireNonNull(userText, "userText");
     AgentMode effectiveMode = mode == null ? AgentMode.EXECUTE : mode;
     var run = new AgentRun();
+    run.setPermissionPublisher(
+        request -> run.events().publish(new AgentEvent.PermissionRequested(request)));
     try {
       conversation.addUserMessage(userText);
       Thread.startVirtualThread(() -> runLoop(run, effectiveMode));
@@ -165,7 +243,11 @@ public final class AgentTurnCoordinator {
       while (!run.cancellationToken().isCancelled()
           && completedRounds < config.getMaxIterations()) {
         int round = completedRounds + 1;
-        List<Map<String, Object>> schemas = registry.toAPIFormate(protocol, policy::isAllowed);
+        PermissionContext permissions = createPermissionContext(run, mode);
+        List<Map<String, Object>> schemas =
+            permissionGate == null
+                ? registry.toAPIFormate(protocol, policy::isAllowed)
+                : registry.toAPIFormate(protocol);
         CancellableLlmStream stream;
         if (promptRequestFactory != null) {
           var request =
@@ -207,7 +289,9 @@ public final class AgentTurnCoordinator {
                 .filter(call -> !turn.parseErrors().containsKey(call.toolUseId()))
                 .toList();
         List<ToolInvocationResult> executed =
-            executor.executeBatch(executableCalls, policy, run.cancellationToken());
+            permissionGate == null
+                ? executor.executeBatch(executableCalls, policy, run.cancellationToken())
+                : executor.executeBatch(executableCalls, permissions);
         List<ToolResultBlock> resultBlocks =
             ToolResultAssembler.assemble(turn.calls(), executed, turn.parseErrors());
         // 工具调用和结果必须成对提交，取消发生在工具执行期间也不能留下悬空 assistant 消息。
@@ -220,9 +304,12 @@ public final class AgentTurnCoordinator {
         }
 
         boolean hasExecutableKnownTool =
-            executableCalls.stream()
-                .anyMatch(
-                    call -> registry.get(call.toolName()).filter(policy::isAllowed).isPresent());
+            permissionGate == null
+                ? executableCalls.stream()
+                    .anyMatch(
+                        call -> registry.get(call.toolName()).filter(policy::isAllowed).isPresent())
+                : executableCalls.stream()
+                    .anyMatch(call -> registry.get(call.toolName()).isPresent());
         unknownToolRounds = hasExecutableKnownTool ? 0 : unknownToolRounds + 1;
         if (unknownToolRounds >= config.getUnknownToolRoundLimit()) {
           finish(
@@ -269,6 +356,20 @@ public final class AgentTurnCoordinator {
             AgentEvent.ErrorCategory.LOOP);
       }
     }
+  }
+
+  private PermissionContext createPermissionContext(AgentRun run, AgentMode mode) {
+    if (permissionGate == null) return null;
+    PermissionMode effectiveMode =
+        mode == AgentMode.PLAN ? PermissionMode.PLAN : configuredPermissionMode;
+    return new PermissionContext(
+        executor.projectRoot(),
+        effectiveMode,
+        permissionRuleEngine,
+        pathAuthorizationStore,
+        bashSandbox,
+        run.permissionBroker(),
+        run.cancellationToken());
   }
 
   /** 将工具结果事件恢复为模型调用顺序，避免并发执行导致 UI 顺序抖动。 */

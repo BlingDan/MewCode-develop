@@ -19,3 +19,6 @@ providers:
     base_url: https://api.deepseek.com
     api_key: replace-with-deepseek-api-key
     thinking: false
+
+permissions:
+  mode: default

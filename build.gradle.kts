@@ -50,6 +50,23 @@ spotless {
                 "src/main/java/com/mewcode/tool/impl/EditFileTool.java",
                 "src/main/java/com/mewcode/tool/impl/BashTool.java",
                 "src/main/java/com/mewcode/tui/MewCodeModel.java",
+                "src/main/java/com/mewcode/MewCode.java",
+                "src/main/java/com/mewcode/permission/**/*.java",
+                "src/main/java/com/mewcode/config/AppConfig.java",
+                "src/main/java/com/mewcode/config/ConfigLoader.java",
+                "src/main/java/com/mewcode/config/PermissionConfig.java",
+                "src/main/java/com/mewcode/config/PermissionConfigLoader.java",
+                "src/main/java/com/mewcode/tool/ToolExecutor.java",
+                "src/main/java/com/mewcode/tool/ToolExecutionContext.java",
+                "src/main/java/com/mewcode/tool/support/PathGuard.java",
+                "src/main/java/com/mewcode/tool/support/CommandRunner.java",
+                "src/main/java/com/mewcode/tool/impl/ReadFileTool.java",
+                "src/main/java/com/mewcode/tool/impl/WriteFileTool.java",
+                "src/main/java/com/mewcode/tool/impl/GlobTool.java",
+                "src/main/java/com/mewcode/tool/impl/GrepTool.java",
+                "src/main/java/com/mewcode/agent/AgentEvent.java",
+                "src/main/java/com/mewcode/agent/AgentRun.java",
+                "src/main/java/com/mewcode/tui/PermissionPromptFormatter.java",
                 "src/test/java/com/mewcode/prompt/**/*.java",
                 "src/test/java/com/mewcode/llm/PromptRequestTest.java",
                 "src/test/java/com/mewcode/llm/AnthropicClientTest.java",
@@ -59,8 +76,13 @@ spotless {
                 "src/test/java/com/mewcode/agent/AgentTurnCoordinatorPromptTest.java",
                 "src/test/java/com/mewcode/tool/ToolPromptRulesTest.java",
                 "src/test/java/com/mewcode/tool/ToolRegistryTest.java",
-                "src/test/java/com/mewcode/tui/MewCodeModelTest.java")
-        googleJavaFormat("1.28.0")
+                "src/test/java/com/mewcode/tui/MewCodeModelTest.java",
+                "src/test/java/com/mewcode/permission/**/*.java",
+                "src/test/java/com/mewcode/config/PermissionConfigLoaderTest.java",
+                "src/test/java/com/mewcode/tui/PermissionPromptFormatterTest.java",
+                "src/test/java/com/mewcode/tool/PermissionToolExecutorTest.java",
+                "src/test/java/com/mewcode/tool/BashSandboxIntegrationTest.java")
+        googleJavaFormat("1.24.0")
         removeUnusedImports()
     }
 }

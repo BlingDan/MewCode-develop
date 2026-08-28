@@ -20,6 +20,9 @@ repositories {
 }
 
 dependencies {
+    implementation(platform("io.modelcontextprotocol.sdk:mcp-bom:2.0.1"))
+    implementation("io.modelcontextprotocol.sdk:mcp-core")
+    implementation("io.modelcontextprotocol.sdk:mcp-json-jackson2")
     implementation("org.jline:jline:3.28.0")
     implementation("com.github.ajalt.mordant:mordant:3.0.2")
     implementation("com.github.ajalt.mordant:mordant-markdown:3.0.2")
@@ -47,8 +50,11 @@ spotless {
                 "src/main/java/com/mewcode/agent/AgentTurnCoordinator.java",
                 "src/main/java/com/mewcode/tool/ToolPromptRules.java",
                 "src/main/java/com/mewcode/tool/ToolRegistry.java",
+                "src/main/java/com/mewcode/tool/Tool.java",
+                "src/main/java/com/mewcode/tool/ToolCategory.java",
                 "src/main/java/com/mewcode/tool/impl/EditFileTool.java",
                 "src/main/java/com/mewcode/tool/impl/BashTool.java",
+                "src/main/java/com/mewcode/tool/impl/ToolSearchTool.java",
                 "src/main/java/com/mewcode/tui/MewCodeModel.java",
                 "src/main/java/com/mewcode/MewCode.java",
                 "src/main/java/com/mewcode/permission/**/*.java",
@@ -56,6 +62,9 @@ spotless {
                 "src/main/java/com/mewcode/config/ConfigLoader.java",
                 "src/main/java/com/mewcode/config/PermissionConfig.java",
                 "src/main/java/com/mewcode/config/PermissionConfigLoader.java",
+                "src/main/java/com/mewcode/config/McpServerConfig.java",
+                "src/main/java/com/mewcode/config/McpConfigLoader.java",
+                "src/main/java/com/mewcode/mcp/**/*.java",
                 "src/main/java/com/mewcode/tool/ToolExecutor.java",
                 "src/main/java/com/mewcode/tool/ToolExecutionContext.java",
                 "src/main/java/com/mewcode/tool/support/PathGuard.java",
@@ -74,11 +83,15 @@ spotless {
                 "src/test/java/com/mewcode/agent/PromptRequestFactoryTest.java",
                 "src/test/java/com/mewcode/agent/AgentTurnCoordinatorTest.java",
                 "src/test/java/com/mewcode/agent/AgentTurnCoordinatorPromptTest.java",
+                "src/test/java/com/mewcode/agent/AgentTurnCoordinatorLazyToolTest.java",
                 "src/test/java/com/mewcode/tool/ToolPromptRulesTest.java",
                 "src/test/java/com/mewcode/tool/ToolRegistryTest.java",
                 "src/test/java/com/mewcode/tui/MewCodeModelTest.java",
                 "src/test/java/com/mewcode/permission/**/*.java",
                 "src/test/java/com/mewcode/config/PermissionConfigLoaderTest.java",
+                "src/test/java/com/mewcode/config/McpConfigLoaderTest.java",
+                "src/test/java/com/mewcode/mcp/**/*.java",
+                "src/test/java/com/mewcode/tool/impl/ToolSearchToolTest.java",
                 "src/test/java/com/mewcode/tui/PermissionPromptFormatterTest.java",
                 "src/test/java/com/mewcode/tool/PermissionToolExecutorTest.java",
                 "src/test/java/com/mewcode/tool/BashSandboxIntegrationTest.java")

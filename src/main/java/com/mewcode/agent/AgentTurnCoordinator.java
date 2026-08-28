@@ -244,15 +244,21 @@ public final class AgentTurnCoordinator {
           && completedRounds < config.getMaxIterations()) {
         int round = completedRounds + 1;
         PermissionContext permissions = createPermissionContext(run, mode);
+        List<String> deferredToolNames = registry.deferredToolNames();
         List<Map<String, Object>> schemas =
             permissionGate == null
-                ? registry.toAPIFormate(protocol, policy::isAllowed)
-                : registry.toAPIFormate(protocol);
+                ? registry.toAPIFormateForModel(protocol, policy::isAllowed)
+                : registry.toAPIFormateForModel(protocol, null);
         CancellableLlmStream stream;
         if (promptRequestFactory != null) {
           var request =
               promptRequestFactory.create(
-                  mode, round, round == 1, conversation.getMessages(), schemas);
+                  mode,
+                  round,
+                  round == 1,
+                  conversation.getMessages(),
+                  schemas,
+                  deferredToolNames);
           stream = client.openStream(request);
         } else {
           String systemPrompt = systemPromptProvider.apply(mode);

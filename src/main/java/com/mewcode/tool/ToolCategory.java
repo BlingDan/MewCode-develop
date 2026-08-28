@@ -4,5 +4,6 @@ package com.mewcode.tool;
 public enum ToolCategory {
     FILE,
     SEARCH,
-    SHELL
+    SHELL,
+    MCP
 }

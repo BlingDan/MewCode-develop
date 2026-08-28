@@ -1,6 +1,7 @@
 package com.mewcode;
 
 import com.mewcode.config.ConfigLoader;
+import com.mewcode.config.McpConfigLoader;
 import com.mewcode.config.PermissionConfigLoader;
 import com.mewcode.tui.MewCodeModel;
 import com.mewcode.tui.tea.Program;
@@ -36,6 +37,9 @@ public final class MewCode {
       return 2;
     }
 
+    McpConfigLoader.Loaded mcp = McpConfigLoader.load(projectRoot, config);
+    for (String error : mcp.errors()) System.err.println("MewCode: " + error);
+
     var model =
         new MewCodeModel(
             config.getProviders(),
@@ -45,7 +49,8 @@ public final class MewCode {
             permissions.mode(),
             permissions.ruleEngine(),
             permissions.pathAuthorizationStore(),
-            com.mewcode.permission.BashSandboxFactory.create());
+            com.mewcode.permission.BashSandboxFactory.create(),
+            mcp.servers());
     var program = new Program(model);
 
     System.out.print("\033[?25l");

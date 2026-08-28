@@ -8,9 +8,11 @@ import com.mewcode.agent.AgentRun;
 import com.mewcode.agent.AgentTurnCoordinator;
 import com.mewcode.agent.PromptRequestFactory;
 import com.mewcode.config.ProviderConfig;
+import com.mewcode.config.McpServerConfig;
 import com.mewcode.conversation.ConversationManager;
 import com.mewcode.llm.LlmClient;
 import com.mewcode.llm.LlmClients;
+import com.mewcode.mcp.McpManager;
 import com.mewcode.permission.BashSandbox;
 import com.mewcode.permission.BashSandboxFactory;
 import com.mewcode.permission.PathAuthorizationStore;
@@ -46,7 +48,7 @@ import java.util.function.BiFunction;
  * <p>模型不直接调用 provider 或工具：提交消息时启动 {@link AgentRun}，后续由定时 {@link StreamPollMessage} 消费事件。流式 buffer
  * 只用于实时预览和完整响应收尾， 最终历史由 Agent 协调器维护，取消时不会把半截 assistant 文本写入会话。
  */
-public final class MewCodeModel implements Model {
+public final class MewCodeModel implements Model, AutoCloseable {
 
   public static final String VERSION = "0.1.0";
   private static final Duration POLL_INTERVAL = Duration.ofMillis(50);
@@ -59,6 +61,7 @@ public final class MewCodeModel implements Model {
   private final SystemPromptBundle systemPromptBundle;
   private final BiFunction<ProviderConfig, String, LlmClient> clientFactory;
   private final AgentLoopConfig loopConfig;
+  private final List<McpServerConfig> mcpServerConfigs;
   private final PermissionMode configuredPermissionMode;
   private final PermissionRuleEngine permissionRuleEngine;
   private final PathAuthorizationStore pathAuthorizationStore;
@@ -75,6 +78,7 @@ public final class MewCodeModel implements Model {
   private AgentEventStream streamEvents;
   private ToolExecutor toolExecutor;
   private AgentTurnCoordinator coordinator;
+  private McpManager mcpManager;
   private int providerCursor;
   private int inputCursor;
   private int spinnerFrame;
@@ -92,6 +96,7 @@ public final class MewCodeModel implements Model {
   private String pendingStreamError;
   private String usageLabel = "Token 用量：unknown";
   private PermissionRequest pendingPermission;
+  private boolean closed;
 
   public record StreamPollMessage() implements Message {}
 
@@ -128,7 +133,8 @@ public final class MewCodeModel implements Model {
         PermissionMode.DEFAULT,
         new PermissionRuleEngine(),
         new PathAuthorizationStore(projectRoot),
-        BashSandboxFactory.create());
+        BashSandboxFactory.create(),
+        List.of());
   }
 
   public MewCodeModel(
@@ -140,12 +146,37 @@ public final class MewCodeModel implements Model {
       PermissionRuleEngine permissionRuleEngine,
       PathAuthorizationStore pathAuthorizationStore,
       BashSandbox bashSandbox) {
+    this(
+        providers,
+        projectRoot,
+        clientFactory,
+        loopConfig,
+        permissionMode,
+        permissionRuleEngine,
+        pathAuthorizationStore,
+        bashSandbox,
+        List.of());
+  }
+
+  /** 创建模型并在 provider 启动前注入已校验的 MCP Server 配置。 */
+  public MewCodeModel(
+      List<ProviderConfig> providers,
+      Path projectRoot,
+      BiFunction<ProviderConfig, String, LlmClient> clientFactory,
+      AgentLoopConfig loopConfig,
+      PermissionMode permissionMode,
+      PermissionRuleEngine permissionRuleEngine,
+      PathAuthorizationStore pathAuthorizationStore,
+      BashSandbox bashSandbox,
+      List<McpServerConfig> mcpServerConfigs) {
     this.providers = providers == null ? List.of() : List.copyOf(providers);
     this.projectRoot =
         Objects.requireNonNull(projectRoot, "projectRoot").toAbsolutePath().normalize();
     this.systemPromptBundle = PromptBuilder.buildBundle(this.projectRoot);
     this.clientFactory = Objects.requireNonNull(clientFactory, "clientFactory");
     this.loopConfig = Objects.requireNonNull(loopConfig, "loopConfig").copy();
+    this.mcpServerConfigs =
+        mcpServerConfigs == null ? List.of() : List.copyOf(mcpServerConfigs);
     this.configuredPermissionMode = Objects.requireNonNull(permissionMode, "permissionMode");
     this.permissionRuleEngine =
         Objects.requireNonNull(permissionRuleEngine, "permissionRuleEngine");
@@ -235,12 +266,15 @@ public final class MewCodeModel implements Model {
 
   /** 创建 provider、默认工具注册表和 Agent 协调器；失败只阻塞当前会话而不崩溃 TUI。 */
   private void initializeProvider() {
+    closeMcpManager();
+    closeToolExecutor();
     try {
       client = clientFactory.apply(selectedProvider, systemPromptBundle.flattenedText());
-      if (toolExecutor != null) toolExecutor.close();
       var registry = ToolRegistry.createDefault();
       var gate = new PermissionGate();
       toolExecutor = new ToolExecutor(registry, projectRoot, new FileStateCache(), gate);
+      mcpManager = new McpManager(registry);
+      mcpManager.connectAll(mcpServerConfigs);
       ToolApiProtocol protocol =
           "anthropic".equalsIgnoreCase(selectedProvider.getProtocol())
               ? ToolApiProtocol.ANTHROPIC
@@ -261,10 +295,38 @@ public final class MewCodeModel implements Model {
               bashSandbox);
       initializationError = null;
     } catch (RuntimeException error) {
+      closeMcpManager();
+      closeToolExecutor();
       client = null;
       coordinator = null;
       initializationError = "Provider initialization failed.";
     }
+  }
+
+  private void closeMcpManager() {
+    if (mcpManager == null) return;
+    mcpManager.close();
+    mcpManager = null;
+  }
+
+  private void closeToolExecutor() {
+    if (toolExecutor == null) return;
+    toolExecutor.close();
+    toolExecutor = null;
+  }
+
+  /** 关闭当前 Agent 和所有 MCP/工具执行资源；重复调用安全无副作用。 */
+  @Override
+  public void close() {
+    if (closed) return;
+    closed = true;
+    if (activeRun != null) activeRun.cancel();
+    closeMcpManager();
+    closeToolExecutor();
+    activeRun = null;
+    streamEvents = null;
+    coordinator = null;
+    client = null;
   }
 
   private UpdateResult<MewCodeModel> handleChatKey(KeyPressMessage message) {

@@ -11,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
 
@@ -24,12 +25,14 @@ public final class ToolRegistry {
 
   private final Map<String, Tool> tools = new ConcurrentHashMap<>();
   private final List<String> registrationOrder = new ArrayList<>();
+  private final Set<String> discoveredTools = ConcurrentHashMap.newKeySet();
 
   /** 注册或替换工具；首次注册顺序保持不变。 */
   public synchronized void register(Tool tool) {
     if (tool == null) throw new IllegalArgumentException("tool must not be null");
     if (!tools.containsKey(tool.name())) registrationOrder.add(tool.name());
     tools.put(tool.name(), tool);
+    if (!tool.shouldDefer()) discoveredTools.remove(tool.name());
   }
 
   /** 按模型返回的工具名查找实现。 */
@@ -45,6 +48,59 @@ public final class ToolRegistry {
       if (tool != null) result.add(tool);
     }
     return List.copyOf(result);
+  }
+
+  /** 判断工具是否可以在当前轮进入模型工具列表。 */
+  public boolean modelVisible(Tool tool) {
+    if (tool == null) return false;
+    if ("ToolSearch".equals(tool.name())) return hasUndiscoveredDeferredTools();
+    return !tool.shouldDefer() || discoveredTools.contains(tool.name());
+  }
+
+  /** 返回当前轮可以发送给模型的工具快照。 */
+  public List<Tool> getModelVisibleTools() {
+    return getAll().stream().filter(this::modelVisible).toList();
+  }
+
+  /** 返回尚未被 ToolSearch 发现的延迟工具名，保持注册顺序。 */
+  public synchronized List<String> deferredToolNames() {
+    return registrationOrder.stream()
+        .map(tools::get)
+        .filter(tool -> tool != null && tool.shouldDefer())
+        .filter(tool -> !discoveredTools.contains(tool.name()))
+        .map(Tool::name)
+        .toList();
+  }
+
+  /** 当前是否仍有未发现的延迟工具。 */
+  public boolean hasUndiscoveredDeferredTools() {
+    return !deferredToolNames().isEmpty();
+  }
+
+  /** 在本地精确查找并标记一个延迟工具；查找失败不改变状态。 */
+  public synchronized Optional<Tool> findAndDiscover(String name) {
+    if (name == null) return Optional.empty();
+    Tool tool = tools.get(name);
+    if (tool == null || !tool.shouldDefer()) return Optional.empty();
+    discoveredTools.add(name);
+    return Optional.of(tool);
+  }
+
+  /** 标记一个已注册的延迟工具已被发现。 */
+  public synchronized boolean markDiscovered(String name) {
+    return findAndDiscover(name).isPresent();
+  }
+
+  /** 返回当前 Registry 中延迟工具的本地状态。 */
+  public boolean isDiscovered(String name) {
+    return name != null && discoveredTools.contains(name);
+  }
+
+  /** 按 Agent 当前可见性过滤并生成 provider 工具定义。 */
+  public List<Map<String, Object>> toAPIFormateForModel(
+      ToolApiProtocol protocol, Predicate<Tool> filter) {
+    return toAPIFormate(
+        protocol, tool -> modelVisible(tool) && (filter == null || filter.test(tool)));
   }
 
   /** 兼容既有方案中的方法名，生成当前 provider 所需的工具定义。 */

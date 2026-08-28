@@ -25,9 +25,23 @@ public final class PromptRequestFactory {
       boolean forceFull,
       List<Message> history,
       List<Map<String, Object>> tools) {
+    return create(mode, round, forceFull, history, tools, List.of());
+  }
+
+  /** 创建请求并在本轮 Reminder 中列出尚未发现的延迟工具名。 */
+  public PromptRequest create(
+      AgentMode mode,
+      int round,
+      boolean forceFull,
+      List<Message> history,
+      List<Map<String, Object>> tools,
+      List<String> deferredToolNames) {
     var context = new ReminderContext(Objects.requireNonNull(mode, "mode"), round, forceFull);
     return new PromptRequest(
-        systemPrompt.systemSegments(), tools, history, SystemReminderFactory.create(context));
+        systemPrompt.systemSegments(),
+        tools,
+        history,
+        SystemReminderFactory.create(context, deferredToolNames));
   }
 
   /** 返回会话级稳定 bundle；不会暴露可变内部集合。 */

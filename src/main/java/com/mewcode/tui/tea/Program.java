@@ -60,9 +60,9 @@ public class Program {
 
         terminal.enterRawMode();
         writer = terminal.writer();
-        writer.flush();
-        Runtime.getRuntime().addShutdownHook(
-                Thread.ofPlatform().unstarted(this::restoreTerminal));
+    writer.flush();
+    Runtime.getRuntime().addShutdownHook(
+                Thread.ofPlatform().unstarted(this::closeModelAndRestoreTerminal));
 
         running = true;
 
@@ -95,8 +95,20 @@ public class Program {
             running = false;
             // 清掉 view（println 已在 scrollback 里了）
             clearView();
-            restoreTerminal();
+            closeModelAndRestoreTerminal();
         }
+    }
+
+    /** 关闭模型持有的外部资源，再恢复终端；关闭过程幂等。 */
+    private void closeModelAndRestoreTerminal() {
+        if (model instanceof AutoCloseable closeable) {
+            try {
+                closeable.close();
+            } catch (Exception error) {
+                System.err.println("MewCode: failed to close model resources.");
+            }
+        }
+        restoreTerminal();
     }
 
     /** JVM shutdown hook 或主循环退出时恢复终端状态，且整个过程幂等。 */

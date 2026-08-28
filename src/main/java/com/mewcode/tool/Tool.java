@@ -17,6 +17,11 @@ public interface Tool {
     /** 返回 provider 无关的 JSON Schema。 */
     Map<String, Object> inputSchema();
 
+    /** 返回可选的输出 JSON Schema；本地工具默认没有声明。 */
+    default Map<String, Object> outputSchema() {
+        return Map.of();
+    }
+
     /** 在执行上下文中执行工具，结果必须是完整、可回灌模型的文本。 */
     ToolResult execute(ToolExecutionContext context, Map<String, Object> input);
 
@@ -28,6 +33,11 @@ public interface Tool {
 
     /** 当前输入是否可以与相邻安全调用并发执行。 */
     boolean isConcurrencySafe(Map<String, Object> input);
+
+    /** 是否默认从模型工具列表中延迟隐藏；本地工具默认立即可见。 */
+    default boolean shouldDefer() {
+        return false;
+    }
 
     /** 返回 null 表示校验通过，否则返回面向模型的调整提示。 */
     String validateInput(Map<String, Object> input);

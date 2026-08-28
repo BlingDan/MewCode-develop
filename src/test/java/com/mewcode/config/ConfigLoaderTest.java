@@ -38,6 +38,26 @@ class ConfigLoaderTest {
     }
 
     @Test
+    void bindsMcpServersFromTheMainConfig() throws Exception {
+        AppConfig loaded = ConfigLoader.load(write("""
+                mcp_servers:
+                  local:
+                    command: sample-mcp
+                    args: [stdio]
+                    env:
+                      TOKEN: "${TOKEN}"
+                  remote:
+                    url: https://example.com/mcp
+                    headers:
+                      Authorization: Bearer test-token
+                """ + validProvider()));
+
+        assertEquals(2, loaded.getMcpServers().size());
+        assertEquals("sample-mcp", ((java.util.Map<?, ?>) loaded.getMcpServers().get("local")).get("command"));
+        assertEquals("https://example.com/mcp", ((java.util.Map<?, ?>) loaded.getMcpServers().get("remote")).get("url"));
+    }
+
+    @Test
     void acceptsDeepSeekAsAnOpenAiCompatibleProtocol() throws Exception {
         Path config = write(validProvider().replace("protocol: anthropic", "protocol: deepseek"));
 

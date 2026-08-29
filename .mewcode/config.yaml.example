@@ -24,20 +24,20 @@ permissions:
   mode: default
 
 # MCP Server：通过 command/args/env 配置 stdio，或通过 url/headers 配置 Streamable HTTP。
-# env 和 headers 的值支持 ${VAR}，未定义变量会使当前 Server 被跳过。
+# API key 等敏感值直接填写在配置文件中；stdio 仍需使用 Server 要求的环境变量名。
 mcp_servers:
-  # Context7 未配置 API key 时可使用免费额度；额度用尽后请设置 CONTEXT7_API_KEY。
+  # Context7 未配置 API key 时可使用免费额度；额度用尽后直接填写 API key。
   context7:
     command: npx
     args: ["-y", "@upstash/context7-mcp"]
     env:
-      CONTEXT7_API_KEY: "${CONTEXT7_API_KEY}"
+      CONTEXT7_API_KEY: replace-with-context7-api-key
   github:
     command: github-mcp-server
     args: [stdio]
     env:
-      GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_PERSONAL_ACCESS_TOKEN}"
+      GITHUB_PERSONAL_ACCESS_TOKEN: replace-with-github-token
   remote:
     url: https://example.com/mcp
     headers:
-      Authorization: "Bearer ${MCP_TOKEN}"
+      Authorization: "Bearer replace-with-mcp-token"

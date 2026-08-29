@@ -81,8 +81,8 @@ AppConfig 增加 mcpServers 原始 map 字段，使现有项目配置可以继�
 - args 必须是字符串列表；
 - env 和 headers 必须是字符串到字符串的 map；
 - url 必须是 HTTP 或 HTTPS URL；
-- env 和 headers 的值展开 ${VAR}；
-- 未定义环境变量、缺字段、类型错误或未知字段只使当前 Server 无效；
+- env 和 headers 的值直接读取配置文件字面量；
+- 缺字段、类型错误或未知字段只使当前 Server 无效；
 - 错误文本只包含 Server 名称和字段名，不包含 Secret 值。
 
 ### P3：McpManager 和传输
@@ -124,7 +124,7 @@ HTTP：
 - 使用 SDK HttpClientStreamableHttpTransport；
 - 复用 JDK HttpClient，不引入 WebFlux；
 - 使用参考实现的 URL 基础地址和 SDK 默认 MCP endpoint；
-- 通过 HTTP request customizer 注入展开后的 headers；
+- 通过 HTTP request customizer 注入配置文件中的 headers；
 - 只声明 2025-11-25；
 - 关闭可恢复流的自动恢复行为，不在 Manager 层调用重连；
 - 不注册工具列表变更回调，或仅记录通知日志；
@@ -229,7 +229,7 @@ Wrapper 行为：
 
 新增或修改测试：
 
-- McpConfigLoaderTest：双层合并、同名覆盖、两种字段组合、环境变量展开、非法条目隔离和 Secret 脱敏；
+- McpConfigLoaderTest：双层合并、同名覆盖、两种字段组合、字面量敏感值、非法条目隔离和 Secret 脱敏；
 - McpManagerTest：initialize 顺序、版本限制、tools/list 分页、tools/call 重复调用、单 Server 失败隔离和 shutdown；
 - MCP 传输集成测试：临时 stdio Server 和本地 HTTP Server 覆盖 JSON、SSE、会话 Header、乱序响应和错误响应；
 - McpToolWrapper 测试：名称、schema、参数桥接、文本结果、业务错误和异常结果；

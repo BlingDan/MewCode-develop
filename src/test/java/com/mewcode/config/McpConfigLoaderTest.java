@@ -42,7 +42,7 @@ class McpConfigLoaderTest {
   }
 
   @Test
-  void expandsOnlyEnvironmentAndHeaderValues() throws Exception {
+  void keepsEnvironmentAndHeaderValuesFromConfigLiteral() throws Exception {
     Path user = tempDir.resolve("user.yaml");
     Files.writeString(
         user,
@@ -65,8 +65,8 @@ class McpConfigLoaderTest {
     McpServerConfig stdio = loaded.servers().stream().filter(McpServerConfig::isStdio).findFirst().orElseThrow();
     assertEquals("${NOT_EXPANDED}", stdio.command());
     assertEquals("${NOT_EXPANDED}", stdio.args().getFirst());
-    assertEquals("prefix-" + System.getenv("PATH"), stdio.env().get("PATH_COPY"));
-    assertEquals(System.getenv("PATH"), loaded.servers().stream().filter(McpServerConfig::isHttp).findFirst().orElseThrow().headers().get("X-Path"));
+    assertEquals("prefix-${PATH}", stdio.env().get("PATH_COPY"));
+    assertEquals("${PATH}", loaded.servers().stream().filter(McpServerConfig::isHttp).findFirst().orElseThrow().headers().get("X-Path"));
   }
 
   @Test
@@ -93,7 +93,7 @@ class McpConfigLoaderTest {
   }
 
   @Test
-  void undefinedVariableOnlyInvalidatesCurrentServer() throws Exception {
+  void invalidValueTypeOnlyInvalidatesCurrentServer() throws Exception {
     Path user = tempDir.resolve("user.yaml");
     Files.writeString(
         user,
@@ -102,7 +102,7 @@ class McpConfigLoaderTest {
           broken:
             url: https://example.com/mcp
             headers:
-              Authorization: "Bearer ${MEWCODE_VARIABLE_THAT_DOES_NOT_EXIST}"
+              Authorization: 123
           good:
             command: good-server
         """);

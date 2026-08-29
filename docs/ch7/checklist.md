@@ -24,8 +24,8 @@
 - [x] stdio 只接受 `command`、`args`、`env`；HTTP 只接受 `url`、`headers`。`F1/A1/T2`
 - [x] `args` 必须是字符串列表；`env` 和 `headers` 必须是字符串到字符串的 map。`F1/A1/T2`
 - [x] `url` 只接受 HTTP 或 HTTPS URL。`F1/A1/T2`
-- [x] `env` 和 `headers` 的值支持 `${VAR}` 展开；`command`、`args`、`url` 不展开。`F1/A1/T2`
-- [x] 环境变量缺失、必填字段缺失、类型错误和未知字段只禁用当前 Server。`F1/A1/N4/T2`
+- [x] `env` 和 `headers` 的值直接读取配置文件字面量；`command`、`args`、`url` 也不做变量展开。`F1/A1/T2`
+- [x] 必填字段缺失、类型错误和未知字段只禁用当前 Server。`F1/A1/N4/T2`
 - [x] 无效配置不启动进程、不发起 HTTP 请求。`F1/N4/A1/T2`
 - [x] 配置错误只包含 Server 名称和字段名，不包含 Token、Secret 或 Header 值。`N4/N5/A1/A8/T2`
 - [x] 没有 MCP 配置时，现有配置加载和内置工具行为不变。`F11/A8/T2`
@@ -64,7 +64,7 @@
 - [x] 请求携带 `MCP-Protocol-Version: 2025-11-25`。`F4/A3/A4/T3`
 - [x] 服务端返回 `MCP-Session-Id` 后保存，并在后续请求中继续携带。`F4/A4/A7/T3`
 - [x] SDK transport 能处理 HTTP GET SSE 通道的服务端消息。`F4/A4/T3`
-- [x] 配置中的 headers 随 HTTP 请求发送，展开后的值正确生效。`F1/F4/A1/A4/T2/T3`
+- [x] 配置中的 headers 随 HTTP 请求发送，字面量值正确生效。`F1/F4/A1/A4/T2/T3`
 - [x] HTTP 状态错误、响应格式错误、会话失效、超时和断开会转换为工具错误。`F4/F7/A4/A5/T3/T4`
 - [x] 不实现 OAuth、浏览器授权和 Token 刷新。`F4/O5/T3`
 - [x] 不按 2026-07-28 modern 传输的无初始化/无会话语义发送请求。`F4/O2/A3/A4/T3`
@@ -120,8 +120,7 @@
 - [x] MCP wrapper 不直接执行外部操作，不绕过确认、取消、超时和错误处理。`F7/F10/A8/T4/T7`
 - [x] MCP 工具不会因为来源是外部 Server 而自动放行。`F10/A8/T4/T7`
 - [x] MCP 工具的风险标记不采信 Server annotations，使用 MewCode 本地策略。`F7/F10/A8/T4/T7`
-- [x] `${VAR}` 仅做字符串替换，不执行命令、表达式或脚本。`F1/F10/A1/T2`
-- [x] 环境变量、Authorization 和其他敏感 Header 不进入日志、异常或 Agent 可见内容。`F1/N4/N5/A1/A8/T2/T3/T4`
+- [x] 配置文件中的 API key、环境变量值、Authorization 和其他敏感 Header 不进入日志、异常或 Agent 可见内容。`F1/N4/N5/A1/A8/T2/T3/T4`
 - [x] 配置、协议、连接和工具错误都返回安全且可定位的错误，不终止 Agent Loop。`F2/F7/F10/F11/A4/A5/A8/T4/T6`
 
 ## 9. 连接缓存与生命周期
@@ -147,7 +146,7 @@
 
 ## 11. 自动化测试与构建证据
 
-- [x] `McpConfigLoaderTest` 覆盖双层合并、完整覆盖、字段校验、`${VAR}` 展开、Secret 脱敏和单条隔离。`A1/T2`
+- [x] `McpConfigLoaderTest` 覆盖双层合并、完整覆盖、字段校验、字面量敏感值、Secret 脱敏和单条隔离。`A1/T2`
 - [x] `McpManagerTest` 覆盖握手顺序、版本拒绝、分页、重复调用、错误隔离和 shutdown。`A2/A3/A7/T3/T7`
 - [x] `McpTransportIntegrationTest` 覆盖 stdio、HTTP POST、JSON/SSE、会话 ID、协议 Header、乱序响应和错误响应。`A2/A4/T3`
 - [x] `McpToolWrapperTest` 覆盖名称、schema、arguments、文本/非文本结果、业务错误和异常。`A5/T4`

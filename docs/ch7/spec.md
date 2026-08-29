@@ -53,7 +53,7 @@ MewCode 从以下文件读取 MCP 配置：
 - headers 只能用于 HTTP；
 - 配置项中出现与所选传输无关的字段时，该 Server 配置无效。
 
-env 的值和 headers 的值支持从 MewCode 进程环境展开 ${VAR}。未定义变量、缺失必填字段或字段类型错误时，该 Server 配置无效，不启动进程、不发起请求，并记录明确原因。command、args 和 url 不执行变量展开。
+env 的值和 headers 的值直接读取配置文件中的字符串，不从 MewCode 进程环境展开变量。缺失必填字段或字段类型错误时，该 Server 配置无效，不启动进程、不发起请求，并记录明确原因。stdio 仍需使用 Server 要求的环境变量名，但变量值由配置文件直接提供。
 
 示例：
 
@@ -62,11 +62,11 @@ env 的值和 headers 的值支持从 MewCode 进程环境展开 ${VAR}。未定
         command: github-mcp-server
         args: [stdio]
         env:
-          GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_PERSONAL_ACCESS_TOKEN}"
+          GITHUB_PERSONAL_ACCESS_TOKEN: replace-with-github-token
       remote:
         url: https://example.com/mcp
         headers:
-          Authorization: "Bearer ${MCP_TOKEN}"
+          Authorization: "Bearer replace-with-mcp-token"
 
 ### F2：启动初始化与会话流程
 
@@ -181,7 +181,7 @@ MCP 工具在本地 Registry 中完整注册，但默认标记为延迟工具。
 - MCP 工具不直接执行，适配器不能绕过权限、确认、取消和错误处理；
 - 未被明确允许的外部工具按现有默认策略处理，不能因为来自 MCP 就自动放行；
 - 不信任 MCP Server 返回的 annotations 来降低风险等级；
-- ${VAR} 只做字符串替换，不执行命令、表达式或脚本；
+- 配置文件中的 API key、环境变量值和 HTTP Header 只用于启动进程或发送请求；
 - 环境变量和 HTTP Header 中的敏感值不得出现在日志、异常信息或 Agent 可见内容中。
 
 ### F11：既有行为兼容
@@ -215,7 +215,7 @@ MCP 工具在本地 Registry 中完整注册，但默认标记为延迟工具。
 
 ### N4：安全
 
-- 配置错误、环境变量缺失和协议错误不得默认转为允许；
+- 配置错误和协议错误不得默认转为允许；
 - 敏感配置只用于启动进程或发送请求，不进入普通日志；
 - 外部工具始终经过现有权限执行入口。
 
@@ -282,7 +282,7 @@ MCP 工具在本地 Registry 中完整注册，但默认标记为延迟工具。
 - command 存在时按 stdio 创建连接，url 存在时按 HTTP 创建连接；
 - command 和 url 同时存在或同时缺失时，该 Server 被判定为无效；
 - stdio 专属字段和 HTTP 专属字段混用时，该 Server 被判定为无效；
-- ${VAR} 能在 stdio 的 env 值和 HTTP 的 headers 值中展开；
+- stdio 的 env 值和 HTTP 的 headers 值直接使用配置文件中的字面量；
 - 无效 Server 被单独跳过，内置工具和其他有效 Server 仍可用。
 
 ### A2：完整会话

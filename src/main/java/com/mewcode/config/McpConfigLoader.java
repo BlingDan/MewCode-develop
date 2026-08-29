@@ -9,8 +9,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
@@ -20,7 +18,6 @@ public final class McpConfigLoader {
 
   private static final Set<String> STDIO_FIELDS = Set.of("command", "args", "env");
   private static final Set<String> HTTP_FIELDS = Set.of("url", "headers");
-  private static final Pattern VARIABLE = Pattern.compile("\\$\\{([^}]+)}");
 
   private McpConfigLoader() {}
 
@@ -107,13 +104,13 @@ public final class McpConfigLoader {
     if (hasCommand) {
       String command = requiredString(fields.get("command"), "command");
       List<String> args = stringList(fields.get("args"), "args");
-      Map<String, String> env = expandedMap(fields.get("env"), "env");
+      Map<String, String> env = stringMap(fields.get("env"), "env");
       return new McpServerConfig(serverName, command, args, env, null, Map.of());
     }
 
     String url = requiredString(fields.get("url"), "url");
     validateUrl(url);
-    Map<String, String> headers = expandedMap(fields.get("headers"), "headers");
+    Map<String, String> headers = stringMap(fields.get("headers"), "headers");
     return new McpServerConfig(serverName, null, List.of(), Map.of(), url, headers);
   }
 
@@ -135,7 +132,7 @@ public final class McpConfigLoader {
     return result;
   }
 
-  private static Map<String, String> expandedMap(Object value, String field) throws InvalidServer {
+  private static Map<String, String> stringMap(Object value, String field) throws InvalidServer {
     if (value == null) return Map.of();
     if (!(value instanceof Map<?, ?> raw)) throw new InvalidServer(field + " 必须是字符串 map");
     var result = new LinkedHashMap<String, String>();
@@ -146,22 +143,9 @@ public final class McpConfigLoader {
       if (!(entry.getValue() instanceof String text)) {
         throw new InvalidServer(field + " 的 value 必须是字符串");
       }
-      result.put(key, expand(text, field));
+      result.put(key, text);
     }
     return result;
-  }
-
-  private static String expand(String value, String field) throws InvalidServer {
-    Matcher matcher = VARIABLE.matcher(value);
-    var result = new StringBuffer();
-    while (matcher.find()) {
-      String variable = matcher.group(1);
-      String replacement = System.getenv(variable);
-      if (replacement == null) throw new InvalidServer(field + " 引用了未定义环境变量");
-      matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
-    }
-    matcher.appendTail(result);
-    return result.toString();
   }
 
   private static void validateUrl(String value) throws InvalidServer {

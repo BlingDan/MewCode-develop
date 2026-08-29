@@ -21,7 +21,7 @@
 |---|---|---|
 | 修改 | `build.gradle.kts` | 引入 MCP Java SDK BOM、core 和 Jackson 2 模块 |
 | 新建 | `src/main/java/com/mewcode/config/McpServerConfig.java` | 单个 MCP Server 的规范化配置 |
-| 新建 | `src/main/java/com/mewcode/config/McpConfigLoader.java` | 双层配置合并、环境变量展开和逐条校验 |
+| 新建 | `src/main/java/com/mewcode/config/McpConfigLoader.java` | 双层配置合并、敏感值读取和逐条校验 |
 | 修改 | `src/main/java/com/mewcode/config/AppConfig.java` | 保留项目级 `mcp_servers` 原始 map |
 | 新建 | `src/main/java/com/mewcode/mcp/McpManager.java` | 连接、会话、工具发现、缓存、注册和关闭 |
 | 修改 | `src/main/java/com/mewcode/tool/Tool.java` | 增加默认 `shouldDefer()` |
@@ -69,10 +69,10 @@
 4. 对同名 Server 使用项目级完整条目覆盖，不做字段级深合并。
 5. 识别 stdio：必须有 `command`，可选 `args`、`env`；识别 HTTP：必须有 `url`，可选 `headers`。
 6. 拒绝同时设置 `command` 和 `url`、两者都缺失、字段混用、未知字段和错误类型。
-7. 对 `env` 与 `headers` 的字符串值展开 `${VAR}`；变量缺失时只使当前 Server 无效。
+7. 对 `env` 与 `headers` 的字符串值直接读取配置文件字面量，不从运行时环境展开变量。
 8. 返回有效配置及逐条错误；错误只包含 Server 名称和字段名，不输出 Secret 值。
 
-**验证：** 覆盖双层合并、完整覆盖、两种合法形态、字段混用、变量展开、未定义变量、类型错误、未知字段和单条隔离。
+**验证：** 覆盖双层合并、完整覆盖、两种合法形态、字段混用、字面量敏感值、类型错误、未知字段和单条隔离。
 
 ### T3：实现单 Server 会话与两种传输
 

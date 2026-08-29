@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-/** 一个已经完成变量展开和字段校验的 MCP Server 配置。 */
+/** 一个已经完成字段校验、敏感值仍只用于传输的 MCP Server 配置。 */
 public record McpServerConfig(
     String serverName,
     String command,

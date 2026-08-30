@@ -17,10 +17,31 @@ public sealed interface StreamEvent {
     }
     /** 本轮用量快照；缺失维度用 OptionalLong.empty 表示。 */
     record Usage(java.util.OptionalLong inputTokens,
+                 java.util.OptionalLong cacheReadTokens,
+                 java.util.OptionalLong cacheCreationTokens,
                  java.util.OptionalLong outputTokens) implements StreamEvent {
+        /** 兼容旧 Provider，只提供 input/output 时 cache 维度视为缺失。 */
+        public Usage(java.util.OptionalLong inputTokens,
+                     java.util.OptionalLong outputTokens) {
+            this(inputTokens, java.util.OptionalLong.empty(),
+                    java.util.OptionalLong.empty(), outputTokens);
+        }
+
         public Usage {
             java.util.Objects.requireNonNull(inputTokens, "inputTokens");
+            java.util.Objects.requireNonNull(cacheReadTokens, "cacheReadTokens");
+            java.util.Objects.requireNonNull(cacheCreationTokens, "cacheCreationTokens");
             java.util.Objects.requireNonNull(outputTokens, "outputTokens");
+            if (hasNegative(inputTokens)
+                    || hasNegative(cacheReadTokens)
+                    || hasNegative(cacheCreationTokens)
+                    || hasNegative(outputTokens)) {
+                throw new IllegalArgumentException("Token counts must not be negative");
+            }
+        }
+
+        private static boolean hasNegative(java.util.OptionalLong value) {
+            return value.isPresent() && value.getAsLong() < 0;
         }
     }
     /** 参数 JSON 已完整解析的工具调用。 */
@@ -31,5 +52,21 @@ public sealed interface StreamEvent {
     /** provider 已发出本轮结束原因。 */
     record StreamEnd(String stopReason) implements StreamEvent {}
     /** provider 请求失败或网络层异常。 */
-    record Error(String message) implements StreamEvent {}
+    record Error(String message, ErrorKind errorKind) implements StreamEvent {
+        public Error {
+            message = java.util.Objects.requireNonNullElse(message, "Provider request failed.");
+            errorKind = java.util.Objects.requireNonNull(errorKind, "errorKind");
+        }
+
+        /** 兼容旧调用方，默认按普通错误处理。 */
+        public Error(String message) {
+            this(message, ErrorKind.GENERAL);
+        }
+    }
+
+    /** Provider 错误是否表示请求上下文超过硬限制。 */
+    enum ErrorKind {
+        GENERAL,
+        CONTEXT_LENGTH
+    }
 }

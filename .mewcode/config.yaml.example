@@ -5,6 +5,7 @@ providers:
     base_url: https://api.anthropic.com
     api_key: replace-me
     thinking: true
+    context_window_tokens: 128000
 
   - name: openai
     protocol: openai
@@ -12,6 +13,7 @@ providers:
     base_url: https://api.openai.com/v1
     api_key: replace-me
     thinking: false
+    context_window_tokens: 128000
 
   - name: deepseek-openai
     protocol: openai
@@ -19,6 +21,7 @@ providers:
     base_url: https://api.deepseek.com
     api_key: replace-with-deepseek-api-key
     thinking: false
+    context_window_tokens: 128000
 
 permissions:
   mode: default

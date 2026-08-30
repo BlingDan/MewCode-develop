@@ -49,4 +49,22 @@ class ConversationManagerTest {
         assertEquals("user", history.getMessages().get(1).role());
         assertInstanceOf(ToolResultBlock.class, history.getMessages().get(1).content().getFirst());
     }
+
+    @Test
+    void replacesHistoryWithAnIndependentSnapshot() {
+        var history = new ConversationManager();
+        history.addUserMessage("old");
+        var replacement = new java.util.ArrayList<Message>();
+        replacement.add(new Message("user", "new user"));
+        replacement.add(new Message("assistant", "new answer"));
+
+        history.replaceMessages(replacement);
+        replacement.clear();
+
+        assertEquals(2, history.getMessages().size());
+        assertEquals(
+                "new user",
+                ((TextBlock) history.getMessages().get(0).content().getFirst()).text());
+        assertEquals("assistant", history.getMessages().get(1).role());
+    }
 }

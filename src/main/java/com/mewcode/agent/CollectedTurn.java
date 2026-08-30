@@ -5,7 +5,9 @@ import com.mewcode.tool.ToolCall;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.OptionalLong;
+import com.mewcode.llm.StreamEvent;
 
 /**
  * 一轮 provider 流的完整领域快照。
@@ -23,6 +25,8 @@ public record CollectedTurn(
         String error,
         OptionalLong inputTokens,
         OptionalLong outputTokens,
+        Optional<StreamEvent.Usage> usage,
+        StreamEvent.ErrorKind errorKind,
         boolean complete) {
 
     public CollectedTurn {
@@ -34,10 +38,13 @@ public record CollectedTurn(
         stopReason = stopReason == null ? "" : stopReason;
         inputTokens = inputTokens == null ? OptionalLong.empty() : inputTokens;
         outputTokens = outputTokens == null ? OptionalLong.empty() : outputTokens;
+        usage = usage == null ? Optional.empty() : usage;
+        errorKind = errorKind == null ? StreamEvent.ErrorKind.GENERAL : errorKind;
     }
 
     public static CollectedTurn incomplete() {
         return new CollectedTurn(List.of(), List.of(), Map.of(), "", "", "", null,
-                OptionalLong.empty(), OptionalLong.empty(), false);
+                OptionalLong.empty(), OptionalLong.empty(), Optional.empty(),
+                StreamEvent.ErrorKind.GENERAL, false);
     }
 }

@@ -7,8 +7,9 @@ import com.mewcode.agent.AgentMode;
 import com.mewcode.agent.AgentRun;
 import com.mewcode.agent.AgentTurnCoordinator;
 import com.mewcode.agent.PromptRequestFactory;
-import com.mewcode.config.ProviderConfig;
+import com.mewcode.compact.ContextManager;
 import com.mewcode.config.McpServerConfig;
+import com.mewcode.config.ProviderConfig;
 import com.mewcode.conversation.ConversationManager;
 import com.mewcode.llm.LlmClient;
 import com.mewcode.llm.LlmClients;
@@ -79,6 +80,7 @@ public final class MewCodeModel implements Model, AutoCloseable {
   private ToolExecutor toolExecutor;
   private AgentTurnCoordinator coordinator;
   private McpManager mcpManager;
+  private ContextManager contextManager;
   private int providerCursor;
   private int inputCursor;
   private int spinnerFrame;
@@ -97,6 +99,7 @@ public final class MewCodeModel implements Model, AutoCloseable {
   private String usageLabel = "Token 用量：unknown";
   private PermissionRequest pendingPermission;
   private boolean closed;
+  private boolean compactionRun;
 
   public record StreamPollMessage() implements Message {}
 
@@ -266,6 +269,7 @@ public final class MewCodeModel implements Model, AutoCloseable {
 
   /** 创建 provider、默认工具注册表和 Agent 协调器；失败只阻塞当前会话而不崩溃 TUI。 */
   private void initializeProvider() {
+    closeContextManager();
     closeMcpManager();
     closeToolExecutor();
     try {
@@ -275,6 +279,8 @@ public final class MewCodeModel implements Model, AutoCloseable {
       toolExecutor = new ToolExecutor(registry, projectRoot, new FileStateCache(), gate);
       mcpManager = new McpManager(registry);
       mcpManager.connectAll(mcpServerConfigs);
+      contextManager =
+          new ContextManager(projectRoot, client, selectedProvider.getContextWindowTokens());
       ToolApiProtocol protocol =
           "anthropic".equalsIgnoreCase(selectedProvider.getProtocol())
               ? ToolApiProtocol.ANTHROPIC
@@ -288,6 +294,7 @@ public final class MewCodeModel implements Model, AutoCloseable {
               protocol,
               loopConfig,
               new PromptRequestFactory(systemPromptBundle),
+              contextManager,
               gate,
               configuredPermissionMode,
               permissionRuleEngine,
@@ -295,6 +302,7 @@ public final class MewCodeModel implements Model, AutoCloseable {
               bashSandbox);
       initializationError = null;
     } catch (RuntimeException error) {
+      closeContextManager();
       closeMcpManager();
       closeToolExecutor();
       client = null;
@@ -315,12 +323,19 @@ public final class MewCodeModel implements Model, AutoCloseable {
     toolExecutor = null;
   }
 
+  private void closeContextManager() {
+    if (contextManager == null) return;
+    contextManager.close();
+    contextManager = null;
+  }
+
   /** 关闭当前 Agent 和所有 MCP/工具执行资源；重复调用安全无副作用。 */
   @Override
   public void close() {
     if (closed) return;
     closed = true;
     if (activeRun != null) activeRun.cancel();
+    closeContextManager();
     closeMcpManager();
     closeToolExecutor();
     activeRun = null;
@@ -425,6 +440,9 @@ public final class MewCodeModel implements Model, AutoCloseable {
       return UpdateResult.from(
           this, Command.println(Styles.DIM.render("已切换到 Execute Mode：允许全部工具。")));
     }
+    if ("/compact".equals(text.trim())) {
+      return startManualCompaction();
+    }
     if (client == null || coordinator == null) {
       String message =
           initializationError != null ? initializationError : "No provider is available.";
@@ -440,6 +458,7 @@ public final class MewCodeModel implements Model, AutoCloseable {
     currentIteration = 0;
     pendingStreamError = null;
     usageLabel = "Token 用量：unknown";
+    compactionRun = false;
     streaming = true;
 
     try {
@@ -458,6 +477,38 @@ public final class MewCodeModel implements Model, AutoCloseable {
         Command.batch(
             Command.println(renderUser(text)),
             Command.tick(POLL_INTERVAL, ignored -> new StreamPollMessage())));
+  }
+
+  /** 启动 /compact；该路径不写入用户消息，也不产生正常 Agent 轮次。 */
+  private UpdateResult<MewCodeModel> startManualCompaction() {
+    if (client == null || coordinator == null || contextManager == null) {
+      String message = initializationError != null ? initializationError : "上下文管理未初始化。";
+      chatMessages.add(new ChatMessage("error", message, 0));
+      return UpdateResult.from(this, Command.println(renderError(message, 0)));
+    }
+
+    streamBuffer.setLength(0);
+    requestStartMillis = System.currentTimeMillis();
+    spinnerVerb = "Compacting";
+    spinnerFrame = 0;
+    currentIteration = 0;
+    pendingStreamError = null;
+    usageLabel = "Token 用量：unknown";
+    compactionRun = true;
+    streaming = true;
+    try {
+      activeRun = coordinator.startManualCompaction(agentMode);
+      streamEvents = activeRun.events();
+    } catch (RuntimeException error) {
+      activeRun = null;
+      streamEvents = null;
+      compactionRun = false;
+      streaming = false;
+      String detail =
+          error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+      return UpdateResult.from(this, Command.println(renderError("无法启动上下文压缩：" + detail, 0)));
+    }
+    return UpdateResult.from(this, Command.tick(POLL_INTERVAL, ignored -> new StreamPollMessage()));
   }
 
   /** 批量消费事件并转换为 UI 命令；定时 tick 保证没有事件时 spinner 仍会刷新。 */
@@ -485,7 +536,23 @@ public final class MewCodeModel implements Model, AutoCloseable {
                 Command.println(Styles.DIM.render("  Agent 正在推进第 %d 轮…".formatted(turn.round()))));
           }
           case AgentEvent.Usage usage -> usageLabel = formatUsage(usage);
+          case AgentEvent.CompactionStarted started -> {
+            if (started.trigger() == com.mewcode.compact.ContextTrigger.EMERGENCY) {
+              streamBuffer.setLength(0);
+            }
+            printCommands.add(Command.println(Styles.DIM.render(compactionStartedText(started))));
+          }
+          case AgentEvent.CompactionComplete complete ->
+              printCommands.add(
+                  Command.println(Styles.DIM.render(compactionCompleteText(complete))));
           case AgentEvent.LoopComplete ignored -> {
+            if (compactionRun) {
+              return withLeadingCommands(
+                  printCommands,
+                  pendingStreamError == null
+                      ? completeCompaction()
+                      : failCompaction(pendingStreamError));
+            }
             return withLeadingCommands(
                 printCommands,
                 pendingStreamError == null ? completeStream() : failStream(pendingStreamError));
@@ -555,6 +622,19 @@ public final class MewCodeModel implements Model, AutoCloseable {
     return UpdateResult.from(this, Command.println(output));
   }
 
+  private UpdateResult<MewCodeModel> completeCompaction() {
+    resetStream();
+    return UpdateResult.from(this);
+  }
+
+  private UpdateResult<MewCodeModel> failCompaction(String message) {
+    String safeMessage = message == null ? "上下文压缩失败。" : message;
+    double elapsed = elapsedSeconds();
+    chatMessages.add(new ChatMessage("error", safeMessage, elapsed));
+    resetStream();
+    return UpdateResult.from(this, Command.println(renderError(safeMessage, elapsed)));
+  }
+
   /** 取消当前 AgentRun；已显示的部分文本仅保留在终端提示，不写入会话历史。 */
   private UpdateResult<MewCodeModel> cancelStream() {
     if (!streaming) return UpdateResult.from(this);
@@ -608,6 +688,7 @@ public final class MewCodeModel implements Model, AutoCloseable {
     pendingStreamError = null;
     usageLabel = "Token 用量：unknown";
     pendingPermission = null;
+    compactionRun = false;
   }
 
   private String viewProviderSelection() {
@@ -775,6 +856,20 @@ public final class MewCodeModel implements Model, AutoCloseable {
             ? Long.toString(usage.outputTokens().getAsLong())
             : "unknown";
     return "Token 用量：输入 %s · 输出 %s".formatted(input, output);
+  }
+
+  private static String compactionStartedText(AgentEvent.CompactionStarted event) {
+    return switch (event.trigger()) {
+      case AUTO -> "  正在压缩上下文…";
+      case MANUAL -> "  正在执行 /compact…";
+      case EMERGENCY -> "  上下文过长，正在压缩并重试…";
+    };
+  }
+
+  private static String compactionCompleteText(AgentEvent.CompactionComplete event) {
+    var result = event.result();
+    if (!result.changed()) return "  上下文无需压缩";
+    return "  上下文压缩完成：约 %d → %d tokens".formatted(result.beforeTokens(), result.afterTokens());
   }
 
   private String renderBanner() {

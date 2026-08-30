@@ -107,6 +107,41 @@ class TurnStreamCollectorTest {
         assertTrue(unknown.outputTokens().isEmpty());
     }
 
+    @Test
+    void keepsAllUsageDimensionsForContextEstimation() throws Exception {
+        var events = new LinkedBlockingQueue<StreamEvent>();
+        var usage = new StreamEvent.Usage(
+                OptionalLong.of(11),
+                OptionalLong.of(2),
+                OptionalLong.of(3),
+                OptionalLong.of(7));
+        events.add(usage);
+        events.add(new StreamEvent.StreamEnd("end_turn"));
+
+        var turn = new TurnStreamCollector(new TokenUsageAccumulator())
+                .collect(new AgentRun(), new CancellableLlmStream(events, () -> { }), 1);
+
+        assertEquals(usage, turn.usage().orElseThrow());
+        assertEquals(OptionalLong.of(11), turn.inputTokens());
+        assertEquals(OptionalLong.of(7), turn.outputTokens());
+    }
+
+    @Test
+    void preservesContextLengthErrorKindWithoutCommittingPartialTurn() throws Exception {
+        var events = new LinkedBlockingQueue<StreamEvent>();
+        events.add(new StreamEvent.TextDelta("partial"));
+        events.add(new StreamEvent.Error(
+                "prompt too long",
+                StreamEvent.ErrorKind.CONTEXT_LENGTH));
+
+        var turn = new TurnStreamCollector(new TokenUsageAccumulator())
+                .collect(new AgentRun(), new CancellableLlmStream(events, () -> { }), 1);
+
+        assertFalse(turn.complete());
+        assertEquals(StreamEvent.ErrorKind.CONTEXT_LENGTH, turn.errorKind());
+        assertEquals("partial", turn.text());
+    }
+
     private static List<AgentEvent> drain(AgentEventStream stream) throws Exception {
         var result = new ArrayList<AgentEvent>();
         while (true) {

@@ -59,6 +59,8 @@ class OpenAiClientTest {
               .findFirst()
               .orElseThrow();
       assertEquals(11, usage.inputTokens().orElseThrow());
+      assertEquals(5, usage.cacheReadTokens().orElseThrow());
+      assertTrue(usage.cacheCreationTokens().isEmpty());
       assertEquals(3, usage.outputTokens().orElseThrow());
       assertInstanceOf(StreamEvent.StreamEnd.class, events.getLast());
       assertTrue(body.get().contains(projectRoot));
@@ -299,6 +301,31 @@ class OpenAiClientTest {
 
       assertInstanceOf(StreamEvent.Error.class, events.getFirst());
       assertEquals(1, count.get());
+    } finally {
+      server.stop(0);
+    }
+  }
+
+  @Test
+  void classifiesPromptTooLongAsContextLengthError() throws Exception {
+    HttpServer server =
+        server(
+            exchange ->
+                respond(
+                    exchange,
+                    400,
+                    "application/json",
+                    """
+                    {"error":{"message":"Request rejected","type":"invalid_request_error","code":"prompt_too_long"}}
+                    """));
+    try {
+      var history = new ConversationManager();
+      history.addUserMessage("hello");
+      List<StreamEvent> events =
+          collect(new OpenAiClient(provider(server, "context-key"), "system").stream(history));
+
+      var error = assertInstanceOf(StreamEvent.Error.class, events.getFirst());
+      assertEquals(StreamEvent.ErrorKind.CONTEXT_LENGTH, error.errorKind());
     } finally {
       server.stop(0);
     }

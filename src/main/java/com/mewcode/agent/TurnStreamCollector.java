@@ -40,6 +40,7 @@ public final class TurnStreamCollector {
         var thinking = new StringBuilder();
         String stopReason = "";
         boolean usageSeen = false;
+        StreamEvent.Usage lastUsage = null;
         Runnable closeStream = stream::close;
         run.addCancellationHook(closeStream);
         try {
@@ -53,7 +54,9 @@ public final class TurnStreamCollector {
                     }
                     return new CollectedTurn(blocks, calls, parseErrors, text.toString(),
                             thinking.toString(), stopReason, "LLM 流提前结束。",
-                            usage.inputTokens(), usage.outputTokens(), false);
+                            usage.inputTokens(), usage.outputTokens(),
+                            java.util.Optional.ofNullable(lastUsage),
+                            StreamEvent.ErrorKind.GENERAL, false);
                 }
                 if (event instanceof StreamEvent.TextDelta delta) {
                     text.append(delta.text());
@@ -64,6 +67,7 @@ public final class TurnStreamCollector {
                     appendThinking(blocks, thinking.toString(), delta.signature());
                 } else if (event instanceof StreamEvent.Usage tokenUsage) {
                     usageSeen = true;
+                    lastUsage = tokenUsage;
                     usage.updateRound(round, tokenUsage.inputTokens(), tokenUsage.outputTokens());
                     publishUsage(run);
                 } else if (event instanceof StreamEvent.ToolCallComplete callEvent) {
@@ -88,7 +92,9 @@ public final class TurnStreamCollector {
                     }
                     return new CollectedTurn(blocks, calls, parseErrors, text.toString(),
                             thinking.toString(), stopReason, error.message(),
-                            usage.inputTokens(), usage.outputTokens(), false);
+                            usage.inputTokens(), usage.outputTokens(),
+                            java.util.Optional.ofNullable(lastUsage),
+                            error.errorKind(), false);
                 } else if (event instanceof StreamEvent.StreamEnd end) {
                     if (!usageSeen) {
                         usage.updateRound(round, OptionalLong.empty(), OptionalLong.empty());
@@ -97,7 +103,9 @@ public final class TurnStreamCollector {
                     stopReason = end.stopReason();
                     return new CollectedTurn(blocks, calls, parseErrors, text.toString(),
                             thinking.toString(), stopReason, null,
-                            usage.inputTokens(), usage.outputTokens(), true);
+                            usage.inputTokens(), usage.outputTokens(),
+                            java.util.Optional.ofNullable(lastUsage),
+                            StreamEvent.ErrorKind.GENERAL, true);
                 }
             }
         } finally {

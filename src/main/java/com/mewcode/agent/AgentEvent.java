@@ -1,5 +1,7 @@
 package com.mewcode.agent;
 
+import com.mewcode.compact.CompactResult;
+import com.mewcode.compact.ContextTrigger;
 import com.mewcode.permission.PermissionRequest;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -19,6 +21,8 @@ public sealed interface AgentEvent
         AgentEvent.TurnComplete,
         AgentEvent.LoopComplete,
         AgentEvent.Usage,
+        AgentEvent.CompactionStarted,
+        AgentEvent.CompactionComplete,
         AgentEvent.Error,
         AgentEvent.PermissionRequested {
 
@@ -81,6 +85,20 @@ public sealed interface AgentEvent
     }
   }
 
+  /** 上下文重量压缩开始；trigger 区分自动、手动和 provider 拒绝后的恢复。 */
+  record CompactionStarted(ContextTrigger trigger) implements AgentEvent {
+    public CompactionStarted {
+      trigger = Objects.requireNonNull(trigger, "trigger");
+    }
+  }
+
+  /** 上下文重量压缩完成；changed=false 表示没有可压缩的旧历史。 */
+  record CompactionComplete(CompactResult result) implements AgentEvent {
+    public CompactionComplete {
+      result = Objects.requireNonNull(result, "result");
+    }
+  }
+
   /** 不可恢复的 provider、工具或 Loop 错误。用户取消本身不使用此事件表示。 */
   record Error(String message, ErrorCategory category) implements AgentEvent {
     public Error {
@@ -103,7 +121,8 @@ public sealed interface AgentEvent
   enum ErrorCategory {
     PROVIDER,
     TOOL,
-    LOOP
+    LOOP,
+    CONTEXT
   }
 
   private static String requireText(String value, String field) {

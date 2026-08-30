@@ -1,9 +1,16 @@
 package com.mewcode.agent;
 
+import com.mewcode.compact.ContextException;
+import com.mewcode.compact.ContextManager;
+import com.mewcode.compact.ContextPreparation;
+import com.mewcode.compact.ContextRequest;
+import com.mewcode.compact.ContextTrigger;
 import com.mewcode.conversation.ConversationManager;
 import com.mewcode.conversation.ToolResultBlock;
 import com.mewcode.llm.CancellableLlmStream;
 import com.mewcode.llm.LlmClient;
+import com.mewcode.llm.PromptRequest;
+import com.mewcode.llm.StreamEvent;
 import com.mewcode.permission.BashSandbox;
 import com.mewcode.permission.PathAuthorizationStore;
 import com.mewcode.permission.PermissionContext;
@@ -20,6 +27,7 @@ import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.function.Function;
@@ -42,6 +50,7 @@ public final class AgentTurnCoordinator {
   private final AgentLoopConfig config;
   private final Function<AgentMode, String> systemPromptProvider;
   private final PromptRequestFactory promptRequestFactory;
+  private final ContextManager contextManager;
   private final PermissionGate permissionGate;
   private final PermissionMode configuredPermissionMode;
   private final PermissionRuleEngine permissionRuleEngine;
@@ -98,6 +107,33 @@ public final class AgentTurnCoordinator {
         Objects.requireNonNull(promptRequestFactory, "promptRequestFactory"));
   }
 
+  /** 使用结构化提示请求和上下文管理器启动协调器。 */
+  public AgentTurnCoordinator(
+      LlmClient client,
+      ToolRegistry registry,
+      ToolExecutor executor,
+      ConversationManager conversation,
+      ToolApiProtocol protocol,
+      AgentLoopConfig config,
+      PromptRequestFactory promptRequestFactory,
+      ContextManager contextManager) {
+    this(
+        client,
+        registry,
+        executor,
+        conversation,
+        protocol,
+        config,
+        mode -> null,
+        Objects.requireNonNull(promptRequestFactory, "promptRequestFactory"),
+        Objects.requireNonNull(contextManager, "contextManager"),
+        null,
+        null,
+        null,
+        null,
+        null);
+  }
+
   /** 创建启用五层权限系统的协调器。 */
   public AgentTurnCoordinator(
       LlmClient client,
@@ -121,6 +157,39 @@ public final class AgentTurnCoordinator {
         config,
         mode -> null,
         Objects.requireNonNull(promptRequestFactory, "promptRequestFactory"),
+        null,
+        Objects.requireNonNull(permissionGate, "permissionGate"),
+        Objects.requireNonNull(permissionMode, "permissionMode"),
+        Objects.requireNonNull(permissionRuleEngine, "permissionRuleEngine"),
+        Objects.requireNonNull(pathAuthorizationStore, "pathAuthorizationStore"),
+        Objects.requireNonNull(bashSandbox, "bashSandbox"));
+  }
+
+  /** 创建同时启用上下文管理和五层权限系统的协调器。 */
+  public AgentTurnCoordinator(
+      LlmClient client,
+      ToolRegistry registry,
+      ToolExecutor executor,
+      ConversationManager conversation,
+      ToolApiProtocol protocol,
+      AgentLoopConfig config,
+      PromptRequestFactory promptRequestFactory,
+      ContextManager contextManager,
+      PermissionGate permissionGate,
+      PermissionMode permissionMode,
+      PermissionRuleEngine permissionRuleEngine,
+      PathAuthorizationStore pathAuthorizationStore,
+      BashSandbox bashSandbox) {
+    this(
+        client,
+        registry,
+        executor,
+        conversation,
+        protocol,
+        config,
+        mode -> null,
+        Objects.requireNonNull(promptRequestFactory, "promptRequestFactory"),
+        Objects.requireNonNull(contextManager, "contextManager"),
         Objects.requireNonNull(permissionGate, "permissionGate"),
         Objects.requireNonNull(permissionMode, "permissionMode"),
         Objects.requireNonNull(permissionRuleEngine, "permissionRuleEngine"),
@@ -150,6 +219,7 @@ public final class AgentTurnCoordinator {
         null,
         null,
         null,
+        null,
         null);
   }
 
@@ -162,6 +232,7 @@ public final class AgentTurnCoordinator {
       AgentLoopConfig config,
       Function<AgentMode, String> systemPromptProvider,
       PromptRequestFactory promptRequestFactory,
+      ContextManager contextManager,
       PermissionGate permissionGate,
       PermissionMode permissionMode,
       PermissionRuleEngine permissionRuleEngine,
@@ -177,6 +248,7 @@ public final class AgentTurnCoordinator {
     this.systemPromptProvider =
         Objects.requireNonNull(systemPromptProvider, "systemPromptProvider");
     this.promptRequestFactory = promptRequestFactory;
+    this.contextManager = contextManager;
     this.permissionGate = permissionGate;
     this.configuredPermissionMode = permissionMode;
     this.permissionRuleEngine = permissionRuleEngine;
@@ -216,6 +288,60 @@ public final class AgentTurnCoordinator {
     return run;
   }
 
+  /** 启动一次不增加用户消息、不计入 Agent 轮次的手动上下文压缩。 */
+  public AgentRun startManualCompaction(AgentMode mode) {
+    AgentMode effectiveMode = mode == null ? AgentMode.EXECUTE : mode;
+    var run = new AgentRun();
+    run.setPermissionPublisher(
+        request -> run.events().publish(new AgentEvent.PermissionRequested(request)));
+    if (contextManager == null) {
+      finish(run, 0, "上下文管理未初始化。", AgentEvent.ErrorCategory.CONTEXT);
+      return run;
+    }
+    try {
+      Thread.startVirtualThread(() -> manualCompactionLoop(run, effectiveMode));
+    } catch (Throwable error) {
+      finish(run, 0, "手动上下文压缩启动失败：" + safeMessage(error), AgentEvent.ErrorCategory.CONTEXT);
+    }
+    return run;
+  }
+
+  private void manualCompactionLoop(AgentRun run, AgentMode mode) {
+    Thread currentThread = Thread.currentThread();
+    Runnable interruptThread = currentThread::interrupt;
+    run.addCancellationHook(interruptThread);
+    try {
+      ContextRequest request =
+          promptRequestFactory == null
+              ? contextRequestFromLegacyPrompt(mode)
+              : promptRequestFactory.createContextRequest(mode, 1, true, List.of(), List.of());
+      run.events().publish(new AgentEvent.CompactionStarted(ContextTrigger.MANUAL));
+      var result = contextManager.forceCompact(conversation, request, ContextTrigger.MANUAL);
+      run.events().publish(new AgentEvent.CompactionComplete(result));
+      finish(run, 0, null, null);
+    } catch (ContextException error) {
+      if (run.cancellationToken().isCancelled()) {
+        finish(run, 0, null, null);
+      } else {
+        finish(run, 0, "上下文管理失败：" + safeMessage(error), AgentEvent.ErrorCategory.CONTEXT);
+      }
+    } catch (Throwable error) {
+      if (run.cancellationToken().isCancelled()) {
+        finish(run, 0, null, null);
+      } else {
+        finish(run, 0, "手动上下文压缩失败：" + safeMessage(error), AgentEvent.ErrorCategory.CONTEXT);
+      }
+    } finally {
+      run.removeCancellationHook(interruptThread);
+    }
+  }
+
+  private ContextRequest contextRequestFromLegacyPrompt(AgentMode mode) {
+    String prompt = systemPromptProvider.apply(mode);
+    return new ContextRequest(
+        prompt == null ? List.of() : List.of(prompt), List.of(), Optional.empty());
+  }
+
   /** 返回本次协调器持有的会话历史，供继续对话和测试读取。 */
   public ConversationManager conversation() {
     return conversation;
@@ -238,6 +364,10 @@ public final class AgentTurnCoordinator {
     var policy = ToolPolicy.forMode(mode);
     int completedRounds = 0;
     int unknownToolRounds = 0;
+    int emergencyRecoveryRound = -1;
+    Thread currentThread = Thread.currentThread();
+    Runnable interruptThread = currentThread::interrupt;
+    run.addCancellationHook(interruptThread);
 
     try {
       while (!run.cancellationToken().isCancelled()
@@ -250,16 +380,31 @@ public final class AgentTurnCoordinator {
                 ? registry.toAPIFormateForModel(protocol, policy::isAllowed)
                 : registry.toAPIFormateForModel(protocol, null);
         CancellableLlmStream stream;
+        PromptRequest sentRequest = null;
+        ContextRequest sentContextRequest = null;
         if (promptRequestFactory != null) {
-          var request =
+          ContextRequest contextRequest =
+              promptRequestFactory.createContextRequest(
+                  mode, round, round == 1, schemas, deferredToolNames);
+          if (contextManager != null) {
+            ContextPreparation preparation =
+                contextManager.prepareForRequest(
+                    conversation,
+                    contextRequest,
+                    trigger -> run.events().publish(new AgentEvent.CompactionStarted(trigger)));
+            if (preparation.compacted()) {
+              run.events()
+                  .publish(
+                      new AgentEvent.CompactionComplete(preparation.compactResult().orElseThrow()));
+            }
+          }
+          sentRequest =
               promptRequestFactory.create(
-                  mode,
-                  round,
-                  round == 1,
-                  conversation.getMessages(),
-                  schemas,
-                  deferredToolNames);
-          stream = client.openStream(request);
+                  mode, round, round == 1, conversation.getMessages(), schemas, deferredToolNames);
+          sentContextRequest =
+              new ContextRequest(
+                  sentRequest.systemSegments(), sentRequest.tools(), sentRequest.reminder());
+          stream = client.openStream(sentRequest);
         } else {
           String systemPrompt = systemPromptProvider.apply(mode);
           stream =
@@ -268,17 +413,37 @@ public final class AgentTurnCoordinator {
                   : client.openStream(conversation, schemas, systemPrompt);
         }
         CollectedTurn turn = collector.collect(run, stream, round);
+        if (contextManager != null && sentRequest != null && sentContextRequest != null) {
+          if (turn.usage().isPresent()) {
+            contextManager.recordUsage(
+                turn.usage().get(), sentRequest.history(), sentContextRequest);
+          }
+        }
 
         if (run.cancellationToken().isCancelled()) {
           finish(run, completedRounds, null, null);
           return;
         }
         if (!turn.complete()) {
+          if (turn.errorKind() == StreamEvent.ErrorKind.CONTEXT_LENGTH
+              && emergencyRecoveryRound != round
+              && contextManager != null
+              && sentContextRequest != null) {
+            emergencyRecoveryRound = round;
+            run.events().publish(new AgentEvent.CompactionStarted(ContextTrigger.EMERGENCY));
+            var result =
+                contextManager.forceCompact(
+                    conversation, sentContextRequest, ContextTrigger.EMERGENCY);
+            run.events().publish(new AgentEvent.CompactionComplete(result));
+            continue;
+          }
           finish(
               run,
               completedRounds,
               turn.error() == null ? "LLM 流未完整结束。" : turn.error(),
-              AgentEvent.ErrorCategory.PROVIDER);
+              turn.errorKind() == StreamEvent.ErrorKind.CONTEXT_LENGTH
+                  ? AgentEvent.ErrorCategory.CONTEXT
+                  : AgentEvent.ErrorCategory.PROVIDER);
           return;
         }
 
@@ -301,7 +466,11 @@ public final class AgentTurnCoordinator {
         List<ToolResultBlock> resultBlocks =
             ToolResultAssembler.assemble(turn.calls(), executed, turn.parseErrors());
         // 工具调用和结果必须成对提交，取消发生在工具执行期间也不能留下悬空 assistant 消息。
-        conversation.addToolTurn(turn.blocks(), resultBlocks);
+        if (contextManager == null) {
+          conversation.addToolTurn(turn.blocks(), resultBlocks);
+        } else {
+          contextManager.commitToolTurn(conversation, turn.blocks(), resultBlocks);
+        }
         emitResults(run, turn.calls(), resultBlocks, executed);
 
         if (run.cancellationToken().isCancelled()) {
@@ -351,6 +520,16 @@ public final class AgentTurnCoordinator {
       } else {
         finish(run, completedRounds, null, null);
       }
+    } catch (ContextException error) {
+      if (run.cancellationToken().isCancelled()) {
+        finish(run, completedRounds, null, null);
+      } else {
+        finish(
+            run,
+            completedRounds,
+            "上下文管理失败：" + safeMessage(error),
+            AgentEvent.ErrorCategory.CONTEXT);
+      }
     } catch (Throwable error) {
       if (run.cancellationToken().isCancelled()) {
         finish(run, completedRounds, null, null);
@@ -361,6 +540,8 @@ public final class AgentTurnCoordinator {
             "Agent Loop 执行失败：" + safeMessage(error),
             AgentEvent.ErrorCategory.LOOP);
       }
+    } finally {
+      run.removeCancellationHook(interruptThread);
     }
   }
 

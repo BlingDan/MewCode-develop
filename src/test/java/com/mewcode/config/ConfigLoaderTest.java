@@ -38,6 +38,43 @@ class ConfigLoaderTest {
     }
 
     @Test
+    void loadsProviderContextWindowAndUsesTheDefaultWhenOmitted() throws Exception {
+        Path config = write("""
+                providers:
+                  - name: configured
+                    protocol: anthropic
+                    model: claude-test
+                    api_key: test-secret
+                    context_window_tokens: 64000
+                  - name: defaulted
+                    protocol: openai
+                    model: gpt-test
+                    api_key: test-secret
+                """);
+
+        AppConfig loaded = ConfigLoader.load(config);
+
+        assertEquals(64_000, loaded.getProviders().get(0).getContextWindowTokens());
+        assertEquals(128_000, loaded.getProviders().get(1).getContextWindowTokens());
+    }
+
+    @Test
+    void treatsNonPositiveProviderContextWindowAsTheDefault() throws Exception {
+        Path config = write("""
+                providers:
+                  - name: non-positive
+                    protocol: openai
+                    model: gpt-test
+                    api_key: test-secret
+                    context_window_tokens: 0
+                """);
+
+        AppConfig loaded = ConfigLoader.load(config);
+
+        assertEquals(128_000, loaded.getProviders().getFirst().getContextWindowTokens());
+    }
+
+    @Test
     void bindsMcpServersFromTheMainConfig() throws Exception {
         AppConfig loaded = ConfigLoader.load(write("""
                 mcp_servers:

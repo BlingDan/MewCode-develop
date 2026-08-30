@@ -137,6 +137,8 @@ public final class AnthropicClient implements LlmClient {
 
       String stopReason = "end_turn";
       OptionalLong inputTokens = OptionalLong.empty();
+      OptionalLong cacheReadTokens = OptionalLong.empty();
+      OptionalLong cacheCreationTokens = OptionalLong.empty();
       OptionalLong outputTokens = OptionalLong.empty();
       var accumulator = new ToolCallAccumulator();
       var blockIndexToId = new HashMap<Long, String>();
@@ -151,6 +153,8 @@ public final class AnthropicClient implements LlmClient {
           if (event.isMessageStart()) {
             var usage = event.asMessageStart().message().usage();
             inputTokens = OptionalLong.of(usage.inputTokens());
+            cacheReadTokens = optionalLong(usage.cacheReadInputTokens());
+            cacheCreationTokens = optionalLong(usage.cacheCreationInputTokens());
             outputTokens = OptionalLong.of(usage.outputTokens());
           } else if (event.isContentBlockStart()) {
             var block = event.asContentBlockStart().contentBlock();
@@ -185,27 +189,42 @@ public final class AnthropicClient implements LlmClient {
           } else if (event.isMessageDelta()) {
             var reason = event.asMessageDelta().delta().stopReason();
             if (reason.isPresent()) stopReason = reason.get().asString();
-            outputTokens = OptionalLong.of(event.asMessageDelta().usage().outputTokens());
+            var usage = event.asMessageDelta().usage();
+            if (usage.inputTokens().isPresent()) {
+              inputTokens = OptionalLong.of(usage.inputTokens().get());
+            }
+            if (usage.cacheReadInputTokens().isPresent()) {
+              cacheReadTokens = OptionalLong.of(usage.cacheReadInputTokens().get());
+            }
+            if (usage.cacheCreationInputTokens().isPresent()) {
+              cacheCreationTokens = OptionalLong.of(usage.cacheCreationInputTokens().get());
+            }
+            outputTokens = OptionalLong.of(usage.outputTokens());
           }
         }
       }
       if (control.isClosed()) return;
       for (StreamEvent event : accumulator.finishAll()) putEvent(queue, event);
-      if (inputTokens.isPresent() || outputTokens.isPresent()) {
-        putEvent(queue, new StreamEvent.Usage(inputTokens, outputTokens));
+      if (inputTokens.isPresent()
+          || cacheReadTokens.isPresent()
+          || cacheCreationTokens.isPresent()
+          || outputTokens.isPresent()) {
+        putEvent(
+            queue,
+            new StreamEvent.Usage(inputTokens, cacheReadTokens, cacheCreationTokens, outputTokens));
       }
       putEvent(queue, new StreamEvent.StreamEnd(stopReason));
     } catch (InterruptedException error) {
       if (!control.isClosed()) Thread.currentThread().interrupt();
     } catch (Exception error) {
-      if (!control.isClosed()) putError(queue, safeError(error));
+      if (!control.isClosed()) putError(queue, error);
     }
   }
 
   /** 将统一会话历史转换为 Anthropic 的分块消息格式。 */
   private static List<MessageParam> buildMessages(List<Message> messages) {
     var result = new ArrayList<MessageParam>();
-    for (Message message : messages) {
+    for (Message message : ProviderMessageNormalizer.normalize(messages)) {
       var blocks = new ArrayList<ContentBlockParam>();
       for (ContentBlock block : message.content()) {
         if (block instanceof TextBlock text) {
@@ -302,6 +321,10 @@ public final class AnthropicClient implements LlmClient {
     return result;
   }
 
+  private static OptionalLong optionalLong(java.util.Optional<Long> value) {
+    return value.isPresent() ? OptionalLong.of(value.get()) : OptionalLong.empty();
+  }
+
   private static void putEvent(BlockingQueue<StreamEvent> queue, StreamEvent event)
       throws InterruptedException {
     queue.put(event);
@@ -331,10 +354,19 @@ public final class AnthropicClient implements LlmClient {
     return "Unexpected Anthropic streaming error.";
   }
 
-  private static void putError(BlockingQueue<StreamEvent> queue, String message) {
+  private static void putError(BlockingQueue<StreamEvent> queue, Exception error) {
     try {
-      queue.put(new StreamEvent.Error(message));
-    } catch (InterruptedException error) {
+      boolean contextLength =
+          ContextLengthErrorDetector.isContextLength(error)
+              || error instanceof com.anthropic.errors.AnthropicServiceException service
+                  && service.statusCode() == 413;
+      queue.put(
+          new StreamEvent.Error(
+              safeError(error),
+              contextLength
+                  ? StreamEvent.ErrorKind.CONTEXT_LENGTH
+                  : StreamEvent.ErrorKind.GENERAL));
+    } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
     }
   }

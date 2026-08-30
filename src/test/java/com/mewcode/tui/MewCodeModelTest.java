@@ -155,6 +155,79 @@ class MewCodeModelTest {
   }
 
   @Test
+  void compactCommandDoesNotBecomeANormalUserRequest() throws Exception {
+    var client = new QueueClient();
+    var model = model(List.of(provider("one", "model-one")), client);
+    model.update(new WindowSizeMessage(80, 24));
+
+    type(model, "/compact");
+    model.update(key("enter"));
+    awaitIdle(model);
+
+    assertEquals(0, client.calls.get());
+    assertTrue(model.view().contains("Send a message..."));
+    model.close();
+  }
+
+  @Test
+  void compactCommandShowsCompletionAndDoesNotCreateANormalRound() throws Exception {
+    var client =
+        new QueueClient(
+            response("O".repeat(40_000)),
+            response("R".repeat(40_000)),
+            response("recent"),
+            response("recent 2"),
+            response(summary()));
+    var model = model(List.of(provider("one", "model-one")), client);
+    model.update(new WindowSizeMessage(80, 24));
+
+    submitAndAwaitIdle(model, client, "old 1", 1);
+    submitAndAwaitIdle(model, client, "old 2", 2);
+    submitAndAwaitIdle(model, client, "recent 1", 3);
+    submitAndAwaitIdle(model, client, "recent 2", 4);
+
+    type(model, "/compact");
+    model.update(key("enter"));
+    var printed = pollUntilIdleCollect(model, client, 5);
+
+    assertEquals(5, client.calls.get());
+    assertTrue(printed.stream().anyMatch(line -> line.contains("上下文压缩完成")), printed.toString());
+    assertTrue(
+        printed.stream().anyMatch(line -> line.contains("正在执行 /compact")), printed.toString());
+    assertTrue(model.view().contains("Send a message..."));
+    assertFalse(client.lastRequest.get().history().isEmpty());
+    assertTrue(client.lastRequest.get().tools().isEmpty());
+    model.close();
+  }
+
+  @Test
+  void compactCommandShowsFailureAndReturnsToIdle() throws Exception {
+    var client =
+        new QueueClient(
+            response("O".repeat(40_000)),
+            response("R".repeat(40_000)),
+            response("three"),
+            response("four"),
+            response(new StreamEvent.Error("summary provider failed")));
+    var model = model(List.of(provider("one", "model-one")), client);
+    model.update(new WindowSizeMessage(80, 24));
+
+    submitAndAwaitIdle(model, client, "old 1", 1);
+    submitAndAwaitIdle(model, client, "old 2", 2);
+    submitAndAwaitIdle(model, client, "old 3", 3);
+    submitAndAwaitIdle(model, client, "old 4", 4);
+
+    type(model, "/compact");
+    model.update(key("enter"));
+    var printed = pollUntilIdleCollect(model, client, 5);
+
+    assertEquals(5, client.calls.get());
+    assertTrue(printed.stream().anyMatch(line -> line.contains("上下文管理失败")), printed.toString());
+    assertTrue(model.view().contains("Send a message..."));
+    model.close();
+  }
+
+  @Test
   void usesTheExplicitRootForPromptAndBanner() {
     var prompt = new AtomicReference<String>();
     var model =
@@ -300,6 +373,30 @@ class MewCodeModelTest {
   }
 
   @Test
+  void promptTooLongRecoveryDropsPartialResponseBeforeRetry() throws Exception {
+    var first =
+        response(
+            new StreamEvent.TextDelta("stale partial"),
+            new StreamEvent.Error("prompt_too_long", StreamEvent.ErrorKind.CONTEXT_LENGTH));
+    var second = response("fresh response");
+    var client = new QueueClient(first, second);
+    var model = model(List.of(provider("one", "model-one")), client);
+    model.update(new WindowSizeMessage(80, 24));
+    type(model, "hello");
+    model.update(key("enter"));
+
+    var printed = pollUntilReady(model, client);
+
+    assertTrue(
+        printed.stream().anyMatch(line -> line.contains("fresh response")), printed.toString());
+    assertFalse(
+        printed.stream().anyMatch(line -> line.contains("stale partialfresh response")),
+        printed.toString());
+    assertTrue(printed.stream().anyMatch(line -> line.contains("正在压缩并重试")), printed.toString());
+    model.close();
+  }
+
+  @Test
   void ctrlCQuitsWhenIdleButCancelsTheActiveLoop() throws Exception {
     var model = model(List.of(provider("one", "model-one")), new QueueClient());
     model.update(new WindowSizeMessage(80, 24));
@@ -395,6 +492,56 @@ class MewCodeModelTest {
     for (char c : text.toCharArray()) {
       model.update(new KeyPressMessage(String.valueOf(c), new char[] {c}));
     }
+  }
+
+  private static void submitAndAwaitIdle(
+      MewCodeModel model, QueueClient client, String text, int expectedCalls) throws Exception {
+    type(model, text);
+    model.update(key("enter"));
+    awaitCalls(client, expectedCalls);
+    awaitIdle(model);
+  }
+
+  private static List<String> pollUntilIdleCollect(
+      MewCodeModel model, QueueClient client, int expectedCalls) throws Exception {
+    var printed = new ArrayList<String>();
+    for (int attempt = 0; attempt < 200; attempt++) {
+      collectPrintLines(model.update(new MewCodeModel.StreamPollMessage()).command(), printed);
+      if (client.calls.get() >= expectedCalls && model.view().contains("Send a message...")) {
+        return printed;
+      }
+      Thread.sleep(10);
+    }
+    fail("operation did not return to idle; printed=" + printed);
+    return printed;
+  }
+
+  private static BlockingQueue<StreamEvent> response(String text) {
+    var queue = new LinkedBlockingQueue<StreamEvent>();
+    queue.add(new StreamEvent.TextDelta(text));
+    queue.add(new StreamEvent.StreamEnd("end_turn"));
+    return queue;
+  }
+
+  private static BlockingQueue<StreamEvent> response(StreamEvent... events) {
+    var queue = new LinkedBlockingQueue<StreamEvent>();
+    queue.addAll(List.of(events));
+    return queue;
+  }
+
+  private static String summary() {
+    return """
+        # 用户目标与约束
+        目标。
+        # 已完成工作与关键决策
+        工作。
+        # 当前代码/文件状态
+        状态。
+        # 未完成事项与下一步
+        下一步。
+        # 重要工具结果文件索引
+        文件。
+        """;
   }
 
   private static List<String> pollUntilReady(MewCodeModel model, QueueClient client)

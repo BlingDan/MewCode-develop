@@ -3,12 +3,15 @@ package com.mewcode.config;
 /** config.yaml 中的一条 LLM provider 配置；{@code apiKey} 只用于建连，不参与日志展示。 */
 public final class ProviderConfig {
 
+    public static final int DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000;
+
     private String name;
     private String protocol;
     private String model;
     private String baseUrl;
     private String apiKey;
     private boolean thinking;
+    private int contextWindowTokens = DEFAULT_CONTEXT_WINDOW_TOKENS;
 
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
@@ -27,6 +30,13 @@ public final class ProviderConfig {
 
     public boolean isThinking() { return thinking; }
     public void setThinking(boolean thinking) { this.thinking = thinking; }
+
+    public int getContextWindowTokens() {
+        return contextWindowTokens > 0 ? contextWindowTokens : DEFAULT_CONTEXT_WINDOW_TOKENS;
+    }
+    public void setContextWindowTokens(int contextWindowTokens) {
+        this.contextWindowTokens = contextWindowTokens;
+    }
 
     @Override
     public String toString() {

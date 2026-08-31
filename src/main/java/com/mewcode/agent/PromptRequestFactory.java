@@ -1,5 +1,6 @@
 package com.mewcode.agent;
 
+import com.mewcode.compact.ContextRequest;
 import com.mewcode.conversation.Message;
 import com.mewcode.llm.PromptRequest;
 import com.mewcode.prompt.ReminderContext;
@@ -42,6 +43,17 @@ public final class PromptRequestFactory {
         tools,
         history,
         SystemReminderFactory.create(context, deferredToolNames));
+  }
+
+  /** 创建上下文预检所需的 system、tools 和 reminder 快照，不携带 history。 */
+  public ContextRequest createContextRequest(
+      AgentMode mode,
+      int round,
+      boolean forceFull,
+      List<Map<String, Object>> tools,
+      List<String> deferredToolNames) {
+    PromptRequest request = create(mode, round, forceFull, List.of(), tools, deferredToolNames);
+    return new ContextRequest(request.systemSegments(), request.tools(), request.reminder());
   }
 
   /** 返回会话级稳定 bundle；不会暴露可变内部集合。 */

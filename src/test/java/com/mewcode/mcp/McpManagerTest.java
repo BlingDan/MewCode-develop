@@ -38,7 +38,8 @@ class McpManagerTest {
 
       assertEquals(List.of("demo"), report.connectedServers());
       assertTrue(report.errors().isEmpty(), report.errors().toString());
-      assertEquals(List.of("mcp_demo_alpha", "mcp_demo_beta"), manager.registeredSources().get("demo"));
+      assertEquals(
+          List.of("mcp_demo_alpha", "mcp_demo_beta"), manager.registeredSources().get("demo"));
       assertTrue(registry.get("ToolSearch").isPresent());
 
       ToolResult first = call(registry, "mcp_demo_alpha", Map.of("value", "one"));
@@ -50,7 +51,13 @@ class McpManagerTest {
 
       List<String> messages = Files.readAllLines(log);
       assertEquals(
-          List.of("initialize", "notifications/initialized", "tools/list", "tools/list:page2", "tools/call:alpha", "tools/call:beta"),
+          List.of(
+              "initialize",
+              "notifications/initialized",
+              "tools/list",
+              "tools/list:page2",
+              "tools/call:alpha",
+              "tools/call:beta"),
           messages);
     } finally {
       manager.shutdown();
@@ -126,8 +133,11 @@ class McpManagerTest {
               append(log, "initialize");
               ObjectNode result = JSON.createObjectNode();
               result.put("protocolVersion", version);
-              result.set("capabilities", JSON.createObjectNode().set("tools", JSON.createObjectNode()));
-              result.set("serverInfo", JSON.createObjectNode().put("name", "test-server").put("version", "1"));
+              result.set(
+                  "capabilities", JSON.createObjectNode().set("tools", JSON.createObjectNode()));
+              result.set(
+                  "serverInfo",
+                  JSON.createObjectNode().put("name", "test-server").put("version", "1"));
               respond(request, result);
             }
             case "notifications/initialized" -> append(log, "notifications/initialized");
@@ -150,13 +160,15 @@ class McpManagerTest {
               append(log, "tools/call:" + name);
               ObjectNode result = JSON.createObjectNode();
               ArrayNode content = JSON.createArrayNode();
-              content.add(JSON.createObjectNode().put("type", "text").put("text", name + ":" + value));
+              content.add(
+                  JSON.createObjectNode().put("type", "text").put("text", name + ":" + value));
               result.set("content", content);
               respond(request, result);
             }
             default -> {
               if (request.has("id")) {
-                ObjectNode error = JSON.createObjectNode().put("code", -32601).put("message", "not found");
+                ObjectNode error =
+                    JSON.createObjectNode().put("code", -32601).put("message", "not found");
                 respondError(request, error);
               }
             }

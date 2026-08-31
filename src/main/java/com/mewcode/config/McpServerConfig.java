@@ -19,7 +19,8 @@ public record McpServerConfig(
     serverName = Objects.requireNonNull(serverName, "serverName");
     args = args == null ? List.of() : List.copyOf(args);
     env = env == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(env));
-    headers = headers == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(headers));
+    headers =
+        headers == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(headers));
   }
 
   /** 是否为本地 stdio Server。 */

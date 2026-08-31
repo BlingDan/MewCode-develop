@@ -42,9 +42,7 @@ public final class ToolSearchTool implements Tool {
         "type",
         "object",
         "properties",
-        Map.of(
-            "tool_name",
-            Map.of("type", "string", "description", "要查找的完整注册工具名")),
+        Map.of("tool_name", Map.of("type", "string", "description", "要查找的完整注册工具名")),
         "required",
         java.util.List.of("tool_name"),
         "additionalProperties",

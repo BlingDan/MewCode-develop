@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.mewcode.compact.ContextRequest;
 import com.mewcode.conversation.Message;
 import com.mewcode.llm.PromptRequest;
 import com.mewcode.prompt.PromptBuilder;
@@ -55,5 +56,18 @@ class PromptRequestFactoryTest {
             .create(AgentMode.EXECUTE, 1, false, List.of(), tools);
 
     assertEquals(tools, request.tools());
+  }
+
+  @Test
+  void createsContextRequestWithoutPersistingConversationHistory() {
+    var factory = new PromptRequestFactory(PromptBuilder.buildBundle(Path.of("project")));
+    var tools = List.<Map<String, Object>>of(Map.of("name", "ReadFile"));
+
+    ContextRequest request =
+        factory.createContextRequest(AgentMode.EXECUTE, 1, false, tools, List.of());
+
+    assertEquals(factory.systemPrompt().systemSegments(), request.systemSegments());
+    assertEquals(tools, request.tools());
+    assertTrue(request.reminder().isPresent());
   }
 }

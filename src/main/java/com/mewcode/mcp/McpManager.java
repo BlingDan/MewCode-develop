@@ -25,7 +25,6 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.function.Function;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -55,8 +54,7 @@ public final class McpManager implements AutoCloseable {
   public McpManager(
       ToolRegistry registry, Function<McpServerConfig, McpClientTransport> transportFactory) {
     this.registry = java.util.Objects.requireNonNull(registry, "registry");
-    this.transportFactory =
-        java.util.Objects.requireNonNull(transportFactory, "transportFactory");
+    this.transportFactory = java.util.Objects.requireNonNull(transportFactory, "transportFactory");
   }
 
   /** 连接所有配置的 Server；同一 Manager 只执行一次初始化和发现。 */
@@ -118,9 +116,7 @@ public final class McpManager implements AutoCloseable {
         Tool wrapper = createWrapper(configuration, client, definition);
         if (wrapper == null) continue;
         if (!names.add(wrapper.name()) || registry.get(wrapper.name()).isPresent()) {
-          addError(
-              configuration.serverName(),
-              "工具名称冲突，已跳过 " + wrapper.name());
+          addError(configuration.serverName(), "工具名称冲突，已跳过 " + wrapper.name());
           continue;
         }
         wrappers.add(wrapper);
@@ -128,8 +124,7 @@ public final class McpManager implements AutoCloseable {
 
       for (Tool wrapper : wrappers) registry.register(wrapper);
       clients.put(configuration.serverName(), client);
-      registeredSources.put(
-          configuration.serverName(), wrappers.stream().map(Tool::name).toList());
+      registeredSources.put(configuration.serverName(), wrappers.stream().map(Tool::name).toList());
       client = null;
       transport = null;
     } catch (RuntimeException error) {
@@ -145,7 +140,8 @@ public final class McpManager implements AutoCloseable {
     var definitions = new ArrayList<McpSchema.Tool>();
     String cursor = null;
     do {
-      McpSchema.ListToolsResult page = cursor == null ? client.listTools() : client.listTools(cursor);
+      McpSchema.ListToolsResult page =
+          cursor == null ? client.listTools() : client.listTools(cursor);
       if (page == null) throw new IllegalStateException("tools/list 返回为空");
       if (page.tools() != null) definitions.addAll(page.tools());
       String next = page.nextCursor();
@@ -179,9 +175,9 @@ public final class McpManager implements AutoCloseable {
       addError(configuration.serverName(), "工具 " + definition.name() + " 的 inputSchema 无效，已跳过");
       return null;
     }
-    String publicName = "mcp_" + escapeName(configuration.serverName()) + "_" + escapeName(definition.name());
-    return new McpToolWrapper(
-        configuration.serverName(), publicName, definition, client);
+    String publicName =
+        "mcp_" + escapeName(configuration.serverName()) + "_" + escapeName(definition.name());
+    return new McpToolWrapper(configuration.serverName(), publicName, definition, client);
   }
 
   private void addError(String serverName, String message) {
@@ -233,12 +229,11 @@ public final class McpManager implements AutoCloseable {
     McpSyncHttpClientRequestCustomizer headers =
         (builder, method, endpoint, body, context) ->
             configuration.headers().forEach(builder::header);
-    return
-        HttpClientStreamableHttpTransport.builder(configuration.url())
-            .supportedProtocolVersions(List.of(SUPPORTED_PROTOCOL_VERSION))
-            .resumableStreams(false)
-            .httpRequestCustomizer(headers)
-            .build();
+    return HttpClientStreamableHttpTransport.builder(configuration.url())
+        .supportedProtocolVersions(List.of(SUPPORTED_PROTOCOL_VERSION))
+        .resumableStreams(false)
+        .httpRequestCustomizer(headers)
+        .build();
   }
 
   private static void closeQuietly(
@@ -306,9 +301,9 @@ public final class McpManager implements AutoCloseable {
 
     @Override
     public Mono<Void> connect(
-        java.util.function.Function<Mono<McpSchema.JSONRPCMessage>, Mono<McpSchema.JSONRPCMessage>> handler) {
-      return delegate.connect(
-          inbound -> handler.apply(inbound.doOnNext(this::observe)));
+        java.util.function.Function<Mono<McpSchema.JSONRPCMessage>, Mono<McpSchema.JSONRPCMessage>>
+            handler) {
+      return delegate.connect(inbound -> handler.apply(inbound.doOnNext(this::observe)));
     }
 
     @Override
@@ -356,10 +351,7 @@ public final class McpManager implements AutoCloseable {
     private final McpSyncClient client;
 
     private McpToolWrapper(
-        String serverName,
-        String publicName,
-        McpSchema.Tool definition,
-        McpSyncClient client) {
+        String serverName, String publicName, McpSchema.Tool definition, McpSyncClient client) {
       this.serverName = serverName;
       this.publicName = publicName;
       this.definition = definition;
@@ -373,7 +365,9 @@ public final class McpManager implements AutoCloseable {
 
     @Override
     public String description() {
-      return definition.description() == null ? "MCP 工具：" + definition.name() : definition.description();
+      return definition.description() == null
+          ? "MCP 工具：" + definition.name()
+          : definition.description();
     }
 
     @Override
@@ -392,8 +386,7 @@ public final class McpManager implements AutoCloseable {
     }
 
     @Override
-    public ToolResult execute(
-        ToolExecutionContext context, Map<String, Object> input) {
+    public ToolResult execute(ToolExecutionContext context, Map<String, Object> input) {
       try {
         var request =
             McpSchema.CallToolRequest.builder()
@@ -461,5 +454,4 @@ public final class McpManager implements AutoCloseable {
       }
     }
   }
-
 }

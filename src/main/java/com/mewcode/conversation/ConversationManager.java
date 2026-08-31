@@ -46,6 +46,12 @@ public final class ConversationManager {
         messages.add(message);
     }
 
+    /** 原子替换完整会话快照，供上下文压缩成功后提交新历史。 */
+    public synchronized void replaceMessages(List<Message> replacement) {
+        messages.clear();
+        messages.addAll(List.copyOf(replacement));
+    }
+
     /** 返回当前历史的不可变快照，供一次 provider 请求使用。 */
     public synchronized List<Message> getMessages() {
         return List.copyOf(messages);

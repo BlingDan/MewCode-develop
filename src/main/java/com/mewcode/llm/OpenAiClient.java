@@ -122,7 +122,7 @@ public final class OpenAiClient implements LlmClient {
       for (Map<String, Object> definition : apiTools) {
         params.addTool(toOpenAiTool(definition));
       }
-      for (Message message : messages) {
+      for (Message message : ProviderMessageNormalizer.normalize(messages)) {
         addMessage(params, message);
       }
 
@@ -144,6 +144,12 @@ public final class OpenAiClient implements LlmClient {
                                   queue,
                                   new StreamEvent.Usage(
                                       OptionalLong.of(usage.promptTokens()),
+                                      usage
+                                          .promptTokensDetails()
+                                          .flatMap(details -> details.cachedTokens())
+                                          .map(OptionalLong::of)
+                                          .orElse(OptionalLong.empty()),
+                                      OptionalLong.empty(),
                                       OptionalLong.of(usage.completionTokens()))));
                   chunk
                       .choices()
@@ -194,7 +200,7 @@ public final class OpenAiClient implements LlmClient {
       for (StreamEvent event : accumulator.finishAll()) putEvent(queue, event);
       putEvent(queue, new StreamEvent.StreamEnd("end_turn"));
     } catch (Exception error) {
-      if (!control.isClosed()) putError(queue, safeError(error));
+      if (!control.isClosed()) putError(queue, error);
     }
   }
 
@@ -329,12 +335,27 @@ public final class OpenAiClient implements LlmClient {
     return "Unexpected OpenAI streaming error.";
   }
 
-  private static void putError(BlockingQueue<StreamEvent> queue, String message) {
+  private static void putError(BlockingQueue<StreamEvent> queue, Exception error) {
     try {
-      queue.put(new StreamEvent.Error(message));
-    } catch (InterruptedException error) {
+      boolean contextLength =
+          ContextLengthErrorDetector.isContextLength(error)
+              || hasPromptTooLongCode(error)
+              || error instanceof com.openai.errors.OpenAIServiceException service
+                  && service.statusCode() == 413;
+      queue.put(
+          new StreamEvent.Error(
+              safeError(error),
+              contextLength
+                  ? StreamEvent.ErrorKind.CONTEXT_LENGTH
+                  : StreamEvent.ErrorKind.GENERAL));
+    } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
     }
+  }
+
+  private static boolean hasPromptTooLongCode(Exception error) {
+    return error instanceof com.openai.errors.BadRequestException badRequest
+        && badRequest.code().map("prompt_too_long"::equalsIgnoreCase).orElse(false);
   }
 
   private static final class StreamInterruptedException extends RuntimeException {}

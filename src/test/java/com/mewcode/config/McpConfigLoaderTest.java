@@ -36,8 +36,15 @@ class McpConfigLoaderTest {
 
     McpConfigLoader.Loaded loaded = McpConfigLoader.load(user, project);
 
-    assertEquals(List.of("local", "same", "remote"), loaded.servers().stream().map(McpServerConfig::serverName).toList());
-    assertTrue(loaded.servers().stream().filter(server -> server.serverName().equals("same")).findFirst().orElseThrow().isHttp());
+    assertEquals(
+        List.of("local", "same", "remote"),
+        loaded.servers().stream().map(McpServerConfig::serverName).toList());
+    assertTrue(
+        loaded.servers().stream()
+            .filter(server -> server.serverName().equals("same"))
+            .findFirst()
+            .orElseThrow()
+            .isHttp());
     assertTrue(loaded.errors().isEmpty(), loaded.errors().toString());
   }
 
@@ -62,11 +69,19 @@ class McpConfigLoaderTest {
     McpConfigLoader.Loaded loaded = McpConfigLoader.load(user, Map.of());
 
     assertEquals(2, loaded.servers().size(), loaded.errors().toString());
-    McpServerConfig stdio = loaded.servers().stream().filter(McpServerConfig::isStdio).findFirst().orElseThrow();
+    McpServerConfig stdio =
+        loaded.servers().stream().filter(McpServerConfig::isStdio).findFirst().orElseThrow();
     assertEquals("${NOT_EXPANDED}", stdio.command());
     assertEquals("${NOT_EXPANDED}", stdio.args().getFirst());
     assertEquals("prefix-${PATH}", stdio.env().get("PATH_COPY"));
-    assertEquals("${PATH}", loaded.servers().stream().filter(McpServerConfig::isHttp).findFirst().orElseThrow().headers().get("X-Path"));
+    assertEquals(
+        "${PATH}",
+        loaded.servers().stream()
+            .filter(McpServerConfig::isHttp)
+            .findFirst()
+            .orElseThrow()
+            .headers()
+            .get("X-Path"));
   }
 
   @Test
@@ -86,7 +101,8 @@ class McpConfigLoaderTest {
 
     McpConfigLoader.Loaded loaded = McpConfigLoader.load(user, Map.of());
 
-    assertEquals(List.of("good"), loaded.servers().stream().map(McpServerConfig::serverName).toList());
+    assertEquals(
+        List.of("good"), loaded.servers().stream().map(McpServerConfig::serverName).toList());
     assertFalse(loaded.errors().isEmpty());
     assertTrue(loaded.errors().stream().allMatch(error -> !error.contains("ultra-secret")));
     assertTrue(loaded.errors().stream().anyMatch(error -> error.contains("broken")));
@@ -109,7 +125,8 @@ class McpConfigLoaderTest {
 
     McpConfigLoader.Loaded loaded = McpConfigLoader.load(user, Map.of());
 
-    assertEquals(List.of("good"), loaded.servers().stream().map(McpServerConfig::serverName).toList());
+    assertEquals(
+        List.of("good"), loaded.servers().stream().map(McpServerConfig::serverName).toList());
     assertTrue(loaded.errors().getFirst().contains("headers"));
   }
 }

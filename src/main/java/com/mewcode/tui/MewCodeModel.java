@@ -178,8 +178,7 @@ public final class MewCodeModel implements Model, AutoCloseable {
     this.systemPromptBundle = PromptBuilder.buildBundle(this.projectRoot);
     this.clientFactory = Objects.requireNonNull(clientFactory, "clientFactory");
     this.loopConfig = Objects.requireNonNull(loopConfig, "loopConfig").copy();
-    this.mcpServerConfigs =
-        mcpServerConfigs == null ? List.of() : List.copyOf(mcpServerConfigs);
+    this.mcpServerConfigs = mcpServerConfigs == null ? List.of() : List.copyOf(mcpServerConfigs);
     this.configuredPermissionMode = Objects.requireNonNull(permissionMode, "permissionMode");
     this.permissionRuleEngine =
         Objects.requireNonNull(permissionRuleEngine, "permissionRuleEngine");

@@ -25,20 +25,30 @@ class ToolSearchToolTest {
     registry.register(new ToolSearchTool(registry));
 
     assertTrue(registry.deferredToolNames().contains("mcp_demo_read"));
-    assertFalse(registry.getModelVisibleTools().stream().anyMatch(tool -> tool.name().equals("mcp_demo_read")));
-    assertTrue(registry.getModelVisibleTools().stream().anyMatch(tool -> tool.name().equals("ToolSearch")));
+    assertFalse(
+        registry.getModelVisibleTools().stream()
+            .anyMatch(tool -> tool.name().equals("mcp_demo_read")));
+    assertTrue(
+        registry.getModelVisibleTools().stream()
+            .anyMatch(tool -> tool.name().equals("ToolSearch")));
 
     ToolResult result =
         registry
             .get("ToolSearch")
             .orElseThrow()
-            .execute(new ToolExecutionContext(tempDir, new FileStateCache()), Map.of("tool_name", "mcp_demo_read"));
+            .execute(
+                new ToolExecutionContext(tempDir, new FileStateCache()),
+                Map.of("tool_name", "mcp_demo_read"));
 
     assertFalse(result.isError(), result.content());
     assertTrue(result.content().contains("mcp_demo_read"));
     assertTrue(registry.isDiscovered("mcp_demo_read"));
-    assertTrue(registry.getModelVisibleTools().stream().anyMatch(tool -> tool.name().equals("mcp_demo_read")));
-    assertFalse(registry.getModelVisibleTools().stream().anyMatch(tool -> tool.name().equals("ToolSearch")));
+    assertTrue(
+        registry.getModelVisibleTools().stream()
+            .anyMatch(tool -> tool.name().equals("mcp_demo_read")));
+    assertFalse(
+        registry.getModelVisibleTools().stream()
+            .anyMatch(tool -> tool.name().equals("ToolSearch")));
   }
 
   @Test
@@ -51,7 +61,9 @@ class ToolSearchToolTest {
         registry
             .get("ToolSearch")
             .orElseThrow()
-            .execute(new ToolExecutionContext(tempDir, new FileStateCache()), Map.of("tool_name", "missing"));
+            .execute(
+                new ToolExecutionContext(tempDir, new FileStateCache()),
+                Map.of("tool_name", "missing"));
 
     assertTrue(result.isError());
     assertFalse(registry.isDiscovered("missing"));

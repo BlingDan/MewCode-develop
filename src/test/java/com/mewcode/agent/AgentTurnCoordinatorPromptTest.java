@@ -131,10 +131,10 @@ class AgentTurnCoordinatorPromptTest {
       int startedIndex = -1;
       int completedIndex = -1;
       for (int index = 0; index < events.size(); index++) {
-        if (events.get(index) instanceof AgentEvent.CompactionStarted
-            && startedIndex < 0) startedIndex = index;
-        if (events.get(index) instanceof AgentEvent.CompactionComplete
-            && completedIndex < 0) completedIndex = index;
+        if (events.get(index) instanceof AgentEvent.CompactionStarted && startedIndex < 0)
+          startedIndex = index;
+        if (events.get(index) instanceof AgentEvent.CompactionComplete && completedIndex < 0)
+          completedIndex = index;
       }
       assertTrue(startedIndex >= 0 && completedIndex > startedIndex, events.toString());
     }

@@ -49,7 +49,8 @@ class McpHttpTransportIntegrationTest {
               .get("mcp_remote_http_echo")
               .orElseThrow()
               .execute(
-                  new ToolExecutionContext(Path.of(System.getProperty("user.dir")), new FileStateCache()),
+                  new ToolExecutionContext(
+                      Path.of(System.getProperty("user.dir")), new FileStateCache()),
                   Map.of("value", "ok"));
       assertFalse(result.isError(), result.content());
       assertEquals("http:ok", result.content());
@@ -58,15 +59,27 @@ class McpHttpTransportIntegrationTest {
       server.stop(0);
     }
 
-    List<Request> posts = requests.stream().filter(request -> request.method.equals("POST")).toList();
+    List<Request> posts =
+        requests.stream().filter(request -> request.method.equals("POST")).toList();
     assertTrue(posts.stream().anyMatch(request -> request.methodName().equals("initialize")));
-    assertTrue(posts.stream().anyMatch(request -> request.methodName().equals("notifications/initialized")));
+    assertTrue(
+        posts.stream()
+            .anyMatch(request -> request.methodName().equals("notifications/initialized")));
     assertTrue(posts.stream().anyMatch(request -> request.methodName().equals("tools/list")));
     assertTrue(posts.stream().anyMatch(request -> request.methodName().equals("tools/call")));
-    assertTrue(posts.stream().allMatch(request -> "present".equals(request.headers.getFirst("X-Test"))));
-    List<Request> sessionRequests = posts.stream().filter(request -> !request.methodName().equals("initialize")).toList();
-    assertTrue(sessionRequests.stream().allMatch(request -> "session-1".equals(request.headers.getFirst("Mcp-Session-Id"))));
-    assertTrue(posts.stream().allMatch(request -> McpManager.SUPPORTED_PROTOCOL_VERSION.equals(request.headers.getFirst("Mcp-Protocol-Version"))));
+    assertTrue(
+        posts.stream().allMatch(request -> "present".equals(request.headers.getFirst("X-Test"))));
+    List<Request> sessionRequests =
+        posts.stream().filter(request -> !request.methodName().equals("initialize")).toList();
+    assertTrue(
+        sessionRequests.stream()
+            .allMatch(request -> "session-1".equals(request.headers.getFirst("Mcp-Session-Id"))));
+    assertTrue(
+        posts.stream()
+            .allMatch(
+                request ->
+                    McpManager.SUPPORTED_PROTOCOL_VERSION.equals(
+                        request.headers.getFirst("Mcp-Protocol-Version"))));
   }
 
   private static void handle(HttpExchange exchange, List<Request> requests) throws IOException {
@@ -99,7 +112,8 @@ class McpHttpTransportIntegrationTest {
       case "initialize" -> {
         result.put("protocolVersion", McpManager.SUPPORTED_PROTOCOL_VERSION);
         result.set("capabilities", JSON.createObjectNode().set("tools", JSON.createObjectNode()));
-        result.set("serverInfo", JSON.createObjectNode().put("name", "http-test").put("version", "1"));
+        result.set(
+            "serverInfo", JSON.createObjectNode().put("name", "http-test").put("version", "1"));
         sessionId = "session-1";
       }
       case "tools/list" -> result.set("tools", tools());
@@ -111,7 +125,14 @@ class McpHttpTransportIntegrationTest {
                 .add(
                     JSON.createObjectNode()
                         .put("type", "text")
-                        .put("text", "http:" + message.path("params").path("arguments").path("value").asText())));
+                        .put(
+                            "text",
+                            "http:"
+                                + message
+                                    .path("params")
+                                    .path("arguments")
+                                    .path("value")
+                                    .asText())));
       }
       default -> {
         exchange.sendResponseHeaders(404, -1);
@@ -127,8 +148,9 @@ class McpHttpTransportIntegrationTest {
     if (sessionId != null) exchange.getResponseHeaders().add("Mcp-Session-Id", sessionId);
     if (sseResponse) {
       exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
-      byte[] event = ("event: message\ndata: " + new String(bytes, StandardCharsets.UTF_8) + "\n\n")
-          .getBytes(StandardCharsets.UTF_8);
+      byte[] event =
+          ("event: message\ndata: " + new String(bytes, StandardCharsets.UTF_8) + "\n\n")
+              .getBytes(StandardCharsets.UTF_8);
       exchange.sendResponseHeaders(200, event.length);
       exchange.getResponseBody().write(event);
     } else {
@@ -141,7 +163,9 @@ class McpHttpTransportIntegrationTest {
 
   private static ArrayNode tools() {
     ObjectNode schema = JSON.createObjectNode().put("type", "object");
-    schema.set("properties", JSON.createObjectNode().set("value", JSON.createObjectNode().put("type", "string")));
+    schema.set(
+        "properties",
+        JSON.createObjectNode().set("value", JSON.createObjectNode().put("type", "string")));
     return JSON.createArrayNode()
         .add(
             JSON.createObjectNode()

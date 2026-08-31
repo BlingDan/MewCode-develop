@@ -96,7 +96,7 @@ spotless {
                 "src/test/java/com/mewcode/tui/PermissionPromptFormatterTest.java",
                 "src/test/java/com/mewcode/tool/PermissionToolExecutorTest.java",
                 "src/test/java/com/mewcode/tool/BashSandboxIntegrationTest.java")
-        googleJavaFormat("1.24.0")
+        googleJavaFormat("1.28.0")
         removeUnusedImports()
     }
 }

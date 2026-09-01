@@ -27,8 +27,13 @@ public final class PromptBuilder {
 
   /** 返回固定模块和预留的可选模块，调用方可在此基础上追加局部模块。 */
   public static List<PromptModule> modules() {
+    return modules("");
+  }
+
+  /** 返回固定模块和带有项目指令文本的可选模块。 */
+  public static List<PromptModule> modules(String instructionText) {
     List<PromptModule> modules = new ArrayList<>(fixedModules());
-    modules.addAll(optionalModules());
+    modules.addAll(optionalModules(instructionText));
     return List.copyOf(modules);
   }
 
@@ -52,7 +57,8 @@ public final class PromptBuilder {
             "action-execution",
             ACTION_EXECUTION_PRIORITY,
             "Inspect the relevant project context before acting, make the smallest change that solves the request, and verify important changes before reporting completion.\n"
-                + "Read large files in ranges with offset and limit. Continue the task across multiple tool rounds when results require further investigation or action."),
+                + "Read large files in ranges with offset and limit. Continue the task across multiple tool rounds when results require further investigation or action.\n"
+                + "当用户说‘记住’、‘记下’、‘记录’或要求保存为项目知识/个人偏好时，将其视为长期 memory 请求：不要修改 MEWCODE.md 或其他项目文件来持久化，由后台 memory 更新器处理；只有用户明确要求修改文件时才编辑文件。"),
         new PromptModule(
             "tool-usage",
             TOOL_USAGE_PRIORITY,
@@ -72,8 +78,12 @@ public final class PromptBuilder {
 
   /** 返回后续章节可填充的自定义指令、Skill 和长期记忆插槽。 */
   public static List<PromptModule> optionalModules() {
+    return optionalModules("");
+  }
+
+  private static List<PromptModule> optionalModules(String instructionText) {
     return List.of(
-        new PromptModule("custom-instructions", 80, ""),
+        new PromptModule("custom-instructions", 80, instructionText),
         new PromptModule("activated-skills", 90, ""),
         new PromptModule("long-term-memory", 100, ""));
   }
@@ -82,6 +92,12 @@ public final class PromptBuilder {
   public static SystemPromptBundle buildBundle(Path projectRoot) {
     Path root = projectRoot.toAbsolutePath().normalize();
     return new SystemPromptBundle(modules(), new EnvironmentContext(root, Map.of()));
+  }
+
+  /** 构建包含启动时加载的项目指令的稳定提示 bundle。 */
+  public static SystemPromptBundle buildBundle(Path projectRoot, String instructionText) {
+    Path root = projectRoot.toAbsolutePath().normalize();
+    return new SystemPromptBundle(modules(instructionText), new EnvironmentContext(root, Map.of()));
   }
 
   /** 使用当前目录和 Execute Mode 生成默认提示词。 */

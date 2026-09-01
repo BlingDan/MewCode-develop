@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import com.mewcode.conversation.ConversationManager;
 import com.mewcode.conversation.Message;
@@ -19,6 +20,8 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import java.lang.reflect.InvocationTargetException;
 
 class ContextManagerTest {
 
@@ -157,6 +160,24 @@ class ContextManagerTest {
     }
 
     @Test
+    void resetForSessionBindsExternalizedResultsToSessionDirectory() throws Exception {
+        var client = new FakeLlmClient();
+        Path sessionDir = tempDir.resolve(".mewcode/sessions/20260831-120000-abcd");
+
+        try (var manager = new ContextManager(tempDir, client, 128_000)) {
+            try {
+                ContextManager.class.getMethod("resetForSession", Path.class).invoke(manager, sessionDir);
+            } catch (NoSuchMethodException error) {
+                fail("ContextManager.resetForSession 尚未实现", error);
+            } catch (InvocationTargetException error) {
+                throw unwrap(error);
+            }
+
+            assertEquals(sessionDir.resolve("tool-results").toAbsolutePath().normalize(), manager.sessionDirectory());
+        }
+    }
+
+    @Test
     void opensTheAutomaticFuseAfterThreeFailuresAndSkipsTheFourthSummaryCall() {
         var client = new FakeLlmClient();
         client.enqueue(invalidSummaryEvents());
@@ -207,5 +228,12 @@ class ContextManagerTest {
             new StreamEvent.TextDelta("invalid summary"),
             new StreamEvent.StreamEnd("end_turn")
         };
+    }
+
+    private static Exception unwrap(InvocationTargetException error) {
+        Throwable cause = error.getCause();
+        if (cause instanceof Exception exception) return exception;
+        if (cause instanceof Error fatal) throw fatal;
+        return new RuntimeException(cause);
     }
 }

@@ -80,6 +80,11 @@ public final class TokenEstimator {
         anchor = new UsageAnchor(anchor.totalTokens(), anchor.requestCharacters(), false);
     }
 
+    /** 切换 session 后丢弃旧 session 的 usage 锚点。 */
+    public synchronized void reset() {
+        anchor = UsageAnchor.unknown();
+    }
+
     private static long cacheValue(OptionalLong value) {
         return value.isPresent() ? value.getAsLong() : 0;
     }

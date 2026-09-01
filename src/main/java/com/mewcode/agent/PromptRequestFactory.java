@@ -1,7 +1,9 @@
 package com.mewcode.agent;
 
 import com.mewcode.compact.ContextRequest;
+import com.mewcode.conversation.ContentBlock;
 import com.mewcode.conversation.Message;
+import com.mewcode.conversation.TextBlock;
 import com.mewcode.llm.PromptRequest;
 import com.mewcode.prompt.ReminderContext;
 import com.mewcode.prompt.SystemPromptBundle;
@@ -37,12 +39,44 @@ public final class PromptRequestFactory {
       List<Message> history,
       List<Map<String, Object>> tools,
       List<String> deferredToolNames) {
+    return create(
+        mode, round, forceFull, history, tools, deferredToolNames, PromptAdditions.empty());
+  }
+
+  /** 创建请求并合并本轮 memory 和恢复提醒快照。 */
+  public PromptRequest create(
+      AgentMode mode,
+      int round,
+      boolean forceFull,
+      List<Message> history,
+      List<Map<String, Object>> tools,
+      PromptAdditions additions) {
+    return create(mode, round, forceFull, history, tools, List.of(), additions);
+  }
+
+  /** 创建请求并在本轮 Reminder 中列出延迟工具和恢复提示。 */
+  public PromptRequest create(
+      AgentMode mode,
+      int round,
+      boolean forceFull,
+      List<Message> history,
+      List<Map<String, Object>> tools,
+      List<String> deferredToolNames,
+      PromptAdditions additions) {
     var context = new ReminderContext(Objects.requireNonNull(mode, "mode"), round, forceFull);
+    PromptAdditions dynamic = additions == null ? PromptAdditions.empty() : additions;
+    var segments = new java.util.ArrayList<>(systemPrompt.systemSegments());
+    if (!dynamic.memoryIndex().isBlank()) {
+      segments.add(
+          "Long-term memory index (reference only; verify details when needed):\n"
+              + dynamic.memoryIndex());
+    }
     return new PromptRequest(
-        systemPrompt.systemSegments(),
+        segments,
         tools,
         history,
-        SystemReminderFactory.create(context, deferredToolNames));
+        mergeReminders(
+            SystemReminderFactory.create(context, deferredToolNames), dynamic.resumeReminder()));
   }
 
   /** 创建上下文预检所需的 system、tools 和 reminder 快照，不携带 history。 */
@@ -56,8 +90,32 @@ public final class PromptRequestFactory {
     return new ContextRequest(request.systemSegments(), request.tools(), request.reminder());
   }
 
+  /** 创建带动态 additions 的上下文预检请求。 */
+  public ContextRequest createContextRequest(
+      AgentMode mode,
+      int round,
+      boolean forceFull,
+      List<Map<String, Object>> tools,
+      List<String> deferredToolNames,
+      PromptAdditions additions) {
+    PromptRequest request =
+        create(mode, round, forceFull, List.of(), tools, deferredToolNames, additions);
+    return new ContextRequest(request.systemSegments(), request.tools(), request.reminder());
+  }
+
   /** 返回会话级稳定 bundle；不会暴露可变内部集合。 */
   public SystemPromptBundle systemPrompt() {
     return systemPrompt;
+  }
+
+  private static java.util.Optional<Message> mergeReminders(
+      java.util.Optional<Message> base, java.util.Optional<Message> extra) {
+    if (extra == null || extra.isEmpty()) return base;
+    if (base == null || base.isEmpty()) return extra;
+    var blocks = new java.util.ArrayList<ContentBlock>();
+    blocks.addAll(base.get().content());
+    blocks.add(new TextBlock("\n"));
+    blocks.addAll(extra.get().content());
+    return java.util.Optional.of(new Message("user", blocks));
   }
 }

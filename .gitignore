@@ -54,6 +54,8 @@ jacoco.exec
 # Local configuration and secrets
 .mewcode/config.yaml
 .mewcode/permissions.local.yaml
+.mewcode/memory/
+.mewcode/sessions/
 .env
 .env.*
 !.env.example

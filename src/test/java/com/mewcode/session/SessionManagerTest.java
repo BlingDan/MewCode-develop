@@ -93,6 +93,23 @@ class SessionManagerTest {
         }
     }
 
+    @Test
+    void startsAnEmptySessionWithoutDeletingThePreviousOne() throws Exception {
+        Path projectRoot = tempDir.resolve("new-session-project");
+        try (var manager = new SessionManager(projectRoot, tempDir.resolve("new-session-home"), ignored -> {})) {
+            String oldId = manager.currentSessionId();
+            manager.conversation().addUserMessage("保留的旧对话");
+
+            SessionManager.NewSessionResult result = manager.startNewSession();
+
+            assertEquals(result.sessionId(), manager.currentSessionId());
+            assertTrue(manager.conversation().getMessages().isEmpty());
+            assertTrue(manager.listSessions().stream().anyMatch(session -> session.id().equals(oldId)));
+            manager.resume(oldId);
+            assertEquals("保留的旧对话", manager.conversation().getMessages().getFirst().textContent());
+        }
+    }
+
     private static Object newManager(Path projectRoot, Path userHome) throws Exception {
         try {
             Class<?> type = Class.forName("com.mewcode.session.SessionManager");

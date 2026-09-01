@@ -196,6 +196,20 @@ class ContextManagerTest {
         }
     }
 
+    @Test
+    void estimatesManualRequestWithoutCallingProvider() {
+        var client = new FakeLlmClient();
+        var conversation = new ConversationManager();
+        conversation.addUserMessage("x".repeat(17_500));
+        try (var manager = new ContextManager(tempDir, client, 128_000)) {
+            long tokens = manager.estimateTokens(
+                    conversation, new ContextRequest(List.of(), List.of(), Optional.empty()));
+
+            assertTrue(tokens >= 5_000);
+            assertTrue(client.requests().isEmpty());
+        }
+    }
+
     private static ConversationManager historyLargeEnoughToCompact() {
         var conversation = new ConversationManager();
         conversation.addUserMessage("goal");

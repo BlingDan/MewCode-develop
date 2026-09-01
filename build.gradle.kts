@@ -42,6 +42,7 @@ tasks.withType<JavaCompile> {
 spotless {
     java {
         target(
+                "src/main/java/com/mewcode/command/**/*.java",
                 "src/main/java/com/mewcode/prompt/**/*.java",
                 "src/main/java/com/mewcode/llm/PromptRequest.java",
                 "src/main/java/com/mewcode/llm/LlmClient.java",
@@ -77,6 +78,7 @@ spotless {
                 "src/main/java/com/mewcode/agent/AgentEvent.java",
                 "src/main/java/com/mewcode/agent/AgentRun.java",
                 "src/main/java/com/mewcode/tui/PermissionPromptFormatter.java",
+                "src/test/java/com/mewcode/command/**/*.java",
                 "src/test/java/com/mewcode/prompt/**/*.java",
                 "src/test/java/com/mewcode/llm/PromptRequestTest.java",
                 "src/test/java/com/mewcode/llm/AnthropicClientTest.java",

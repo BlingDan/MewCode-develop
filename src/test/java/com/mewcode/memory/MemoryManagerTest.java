@@ -3,6 +3,7 @@ package com.mewcode.memory;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.mewcode.conversation.Message;
 import com.mewcode.llm.CancellableLlmStream;
@@ -224,6 +225,35 @@ class MemoryManagerTest {
             closer.join(3_000);
             assertTrue(Files.exists(note));
             assertTrue(Files.exists(note.getParent().resolve("MEMORY.md")));
+        }
+    }
+
+    @Test
+    void manuallyAddsListsAndClearsBothMemoryLevelsWithoutCallingLlm() throws Exception {
+        Path project = tempDir.resolve("manual-project");
+        Path home = tempDir.resolve("manual-home");
+        try (var manager = new MemoryManager(project, home, ignored -> {})) {
+            MemoryNote user = manager.addManual("user_preference", "第一行标题\n完整正文");
+            MemoryNote projectNote = manager.addManual("project_knowledge", "项目使用 Java 21");
+
+            MemoryManager.Summary summary = manager.summary();
+            assertEquals(1, summary.user().size());
+            assertEquals(1, summary.project().size());
+            assertEquals("第一行标题\n完整正文", user.content());
+            assertEquals(MemoryType.PROJECT_KNOWLEDGE, projectNote.type());
+            assertThrows(IllegalArgumentException.class, () -> manager.addManual("unknown", "x"));
+
+            manager.clearAll();
+
+            assertTrue(manager.summary().user().isEmpty());
+            assertTrue(manager.summary().project().isEmpty());
+            try (var paths = Files.list(project.resolve(".mewcode/memory"))) {
+                assertEquals(
+                        0,
+                        paths.filter(path -> path.getFileName().toString().endsWith(".md"))
+                                .filter(path -> !path.getFileName().toString().equals("MEMORY.md"))
+                                .count());
+            }
         }
     }
 

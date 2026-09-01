@@ -41,6 +41,18 @@ class BashSandboxIntegrationTest {
     }
   }
 
+  @Test
+  void allowsCommandsToWriteToTheStandardNullDevice() throws Exception {
+    Assumptions.assumeTrue(BashSandboxFactory.create().isAvailable());
+    ToolExecutionContext context =
+        new ToolExecutionContext(projectRoot, Duration.ofSeconds(2), new FileStateCache());
+
+    ToolResult result =
+        new BashTool().execute(context, java.util.Map.of("command", "printf ignored > /dev/null"));
+
+    assertFalse(result.isError(), result.content());
+  }
+
   private static String shellQuote(Path path) {
     return "'" + path.toString().replace("'", "'\\''") + "'";
   }

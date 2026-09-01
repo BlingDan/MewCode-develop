@@ -89,6 +89,25 @@ public final class SessionManager implements AutoCloseable {
         return sessionDirectory;
     }
 
+    /** 开启空白会话；旧会话保留在磁盘，可继续通过 resume 恢复。 */
+    public synchronized NewSessionResult startNewSession() {
+        ensureOpen();
+        try {
+            NewSession next = createSession();
+            HistoryStore previous = historyStore;
+            historyStore = next.store();
+            sessionId = next.id();
+            sessionDirectory = next.directory();
+            titleRequested = false;
+            resumeReminder = Optional.empty();
+            conversation.loadMessages(List.of());
+            previous.close();
+            return new NewSessionResult(sessionId, sessionDirectory);
+        } catch (IOException error) {
+            throw new IllegalStateException("无法创建新 session。", error);
+        }
+    }
+
     public synchronized List<SessionInfo> listSessions() {
         ensureOpen();
         try {
@@ -184,15 +203,20 @@ public final class SessionManager implements AutoCloseable {
     }
 
     private void createCurrentSession() throws IOException {
+        NewSession session = createSession();
+        sessionId = session.id();
+        sessionDirectory = session.directory();
+        historyStore = session.store();
+    }
+
+    private NewSession createSession() throws IOException {
         for (int attempt = 0; attempt < 20; attempt++) {
             String candidateId = ID_TIME.format(Instant.now()) + "-" + UUID.randomUUID().toString().substring(0, 4);
             Path candidate = sessionsRoot.resolve(candidateId);
             try {
                 Files.createDirectory(candidate);
-                sessionId = candidateId;
-                sessionDirectory = candidate.toAbsolutePath().normalize();
-                historyStore = new HistoryStore(sessionDirectory, sessionId, model);
-                return;
+                Path directory = candidate.toAbsolutePath().normalize();
+                return new NewSession(candidateId, directory, new HistoryStore(directory, candidateId, model));
             } catch (java.nio.file.FileAlreadyExistsException ignored) {
                 // 随机后缀碰撞时继续生成新的 session ID。
             }
@@ -298,5 +322,9 @@ public final class SessionManager implements AutoCloseable {
     private void ensureOpen() {
         if (closed) throw new IllegalStateException("session manager is closed");
     }
+
+    public record NewSessionResult(String sessionId, Path sessionDirectory) {}
+
+    private record NewSession(String id, Path directory, HistoryStore store) {}
 
 }

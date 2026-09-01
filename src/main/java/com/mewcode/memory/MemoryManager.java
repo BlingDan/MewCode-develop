@@ -17,6 +17,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.locks.ReentrantLock;
@@ -109,6 +110,84 @@ public final class MemoryManager implements AutoCloseable {
         if (closed) return;
         this.client = client;
         this.model = model == null ? "" : model;
+    }
+
+    /** 返回命令展示需要的完整、不可变记忆快照。 */
+    public Summary summary() {
+        updateLock.lock();
+        try {
+            return new Summary(userStore.scanNotes(), projectStore.scanNotes());
+        } catch (IOException error) {
+            throw new IllegalStateException("memory 读取失败。", error);
+        } finally {
+            updateLock.unlock();
+        }
+    }
+
+    /** 不调用模型，直接把用户指定内容持久化为现有 memory 笔记。 */
+    public MemoryNote addManual(String typeValue, String contentValue) {
+        MemoryType type = MemoryType.fromWire(typeValue == null ? "" : typeValue.strip());
+        String content = contentValue == null ? "" : contentValue.strip();
+        if (content.isEmpty()) throw new IllegalArgumentException("memory 内容不能为空。");
+        MemoryLevel level = switch (type) {
+            case USER_PREFERENCE, CORRECTION_FEEDBACK -> MemoryLevel.USER;
+            case PROJECT_KNOWLEDGE, REFERENCE_MATERIAL -> MemoryLevel.PROJECT;
+        };
+        MemoryStore store = level == MemoryLevel.USER ? userStore : projectStore;
+        String title = content.lines().filter(line -> !line.isBlank()).findFirst().orElseThrow();
+        if (title.length() > 80) title = title.substring(0, 80) + "…";
+        String slug = "manual_" + System.currentTimeMillis() + "_"
+                + UUID.randomUUID().toString().substring(0, 6);
+        var operation = new MemoryOperation(
+                "create", level.wire(), type.wire(), title, slug, null, content);
+        updateLock.lock();
+        try {
+            store.commit(store.stage(List.of(operation)));
+            String filename = type.wire() + "_" + slug + ".md";
+            return store.scanNotes().stream()
+                    .filter(note -> note.filename().equals(filename))
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalStateException("memory 写入后未找到笔记。"));
+        } catch (IOException error) {
+            throw new IllegalStateException("memory 写入失败。", error);
+        } finally {
+            updateLock.unlock();
+        }
+    }
+
+    /** 清空 user/project 两级记忆；任一级失败时恢复两边快照。 */
+    public void clearAll() {
+        updateLock.lock();
+        try {
+            MemoryStore.Snapshot userBefore = userStore.snapshot();
+            MemoryStore.Snapshot projectBefore = projectStore.snapshot();
+            try {
+                userStore.commit(userStore.stage(deleteOperations(userStore, MemoryLevel.USER)));
+                projectStore.commit(projectStore.stage(deleteOperations(projectStore, MemoryLevel.PROJECT)));
+            } catch (IOException | RuntimeException error) {
+                restoreSnapshots(userBefore, projectBefore, error);
+                throw error;
+            }
+        } catch (IOException error) {
+            throw new IllegalStateException("memory 清理失败。", error);
+        } finally {
+            updateLock.unlock();
+        }
+    }
+
+    private static List<MemoryOperation> deleteOperations(MemoryStore store, MemoryLevel level)
+            throws IOException {
+        return store.scanNotes().stream()
+                .map(note -> new MemoryOperation(
+                        "delete", level.wire(), null, null, null, note.filename(), null))
+                .toList();
+    }
+
+    public record Summary(List<MemoryNote> user, List<MemoryNote> project) {
+        public Summary {
+            user = List.copyOf(user);
+            project = List.copyOf(project);
+        }
     }
 
     /** 后台更新 memory；不会阻塞当前 Agent Loop。 */

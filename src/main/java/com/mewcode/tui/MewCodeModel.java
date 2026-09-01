@@ -8,6 +8,8 @@ import com.mewcode.agent.AgentRun;
 import com.mewcode.agent.AgentTurnCoordinator;
 import com.mewcode.agent.PromptAdditions;
 import com.mewcode.agent.PromptRequestFactory;
+import com.mewcode.command.CommandContext;
+import com.mewcode.command.CommandRegistry;
 import com.mewcode.compact.ContextManager;
 import com.mewcode.config.McpServerConfig;
 import com.mewcode.config.ProviderConfig;
@@ -26,6 +28,7 @@ import com.mewcode.permission.PermissionMode;
 import com.mewcode.permission.PermissionRequest;
 import com.mewcode.permission.PermissionResponse;
 import com.mewcode.permission.PermissionRuleEngine;
+import com.mewcode.permission.PermissionRuntime;
 import com.mewcode.prompt.PromptBuilder;
 import com.mewcode.prompt.SystemPromptBundle;
 import com.mewcode.session.HistoryStore;
@@ -57,7 +60,7 @@ import java.util.function.BiFunction;
  * <p>模型不直接调用 provider 或工具：提交消息时启动 {@link AgentRun}，后续由定时 {@link StreamPollMessage} 消费事件。流式 buffer
  * 只用于实时预览和完整响应收尾， 最终历史由 Agent 协调器维护，取消时不会把半截 assistant 文本写入会话。
  */
-public final class MewCodeModel implements Model, AutoCloseable {
+public final class MewCodeModel implements Model, CommandContext.UIController, AutoCloseable {
 
   public static final String VERSION = "0.1.0";
   private static final Duration POLL_INTERVAL = Duration.ofMillis(50);
@@ -71,8 +74,8 @@ public final class MewCodeModel implements Model, AutoCloseable {
   private final BiFunction<ProviderConfig, String, LlmClient> clientFactory;
   private final AgentLoopConfig loopConfig;
   private final List<McpServerConfig> mcpServerConfigs;
-  private final PermissionMode configuredPermissionMode;
-  private final PermissionRuleEngine permissionRuleEngine;
+  private final PermissionRuntime permissionRuntime;
+  private final CommandRegistry commandRegistry;
   private final PathAuthorizationStore pathAuthorizationStore;
   private final BashSandbox bashSandbox;
   private final Path userHome;
@@ -89,6 +92,7 @@ public final class MewCodeModel implements Model, AutoCloseable {
   private AgentRun activeRun;
   private AgentEventStream streamEvents;
   private ToolExecutor toolExecutor;
+  private ToolRegistry toolRegistry;
   private AgentTurnCoordinator coordinator;
   private volatile McpManager mcpManager;
   private ContextManager contextManager;
@@ -114,6 +118,13 @@ public final class MewCodeModel implements Model, AutoCloseable {
   private volatile String backgroundDiagnostic;
   private volatile Thread mcpInitializationThread;
   private volatile boolean mcpInitializing;
+  private String pendingPrompt;
+  private String pendingCompactFocus;
+  private Command pendingUiCommand;
+  private String confirmationText;
+  private Runnable confirmationAction;
+  private List<com.mewcode.command.Command> completionCandidates = List.of();
+  private int completionCursor;
 
   public record StreamPollMessage() implements Message {}
 
@@ -240,9 +251,11 @@ public final class MewCodeModel implements Model, AutoCloseable {
     this.clientFactory = Objects.requireNonNull(clientFactory, "clientFactory");
     this.loopConfig = Objects.requireNonNull(loopConfig, "loopConfig").copy();
     this.mcpServerConfigs = mcpServerConfigs == null ? List.of() : List.copyOf(mcpServerConfigs);
-    this.configuredPermissionMode = Objects.requireNonNull(permissionMode, "permissionMode");
-    this.permissionRuleEngine =
-        Objects.requireNonNull(permissionRuleEngine, "permissionRuleEngine");
+    this.permissionRuntime =
+        new PermissionRuntime(
+            Objects.requireNonNull(permissionMode, "permissionMode"),
+            Objects.requireNonNull(permissionRuleEngine, "permissionRuleEngine"));
+    this.commandRegistry = CommandRegistry.createDefault();
     this.pathAuthorizationStore =
         Objects.requireNonNull(pathAuthorizationStore, "pathAuthorizationStore");
     this.bashSandbox = Objects.requireNonNull(bashSandbox, "bashSandbox");
@@ -283,7 +296,11 @@ public final class MewCodeModel implements Model, AutoCloseable {
       return UpdateResult.from(this, QuitMessage::new);
     }
     if (message instanceof KeyPressMessage key && "escape".equals(key.key())) {
-      return streaming ? cancelStream() : UpdateResult.from(this);
+      if (streaming) return cancelStream();
+      completionCandidates = List.of();
+      confirmationText = null;
+      confirmationAction = null;
+      return UpdateResult.from(this);
     }
 
     if (message instanceof WindowSizeMessage size) {
@@ -353,10 +370,10 @@ public final class MewCodeModel implements Model, AutoCloseable {
       client = clientFactory.apply(selectedProvider, systemPromptBundle.flattenedText());
       sessionManager.attachTitleClient(client, selectedProvider.getModel());
       memoryManager.attachClient(client, selectedProvider.getModel());
-      var registry = ToolRegistry.createDefault();
+      toolRegistry = ToolRegistry.createDefault();
       var gate = new PermissionGate();
-      toolExecutor = new ToolExecutor(registry, projectRoot, new FileStateCache(), gate);
-      mcpManager = new McpManager(registry);
+      toolExecutor = new ToolExecutor(toolRegistry, projectRoot, new FileStateCache(), gate);
+      mcpManager = new McpManager(toolRegistry);
       contextManager =
           new ContextManager(projectRoot, client, selectedProvider.getContextWindowTokens());
       contextManager.resetForSession(sessionManager.currentSessionDirectory());
@@ -367,7 +384,7 @@ public final class MewCodeModel implements Model, AutoCloseable {
       coordinator =
           new AgentTurnCoordinator(
               client,
-              registry,
+              toolRegistry,
               toolExecutor,
               conversation,
               protocol,
@@ -375,8 +392,7 @@ public final class MewCodeModel implements Model, AutoCloseable {
               new PromptRequestFactory(systemPromptBundle),
               contextManager,
               gate,
-              configuredPermissionMode,
-              permissionRuleEngine,
+              permissionRuntime,
               pathAuthorizationStore,
               bashSandbox);
       coordinator.setPromptAdditionsSupplier(
@@ -485,9 +501,13 @@ public final class MewCodeModel implements Model, AutoCloseable {
       return pendingPermission == null ? UpdateResult.from(this) : handlePermissionKey(message);
     }
 
+    if (confirmationAction != null) return handleConfirmationKey(message);
+    if (!completionCandidates.isEmpty()) return handleCompletionKey(message);
+
     String key = message.key();
     return switch (key) {
       case "enter" -> submit();
+      case "tab" -> completeCommand();
       case "alt+enter" -> {
         inputBuffer.insert(inputCursor, '\n');
         inputCursor++;
@@ -498,6 +518,7 @@ public final class MewCodeModel implements Model, AutoCloseable {
           inputBuffer.deleteCharAt(inputCursor - 1);
           inputCursor--;
         }
+        completionCandidates = List.of();
         yield UpdateResult.from(this);
       }
       case "left" -> {
@@ -518,6 +539,54 @@ public final class MewCodeModel implements Model, AutoCloseable {
       }
       default -> insertCharacters(message);
     };
+  }
+
+  private UpdateResult<MewCodeModel> handleConfirmationKey(KeyPressMessage message) {
+    if ("y".equalsIgnoreCase(message.key())) {
+      Runnable action = confirmationAction;
+      confirmationAction = null;
+      confirmationText = null;
+      action.run();
+      return UpdateResult.from(this, Command.println(Styles.DIM.render("操作已确认")));
+    }
+    if ("n".equalsIgnoreCase(message.key())) {
+      confirmationAction = null;
+      confirmationText = null;
+      return UpdateResult.from(this, Command.println(Styles.DIM.render("操作已取消")));
+    }
+    return UpdateResult.from(this);
+  }
+
+  private UpdateResult<MewCodeModel> handleCompletionKey(KeyPressMessage message) {
+    switch (message.key()) {
+      case "up" ->
+          completionCursor = Math.floorMod(completionCursor - 1, completionCandidates.size());
+      case "down", "tab" -> completionCursor = (completionCursor + 1) % completionCandidates.size();
+      case "enter" -> applyCompletion(completionCandidates.get(completionCursor));
+      default -> completionCandidates = List.of();
+    }
+    return UpdateResult.from(this);
+  }
+
+  private UpdateResult<MewCodeModel> completeCommand() {
+    String input = inputBuffer.toString();
+    if (!input.startsWith("/") || inputCursor != input.length() || input.indexOf(' ') >= 0) {
+      return UpdateResult.from(this);
+    }
+    List<com.mewcode.command.Command> matches = commandRegistry.search(input.substring(1));
+    if (matches.size() == 1) applyCompletion(matches.getFirst());
+    else if (matches.size() > 1) {
+      completionCandidates = matches;
+      completionCursor = 0;
+    }
+    return UpdateResult.from(this);
+  }
+
+  private void applyCompletion(com.mewcode.command.Command command) {
+    inputBuffer.setLength(0);
+    inputBuffer.append('/').append(command.name()).append(' ');
+    inputCursor = inputBuffer.length();
+    completionCandidates = List.of();
   }
 
   private UpdateResult<MewCodeModel> handlePermissionKey(KeyPressMessage message) {
@@ -553,6 +622,7 @@ public final class MewCodeModel implements Model, AutoCloseable {
         inputCursor++;
       }
     }
+    completionCandidates = List.of();
     return UpdateResult.from(this);
   }
 
@@ -563,26 +633,31 @@ public final class MewCodeModel implements Model, AutoCloseable {
     inputBuffer.setLength(0);
     inputCursor = 0;
 
-    if ("/exit".equals(text.trim())) {
-      return UpdateResult.from(this, QuitMessage::new);
-    }
-    if ("/plan".equals(text.trim())) {
-      agentMode = AgentMode.PLAN;
+    if (text.charAt(0) == '/') return dispatchCommand(text);
+    return startAgentRequest(text);
+  }
+
+  private UpdateResult<MewCodeModel> dispatchCommand(String text) {
+    var call = commandRegistry.parse(text);
+    if (call.isEmpty()) {
       return UpdateResult.from(
-          this, Command.println(Styles.DIM.render("已切换到 Plan Mode：模型仅应执行只读操作，写操作仍需确认。")));
+          this, Command.println(Styles.DIM.render("未知命令：" + text.strip() + "，输入 /help 查看可用命令")));
     }
-    if ("/do".equals(text.trim())) {
-      agentMode = AgentMode.EXECUTE;
-      return UpdateResult.from(
-          this, Command.println(Styles.DIM.render("已切换到 Execute Mode：允许全部工具。")));
+    pendingPrompt = null;
+    pendingCompactFocus = null;
+    pendingUiCommand = null;
+    String output = commandRegistry.execute(call.get(), commandContext(call.get().args()));
+    if (pendingPrompt != null) return startAgentRequest(pendingPrompt);
+    if (pendingCompactFocus != null) return startManualCompaction(pendingCompactFocus);
+    var commands = new ArrayList<Command>();
+    if (pendingUiCommand != null) commands.add(pendingUiCommand);
+    if (output != null && !output.isBlank()) {
+      commands.add(Command.println(Styles.DIM.render(output)));
     }
-    if ("/compact".equals(text.trim())) {
-      return startManualCompaction();
-    }
-    if ("/sessions".equals(text.trim())) {
-      return listSessionsCommand();
-    }
-    if (isResumeCommand(text.trim())) return resumeSessionCommand(text.trim());
+    return UpdateResult.from(this, sequence(commands));
+  }
+
+  private UpdateResult<MewCodeModel> startAgentRequest(String text) {
     if (client == null || coordinator == null) {
       String message =
           initializationError != null ? initializationError : "No provider is available.";
@@ -619,67 +694,16 @@ public final class MewCodeModel implements Model, AutoCloseable {
             Command.tick(POLL_INTERVAL, ignored -> new StreamPollMessage())));
   }
 
-  private UpdateResult<MewCodeModel> listSessionsCommand() {
-    List<SessionInfo> sessions = sessionManager.listSessions();
-    if (sessions.isEmpty()) {
-      return UpdateResult.from(this, Command.println(Styles.DIM.render("暂无已保存的 session。")));
-    }
-    var output = new StringBuilder("Sessions:\n");
-    for (SessionInfo session : sessions) {
-      int messageCount;
-      try {
-        messageCount = HistoryStore.countMessages(session.dir());
-      } catch (java.io.IOException error) {
-        messageCount = 0;
-      }
-      output
-          .append(session.id())
-          .append("  ")
-          .append(safeTerminalText(session.title()))
-          .append("  ")
-          .append(safeTerminalText(session.modifiedAt().toString()))
-          .append("  ")
-          .append(safeTerminalText(session.model()))
-          .append("  messages=")
-          .append(messageCount)
-          .append("  size=")
-          .append(session.size())
-          .append('\n');
-    }
-    return UpdateResult.from(
-        this, Command.println(Styles.DIM.render(output.toString().stripTrailing())));
-  }
-
-  private UpdateResult<MewCodeModel> resumeSessionCommand(String command) {
-    String[] parts = command.split("\\s+");
-    if (parts.length != 2 || parts[1].isBlank()) {
-      return UpdateResult.from(this, Command.println(renderError("用法：/resume <session-id>", 0)));
-    }
-    try {
-      ResumeResult result = sessionManager.resume(parts[1]);
-      if (contextManager != null) contextManager.resetForSession(result.sessionDir());
-      String suffix = result.stale() ? "（已插入过期提醒）" : "";
-      return UpdateResult.from(
-          this, Command.println(Styles.DIM.render("已恢复 session " + result.sessionId() + suffix)));
-    } catch (RuntimeException error) {
-      String detail = error.getMessage() == null ? "session 恢复失败。" : error.getMessage();
-      return UpdateResult.from(this, Command.println(renderError(detail, 0)));
-    }
-  }
-
-  private static boolean isResumeCommand(String command) {
-    return "/resume".equals(command)
-        || command.length() > "/resume".length()
-            && Character.isWhitespace(command.charAt("/resume".length()))
-            && command.startsWith("/resume");
-  }
-
   /** 启动 /compact；该路径不写入用户消息，也不产生正常 Agent 轮次。 */
-  private UpdateResult<MewCodeModel> startManualCompaction() {
+  private UpdateResult<MewCodeModel> startManualCompaction(String focus) {
     if (client == null || coordinator == null || contextManager == null) {
       String message = initializationError != null ? initializationError : "上下文管理未初始化。";
       chatMessages.add(new ChatMessage("error", message, 0));
       return UpdateResult.from(this, Command.println(renderError(message, 0)));
+    }
+    if (coordinator.estimateManualCompactionTokens(agentMode) < 5_000) {
+      return UpdateResult.from(
+          this, Command.println(Styles.DIM.render("当前上下文不足 5000 token，无需压缩。")));
     }
 
     streamBuffer.setLength(0);
@@ -692,7 +716,7 @@ public final class MewCodeModel implements Model, AutoCloseable {
     compactionRun = true;
     streaming = true;
     try {
-      activeRun = coordinator.startManualCompaction(agentMode);
+      activeRun = coordinator.startManualCompaction(agentMode, focus);
       streamEvents = activeRun.events();
     } catch (RuntimeException error) {
       activeRun = null;
@@ -704,6 +728,210 @@ public final class MewCodeModel implements Model, AutoCloseable {
       return UpdateResult.from(this, Command.println(renderError("无法启动上下文压缩：" + detail, 0)));
     }
     return UpdateResult.from(this, Command.tick(POLL_INTERVAL, ignored -> new StreamPollMessage()));
+  }
+
+  private CommandContext commandContext(String args) {
+    return new CommandContext(
+        args,
+        projectRoot.toString(),
+        selectedProvider == null ? "" : selectedProvider.getModel(),
+        this,
+        this::statusSummary,
+        focus -> pendingCompactFocus = focus,
+        () -> "当前 session：" + sessionManager.currentSessionId(),
+        this::sessionLines,
+        this::resumeSession,
+        this::memorySummary,
+        this::memoryLines,
+        this::addMemory,
+        memoryManager::clearAll,
+        this::permissionSummary,
+        this::permissionLines,
+        this::setPermissionMode,
+        this::addPermissionRule,
+        permissionRuntime::reset);
+  }
+
+  private List<String> sessionLines() {
+    List<SessionInfo> sessions = sessionManager.listSessions();
+    if (sessions.isEmpty()) return List.of("暂无已保存的 session。");
+    return sessions.stream()
+        .map(
+            session ->
+                "%s  %s  %s  %s  messages=%d  size=%d"
+                    .formatted(
+                        session.id(),
+                        safeTerminalText(session.title()),
+                        session.modifiedAt(),
+                        safeTerminalText(session.model()),
+                        countMessages(session),
+                        session.size()))
+        .toList();
+  }
+
+  private static int countMessages(SessionInfo session) {
+    try {
+      return HistoryStore.countMessages(session.dir());
+    } catch (java.io.IOException error) {
+      return 0;
+    }
+  }
+
+  private String resumeSession(String id) {
+    ResumeResult result = sessionManager.resume(id);
+    if (contextManager != null) contextManager.resetForSession(result.sessionDir());
+    return "已恢复 session " + result.sessionId() + (result.stale() ? "（已插入过期提醒）" : "");
+  }
+
+  private String memorySummary() {
+    var summary = memoryManager.summary();
+    var text =
+        new StringBuilder(
+            "记忆概要：user %d 条，project %d 条"
+                .formatted(summary.user().size(), summary.project().size()));
+    if (!summary.user().isEmpty()) {
+      text.append("\nuser：")
+          .append(summary.user().stream().map(com.mewcode.memory.MemoryNote::title).toList());
+    }
+    if (!summary.project().isEmpty()) {
+      text.append("\nproject：")
+          .append(summary.project().stream().map(com.mewcode.memory.MemoryNote::title).toList());
+    }
+    return text.toString();
+  }
+
+  private List<String> memoryLines() {
+    var summary = memoryManager.summary();
+    var lines = new ArrayList<String>();
+    summary.user().forEach(note -> lines.add(memoryLine("user", note)));
+    summary.project().forEach(note -> lines.add(memoryLine("project", note)));
+    return lines.isEmpty() ? List.of("暂无记忆。") : List.copyOf(lines);
+  }
+
+  private static String memoryLine(String level, com.mewcode.memory.MemoryNote note) {
+    return "[%s/%s] %s\n%s".formatted(level, note.type().wire(), note.title(), note.content());
+  }
+
+  private String addMemory(String type, String content) {
+    var note = memoryManager.addManual(type, content);
+    return "已添加记忆：" + note.title();
+  }
+
+  private String permissionSummary() {
+    return "权限模式：%s，规则数量：%d"
+        .formatted(
+            permissionRuntime.mode().configValue(),
+            permissionRuntime.snapshot().ruleEngine().rules().size());
+  }
+
+  private List<String> permissionLines() {
+    List<com.mewcode.permission.PermissionRule> rules =
+        permissionRuntime.snapshot().ruleEngine().rules();
+    return rules.isEmpty()
+        ? List.of("暂无生效规则。")
+        : rules.stream()
+            .map(rule -> "%s %s（%s）".formatted(rule.pattern(), rule.decision(), rule.source()))
+            .toList();
+  }
+
+  private String setPermissionMode(String mode) {
+    permissionRuntime.setMode(mode);
+    return "权限模式已切换为 " + permissionRuntime.mode().configValue();
+  }
+
+  private String addPermissionRule(String rule, String effect) {
+    permissionRuntime.addRule(rule, effect);
+    return "已添加临时权限规则";
+  }
+
+  private String statusSummary() {
+    var memory = memoryManager.summary();
+    long tokens = getTokenCount();
+    int window = selectedProvider == null ? 0 : selectedProvider.getContextWindowTokens();
+    long percent = window <= 0 ? 0 : Math.min(100, tokens * 100 / window);
+    int tools = toolRegistry == null ? 0 : toolRegistry.getAll().size();
+    String mcp =
+        mcpInitializing
+            ? "连接中"
+            : mcpManager == null
+                ? "未初始化"
+                : "%d 个已连接，%d 个错误"
+                    .formatted(mcpManager.connectedServers().size(), mcpManager.errors().size());
+    return """
+        MewCode 状态
+        ─────────────
+        Provider：%s / %s
+        模式：%s
+        权限：%s
+        Session：%s
+        Token：%,d / %,d（%d%%）
+        工具：%d 个已启用
+        记忆：user %d 条，project %d 条
+        MCP：%s
+        工作目录：%s
+        版本：v%s
+        """
+        .formatted(
+            selectedProvider == null ? "none" : selectedProvider.getName(),
+            selectedProvider == null ? "none" : selectedProvider.getModel(),
+            agentMode == AgentMode.PLAN ? "plan" : "default",
+            permissionRuntime.mode().configValue(),
+            sessionManager.currentSessionId(),
+            tokens,
+            window,
+            percent,
+            tools,
+            memory.user().size(),
+            memory.project().size(),
+            mcp,
+            projectRoot,
+            VERSION)
+        .stripTrailing();
+  }
+
+  @Override
+  public void addSystemMessage(String text) {
+    pendingUiCommand = Command.println(Styles.DIM.render(text));
+  }
+
+  @Override
+  public void sendUserMessage(String text) {
+    pendingPrompt = text;
+  }
+
+  @Override
+  public boolean isPlanMode() {
+    return agentMode == AgentMode.PLAN;
+  }
+
+  @Override
+  public void setPlanMode(boolean enabled) {
+    agentMode = enabled ? AgentMode.PLAN : AgentMode.EXECUTE;
+  }
+
+  @Override
+  public long getTokenCount() {
+    return coordinator == null ? 0 : coordinator.estimateManualCompactionTokens(agentMode);
+  }
+
+  @Override
+  public void refreshStatus() {
+    // 状态栏直接读取当前字段，下一次 render 即生效。
+  }
+
+  @Override
+  public void startNewConversation() {
+    var session = sessionManager.startNewSession();
+    if (contextManager != null) contextManager.resetForSession(session.sessionDirectory());
+    chatMessages.clear();
+    usageLabel = "Token 用量：unknown";
+    pendingUiCommand = Command.clearScreen();
+  }
+
+  @Override
+  public void requestConfirmation(String text, Runnable onConfirm) {
+    confirmationText = text;
+    confirmationAction = onConfirm;
   }
 
   /** 批量消费事件并转换为 UI 命令；定时 tick 保证没有事件时 spinner 仍会刷新。 */
@@ -937,6 +1165,20 @@ public final class MewCodeModel implements Model, AutoCloseable {
           .append(Styles.ERROR.render("✖ " + safeTerminalText(backgroundDiagnostic)))
           .append('\n');
     }
+    if (confirmationText != null) {
+      view.append('\n')
+          .append(Styles.ERROR.render("  " + safeTerminalText(confirmationText) + "（y 确认 / n 取消）"))
+          .append('\n');
+    }
+    if (!completionCandidates.isEmpty()) {
+      view.append('\n');
+      for (int index = 0; index < completionCandidates.size(); index++) {
+        var candidate = completionCandidates.get(index);
+        String line = "  /" + candidate.name() + "  " + candidate.description();
+        view.append(index == completionCursor ? Styles.SELECTED.render("❯" + line) : " " + line)
+            .append('\n');
+      }
+    }
 
     int boxWidth = Math.max(width - 2, 20);
     String border = "─".repeat(boxWidth);
@@ -976,7 +1218,7 @@ public final class MewCodeModel implements Model, AutoCloseable {
   }
 
   private String renderStatusBar() {
-    String left = selectedProvider == null ? "no provider" : selectedProvider.getName();
+    String left = agentMode == AgentMode.PLAN ? "[PLAN]" : "[DEFAULT]";
     String right = selectedProvider == null ? "" : selectedProvider.getModel();
     int spaces = Math.max(width - left.length() - right.length(), 1);
     return Styles.STATUS.render(left + " ".repeat(spaces) + right);

@@ -126,6 +126,30 @@ class ConversationCompactorTest {
         }
     }
 
+    @Test
+    void passesManualFocusOnlyToTheSummaryInstruction() {
+        var history = new com.mewcode.conversation.ConversationManager();
+        history.addUserMessage("goal");
+        history.addAssistantMessage("old answer");
+        history.addUserMessage("recent");
+        history.addAssistantMessage("R".repeat(40_000));
+        history.addUserMessage("last");
+        history.addAssistantMessage("last answer");
+        history.addUserMessage("final");
+        var client = new FakeLlmClient();
+        client.enqueue(new StreamEvent.TextDelta(summary()), new StreamEvent.StreamEnd("end_turn"));
+
+        try (var externalizer = new ToolResultExternalizer(tempDir)) {
+            new ConversationCompactor(client, new TokenEstimator(), externalizer)
+                    .compact(history, new ContextRequest(List.of(), List.of(), Optional.empty()), "数据库迁移");
+
+            assertTrue(client.requests().getFirst().systemSegments().stream()
+                    .anyMatch(segment -> segment.contains("数据库迁移")));
+            assertFalse(history.getMessages().stream()
+                    .anyMatch(message -> message.textContent().contains("数据库迁移")));
+        }
+    }
+
     private static String summary() {
         return """
                 # 用户目标与约束

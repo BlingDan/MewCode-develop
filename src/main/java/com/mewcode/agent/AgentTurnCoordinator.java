@@ -6,6 +6,7 @@ import com.mewcode.compact.ContextPreparation;
 import com.mewcode.compact.ContextRequest;
 import com.mewcode.compact.ContextTrigger;
 import com.mewcode.conversation.ConversationManager;
+import com.mewcode.conversation.Message;
 import com.mewcode.conversation.ToolResultBlock;
 import com.mewcode.llm.CancellableLlmStream;
 import com.mewcode.llm.LlmClient;
@@ -25,12 +26,15 @@ import com.mewcode.tool.ToolRegistry;
 import com.mewcode.tool.ToolResult;
 import java.util.ArrayDeque;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * 编排持续的 ReAct Agent Loop。
@@ -56,6 +60,8 @@ public final class AgentTurnCoordinator {
   private final PermissionRuleEngine permissionRuleEngine;
   private final PathAuthorizationStore pathAuthorizationStore;
   private final BashSandbox bashSandbox;
+  private volatile Supplier<PromptAdditions> promptAdditionsSupplier = PromptAdditions::empty;
+  private volatile Consumer<List<Message>> completionListener = ignored -> {};
 
   public AgentTurnCoordinator(
       LlmClient client,
@@ -280,8 +286,9 @@ public final class AgentTurnCoordinator {
     run.setPermissionPublisher(
         request -> run.events().publish(new AgentEvent.PermissionRequested(request)));
     try {
+      int startingMessageCount = conversation.getMessages().size();
       conversation.addUserMessage(userText);
-      Thread.startVirtualThread(() -> runLoop(run, effectiveMode));
+      Thread.startVirtualThread(() -> runLoop(run, effectiveMode, startingMessageCount, userText));
     } catch (Throwable error) {
       finish(run, 0, "Agent Loop 启动失败：" + safeMessage(error), AgentEvent.ErrorCategory.LOOP);
     }
@@ -352,15 +359,26 @@ public final class AgentTurnCoordinator {
     return config.copy();
   }
 
+  /** 设置每轮请求前读取的 memory/恢复提醒快照。 */
+  public void setPromptAdditionsSupplier(Supplier<PromptAdditions> supplier) {
+    promptAdditionsSupplier = Objects.requireNonNull(supplier, "supplier");
+  }
+
+  /** 设置自然完成一轮后的异步通知；通知失败不会改变 Agent Loop 结果。 */
+  public void setCompletionListener(Consumer<List<Message>> listener) {
+    completionListener = Objects.requireNonNull(listener, "listener");
+  }
+
   /**
    * 执行 ReAct 主循环。
    *
    * <p>收到无工具的完整 assistant 响应即正常结束；达到迭代上限、连续未知工具、 取消或异常也都从这里统一收口。工具结果按模型原始调用顺序回写，即使安全工具
    * 在后台并发执行，也不会改变下一轮看到的消息顺序。
    */
-  private void runLoop(AgentRun run, AgentMode mode) {
+  private void runLoop(AgentRun run, AgentMode mode, int startingMessageCount, String userText) {
     var usage = new TokenUsageAccumulator();
     var collector = new TurnStreamCollector(usage);
+    boolean memoryOnlyRequest = isMemoryOnlyRequest(userText);
     var policy = ToolPolicy.forMode(mode);
     int completedRounds = 0;
     int unknownToolRounds = 0;
@@ -374,18 +392,23 @@ public final class AgentTurnCoordinator {
           && completedRounds < config.getMaxIterations()) {
         int round = completedRounds + 1;
         PermissionContext permissions = createPermissionContext(run, mode);
-        List<String> deferredToolNames = registry.deferredToolNames();
+        List<String> deferredToolNames =
+            memoryOnlyRequest ? List.of() : registry.deferredToolNames();
         List<Map<String, Object>> schemas =
-            permissionGate == null
-                ? registry.toAPIFormateForModel(protocol, policy::isAllowed)
-                : registry.toAPIFormateForModel(protocol, null);
+            memoryOnlyRequest
+                ? List.of()
+                : permissionGate == null
+                    ? registry.toAPIFormateForModel(protocol, policy::isAllowed)
+                    : registry.toAPIFormateForModel(protocol, null);
         CancellableLlmStream stream;
         PromptRequest sentRequest = null;
         ContextRequest sentContextRequest = null;
         if (promptRequestFactory != null) {
+          PromptAdditions additions = promptAdditionsSupplier.get();
+          if (additions == null) additions = PromptAdditions.empty();
           ContextRequest contextRequest =
               promptRequestFactory.createContextRequest(
-                  mode, round, round == 1, schemas, deferredToolNames);
+                  mode, round, round == 1, schemas, deferredToolNames, additions);
           if (contextManager != null) {
             ContextPreparation preparation =
                 contextManager.prepareForRequest(
@@ -400,7 +423,13 @@ public final class AgentTurnCoordinator {
           }
           sentRequest =
               promptRequestFactory.create(
-                  mode, round, round == 1, conversation.getMessages(), schemas, deferredToolNames);
+                  mode,
+                  round,
+                  round == 1,
+                  conversation.getMessages(),
+                  schemas,
+                  deferredToolNames,
+                  additions);
           sentContextRequest =
               new ContextRequest(
                   sentRequest.systemSegments(), sentRequest.tools(), sentRequest.reminder());
@@ -449,8 +478,14 @@ public final class AgentTurnCoordinator {
 
         completedRounds = round;
         run.events().publish(new AgentEvent.TurnComplete(round));
+        if (memoryOnlyRequest && !turn.calls().isEmpty()) {
+          // ponytail: 关键词启发式只负责工具隔离，复杂意图识别再引入独立解析器。
+          finish(run, completedRounds, "记忆请求不允许调用工具。", AgentEvent.ErrorCategory.LOOP);
+          return;
+        }
         if (turn.calls().isEmpty()) {
           conversation.addAssistantMessage(turn.blocks());
+          notifyCompletedTurn(startingMessageCount, userText);
           finish(run, completedRounds, null, null);
           return;
         }
@@ -542,6 +577,92 @@ public final class AgentTurnCoordinator {
       }
     } finally {
       run.removeCancellationHook(interruptThread);
+    }
+  }
+
+  private static boolean isMemoryOnlyRequest(String userText) {
+    String text = userText == null ? "" : userText.toLowerCase(Locale.ROOT);
+    boolean memoryIntent =
+        text.contains("记住")
+            || text.contains("记下")
+            || text.contains("记着")
+            || text.contains("保存到记忆")
+            || text.contains("保存到项目记忆")
+            || text.contains("保存到个人记忆")
+            || text.contains("保存为项目知识")
+            || text.contains("保存为个人偏好")
+            || text.contains("存入记忆")
+            || text.contains("加入记忆")
+            || text.contains("加入项目记忆")
+            || text.contains("加入个人记忆")
+            || text.contains("记录到项目知识")
+            || text.contains("记录到项目记忆")
+            || text.contains("记录到个人记忆")
+            || text.contains("记录到长期记忆")
+            || text.contains("作为项目知识")
+            || text.contains("作为个人偏好")
+            || text.contains("记为项目知识")
+            || text.contains("记为个人偏好")
+            || text.contains("写入项目知识")
+            || text.contains("写入项目记忆")
+            || text.contains("写入个人记忆")
+            || text.contains("remember")
+            || text.contains("save this in memory")
+            || text.contains("store this in memory");
+    boolean memoryContext =
+        text.contains("项目知识")
+            || text.contains("项目记忆")
+            || text.contains("个人记忆")
+            || text.contains("个人偏好")
+            || text.contains("长期记忆")
+            || text.contains("长期 memory");
+    memoryIntent |=
+        memoryContext
+            && (text.contains("记录")
+                || text.contains("保存")
+                || text.contains("写入")
+                || text.contains("加入")
+                || text.contains("作为"));
+    if (!memoryIntent) return false;
+    boolean fileReference =
+        text.contains(".mewcode/")
+            || text.matches("(?s).*\\.[a-z0-9]{1,12}(?:$|[\\s,，。:：、;；!?！？]).*");
+    boolean fileMutation =
+        text.contains("文件")
+            && (text.contains("修改")
+                || text.contains("编辑")
+                || text.contains("写入")
+                || text.contains("更新")
+                || text.contains("创建")
+                || text.contains("删除")
+                || text.contains("记录")
+                || text.contains("保存")
+                || text.contains("添加")
+                || text.contains("追加")
+                || text.contains("覆盖"));
+    return !fileReference && !fileMutation;
+  }
+
+  private void notifyCompletedTurn(int startingMessageCount, String userText) {
+    try {
+      List<Message> history = conversation.getMessages();
+      int start = -1;
+      Message currentUser = new Message("user", userText);
+      for (int index = history.size() - 1; index >= 0; index--) {
+        if (currentUser.equals(history.get(index))) {
+          start = index;
+          break;
+        }
+      }
+      if (start < 0) {
+        start =
+            startingMessageCount >= history.size()
+                ? 0
+                : Math.min(Math.max(startingMessageCount, 0), history.size());
+      }
+      completionListener.accept(List.copyOf(history.subList(start, history.size())));
+    } catch (RuntimeException ignored) {
+      // 后台 memory/title 更新失败不应让已完成的 Agent 响应变成失败。
     }
   }
 

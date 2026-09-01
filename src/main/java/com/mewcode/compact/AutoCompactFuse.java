@@ -23,4 +23,9 @@ public final class AutoCompactFuse {
     public synchronized boolean isTripped() {
         return consecutiveFailures >= MAX_CONSECUTIVE_FAILURES;
     }
+
+    /** 切换 session 后重新允许自动压缩。 */
+    public synchronized void reset() {
+        consecutiveFailures = 0;
+    }
 }

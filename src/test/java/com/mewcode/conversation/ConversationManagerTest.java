@@ -4,6 +4,8 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.util.ArrayList;
+
 class ConversationManagerTest {
 
     @Test
@@ -66,5 +68,37 @@ class ConversationManagerTest {
                 "new user",
                 ((TextBlock) history.getMessages().get(0).content().getFirst()).text());
         assertEquals("assistant", history.getMessages().get(1).role());
+    }
+
+    @Test
+    void notifiesPersistenceListenerWithAtomicMutationKinds() {
+        var history = new ConversationManager();
+        var mutations = new ArrayList<String>();
+        attachListenerReflectively(history, mutations);
+
+        history.addUserMessage("hello");
+        history.addToolTurn(
+                java.util.List.of(new ToolUseBlock("call-1", "ReadFile", java.util.Map.of())),
+                java.util.List.of(new ToolResultBlock("call-1", "ok", false)));
+
+        assertEquals(java.util.List.of("APPEND:1", "APPEND:2"), mutations);
+    }
+
+    private static void attachListenerReflectively(
+            ConversationManager history, ArrayList<String> mutations) {
+        try {
+            var method = ConversationManager.class.getMethod("setMutationListener", java.util.function.Consumer.class);
+            method.invoke(history, (java.util.function.Consumer<Object>) mutation -> {
+                try {
+                    var kind = mutation.getClass().getMethod("kind").invoke(mutation);
+                    var messages = mutation.getClass().getMethod("messages").invoke(mutation);
+                    mutations.add(kind + ":" + ((java.util.List<?>) messages).size());
+                } catch (ReflectiveOperationException error) {
+                    throw new AssertionError(error);
+                }
+            });
+        } catch (ReflectiveOperationException error) {
+            fail("ConversationManager mutation listener 尚未实现", error);
+        }
     }
 }

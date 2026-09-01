@@ -34,6 +34,7 @@ public final class ToolResultExternalizer implements AutoCloseable {
             "工具结果完整内容保存失败，未将原文写入对话历史。";
 
     private final Path sessionDirectory;
+    private final boolean deleteOnClose;
     private int nextFileNumber = 1;
     private boolean closed;
 
@@ -44,6 +45,19 @@ public final class ToolResultExternalizer implements AutoCloseable {
         sessionDirectory = root.resolve(CONTEXT_DIRECTORY)
                 .resolve(SESSION_DIRECTORY)
                 .resolve(UUID.randomUUID().toString());
+        deleteOnClose = true;
+    }
+
+    /** 创建与持久化 session 绑定、退出时保留的外置结果目录。 */
+    static ToolResultExternalizer forPersistentDirectory(Path directory) {
+        return new ToolResultExternalizer(directory, false);
+    }
+
+    private ToolResultExternalizer(Path directory, boolean deleteOnClose) {
+        sessionDirectory = Objects.requireNonNull(directory, "directory")
+                .toAbsolutePath()
+                .normalize();
+        this.deleteOnClose = deleteOnClose;
     }
 
     /**
@@ -170,6 +184,7 @@ public final class ToolResultExternalizer implements AutoCloseable {
     public synchronized void close() {
         if (closed) return;
         closed = true;
+        if (!deleteOnClose) return;
         if (!Files.exists(sessionDirectory)) return;
         try (Stream<Path> paths = Files.walk(sessionDirectory)) {
             paths.sorted(Comparator.reverseOrder()).forEach(ToolResultExternalizer::deleteQuietly);

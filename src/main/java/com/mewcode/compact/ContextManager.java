@@ -17,20 +17,22 @@ public final class ContextManager implements AutoCloseable {
     public static final long AUTOMATIC_SAFETY_MARGIN = 13_000;
     public static final long MANUAL_SAFETY_MARGIN = 3_000;
 
+    private final LlmClient client;
     private final int contextWindowTokens;
     private final TokenEstimator estimator;
-    private final ToolResultExternalizer externalizer;
-    private final ConversationCompactor compactor;
+    private ToolResultExternalizer externalizer;
+    private ConversationCompactor compactor;
     private final AutoCompactFuse fuse;
     private boolean closed;
 
     public ContextManager(Path projectRoot, LlmClient client, int contextWindowTokens) {
+        this.client = Objects.requireNonNull(client, "client");
         this.contextWindowTokens = contextWindowTokens > 0
                 ? contextWindowTokens
                 : com.mewcode.config.ProviderConfig.DEFAULT_CONTEXT_WINDOW_TOKENS;
         this.estimator = new TokenEstimator();
         this.externalizer = new ToolResultExternalizer(projectRoot);
-        this.compactor = new ConversationCompactor(client, estimator, externalizer);
+        this.compactor = new ConversationCompactor(this.client, estimator, externalizer);
         this.fuse = new AutoCompactFuse();
     }
 
@@ -122,6 +124,19 @@ public final class ContextManager implements AutoCloseable {
     /** 返回当前 session 的外置文件目录，供测试和诊断使用。 */
     public Path sessionDirectory() {
         return externalizer.sessionDirectory();
+    }
+
+    /** 切换 session 后重新绑定工具结果目录和上下文预算状态。 */
+    public synchronized void resetForSession(Path sessionDir) {
+        ensureOpen();
+        Objects.requireNonNull(sessionDir, "sessionDir");
+        ToolResultExternalizer previous = externalizer;
+        externalizer = ToolResultExternalizer.forPersistentDirectory(
+                sessionDir.resolve("tool-results"));
+        compactor = new ConversationCompactor(client, estimator, externalizer);
+        estimator.reset();
+        fuse.reset();
+        previous.close();
     }
 
     /** 正常退出时清理当前 session。 */

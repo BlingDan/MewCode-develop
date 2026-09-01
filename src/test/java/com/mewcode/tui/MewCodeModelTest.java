@@ -2,6 +2,11 @@ package com.mewcode.tui;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.mewcode.agent.AgentLoopConfig;
+import com.mewcode.config.McpServerConfig;
 import com.mewcode.config.ProviderConfig;
 import com.mewcode.conversation.ConversationManager;
 import com.mewcode.conversation.Message;
@@ -9,9 +14,19 @@ import com.mewcode.llm.CancellableLlmStream;
 import com.mewcode.llm.LlmClient;
 import com.mewcode.llm.PromptRequest;
 import com.mewcode.llm.StreamEvent;
+import com.mewcode.permission.BashSandboxFactory;
+import com.mewcode.permission.PathAuthorizationStore;
+import com.mewcode.permission.PermissionMode;
+import com.mewcode.permission.PermissionRuleEngine;
+import com.mewcode.session.HistoryStore;
 import com.mewcode.tui.tea.Command;
 import com.mewcode.tui.tea.KeyPressMessage;
 import com.mewcode.tui.tea.WindowSizeMessage;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -32,11 +47,9 @@ class MewCodeModelTest {
 
   @Test
   void rendersToolCallResultAndFinalTextInOrderWithoutChangingHistory() throws Exception {
-    String path =
-        Path.of(System.getProperty("user.dir"), "README.md")
-            .toAbsolutePath()
-            .normalize()
-            .toString();
+    Path readme = projectRoot.resolve("README.md");
+    Files.writeString(readme, "test", StandardCharsets.UTF_8);
+    String path = readme.toAbsolutePath().normalize().toString();
     var first = new LinkedBlockingQueue<StreamEvent>();
     first.add(new StreamEvent.TextDelta("I will read it."));
     first.add(
@@ -237,7 +250,8 @@ class MewCodeModelTest {
             (provider, systemPrompt) -> {
               prompt.set(systemPrompt);
               return new QueueClient();
-            });
+            },
+            projectRoot.resolve("test-home"));
 
     var update = model.update(new WindowSizeMessage(100, 30));
     var printed = new ArrayList<String>();
@@ -248,6 +262,123 @@ class MewCodeModelTest {
     assertNotNull(prompt.get());
     assertTrue(prompt.get().contains("The current project root is: " + root));
     assertTrue(prompt.get().contains(root + "/.trae/skills/mew-spec/SKILL.md"));
+  }
+
+  @Test
+  void loadsProjectInstructionsBeforeCreatingProvider() throws Exception {
+    Files.writeString(projectRoot.resolve("MEWCODE.md"), "项目必须先读取相关文件。", StandardCharsets.UTF_8);
+    var prompt = new AtomicReference<String>();
+    var model =
+        new MewCodeModel(
+            List.of(provider("one", "model-one")),
+            projectRoot,
+            (provider, systemPrompt) -> {
+              prompt.set(systemPrompt);
+              return new QueueClient();
+            },
+            projectRoot.resolve("test-home"));
+
+    model.update(new WindowSizeMessage(80, 24));
+
+    assertNotNull(prompt.get());
+    assertTrue(prompt.get().contains("项目必须先读取相关文件。"));
+    model.close();
+  }
+
+  @Test
+  void memoryRequestUpdatesProjectStoreWithoutChangingInstructionOrSession() throws Exception {
+    Path instructionFile = projectRoot.resolve("MEWCODE.md");
+    Files.writeString(instructionFile, "原有项目指令", StandardCharsets.UTF_8);
+    var client = new MemoryQueueClient();
+    var model = model(List.of(provider("one", "model-one")), client);
+
+    try {
+      model.update(new WindowSizeMessage(100, 30));
+      type(model, "记录下，项目知识：项目使用 GitHub Actions 做 CI");
+      model.update(key("enter"));
+      awaitIdle(model);
+
+      Path note = projectRoot.resolve(".mewcode/memory/project_knowledge_ci.md");
+      Path index = projectRoot.resolve(".mewcode/memory/MEMORY.md");
+      waitForFile(note);
+      assertTrue(Files.readString(note).contains("GitHub Actions"));
+      waitForContent(index, "project_knowledge_ci.md");
+      assertFalse(
+          Files.exists(projectRoot.resolve("test-home/.mewcode/memory/project_knowledge_ci.md")));
+      assertEquals("原有项目指令", Files.readString(instructionFile));
+      assertTrue(client.memoryRequests().stream().allMatch(request -> request.tools().isEmpty()));
+      try (var files = Files.walk(projectRoot.resolve(".mewcode/sessions"))) {
+        for (Path path : files.filter(Files::isRegularFile).toList()) {
+          String text = Files.readString(path, StandardCharsets.UTF_8);
+          assertFalse(
+              text.contains("长期记忆整理器") || text.contains("project_knowledge_ci"), path.toString());
+        }
+      }
+    } finally {
+      model.close();
+    }
+  }
+
+  @Test
+  void sessionsCommandListsStoredSessionsWithoutCallingProvider() throws Exception {
+    String id = "20260831-120000-abcd";
+    Path directory = projectRoot.resolve(".mewcode/sessions").resolve(id);
+    try (var history = new HistoryStore(directory, id, "model-one")) {
+      history.appendMessages(List.of(new com.mewcode.conversation.Message("user", "已有会话")));
+    }
+    var client = new QueueClient();
+    var model =
+        new MewCodeModel(
+            List.of(provider("one", "model-one")),
+            projectRoot,
+            (provider, prompt) -> client,
+            projectRoot.resolve("test-home"));
+    model.update(new WindowSizeMessage(80, 24));
+
+    type(model, "/sessions");
+    var result = model.update(key("enter"));
+    var printed = new ArrayList<String>();
+    collectPrintLines(result.command(), printed);
+
+    assertEquals(0, client.calls.get());
+    assertTrue(printed.stream().anyMatch(line -> line.contains(id)), printed.toString());
+    model.close();
+  }
+
+  @Test
+  void resumeCommandLoadsHistoryIntoTheNextProviderRequest() throws Exception {
+    String id = "20260831-120000-abcd";
+    Path directory = projectRoot.resolve(".mewcode/sessions").resolve(id);
+    try (var history = new HistoryStore(directory, id, "model-one")) {
+      history.appendMessages(
+          List.of(
+              new com.mewcode.conversation.Message("user", "旧目标"),
+              new com.mewcode.conversation.Message("assistant", "旧答案")));
+    }
+    var client = new QueueClient(response("新答案"));
+    var model =
+        new MewCodeModel(
+            List.of(provider("one", "model-one")),
+            projectRoot,
+            (provider, prompt) -> client,
+            projectRoot.resolve("test-home"));
+    model.update(new WindowSizeMessage(80, 24));
+
+    type(model, "/resume " + id);
+    var resume = model.update(key("enter"));
+    var printed = new ArrayList<String>();
+    collectPrintLines(resume.command(), printed);
+    assertTrue(
+        printed.stream().anyMatch(line -> line.contains("已恢复 session " + id)), printed.toString());
+
+    type(model, "继续");
+    model.update(key("enter"));
+    awaitCalls(client, 1);
+    assertEquals(
+        List.of("旧目标", "旧答案", "继续"),
+        client.lastMessages.get().stream().map(Message::textContent).toList());
+    awaitIdle(model);
+    model.close();
   }
 
   @Test
@@ -263,6 +394,46 @@ class MewCodeModelTest {
 
     assertTrue(model.view().contains("two"));
     assertTrue(model.view().contains("model-two"));
+  }
+
+  @Test
+  void providerSelectionDoesNotWaitForMcpInitialization() throws Exception {
+    HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    server.createContext("/mcp", MewCodeModelTest::delayedMcp);
+    server.start();
+    var slowMcp =
+        new McpServerConfig(
+            "slow",
+            null,
+            List.of(),
+            Map.of(),
+            "http://127.0.0.1:" + server.getAddress().getPort() + "/mcp",
+            Map.of());
+    var model =
+        new MewCodeModel(
+            List.of(provider("one", "model-one"), provider("two", "model-two")),
+            projectRoot,
+            (provider, prompt) -> new QueueClient(),
+            new AgentLoopConfig(),
+            PermissionMode.DEFAULT,
+            new PermissionRuleEngine(),
+            new PathAuthorizationStore(projectRoot),
+            BashSandboxFactory.create(),
+            List.of(slowMcp));
+    try {
+      model.update(new WindowSizeMessage(80, 24));
+      model.update(key("down"));
+
+      long started = System.nanoTime();
+      model.update(key("enter"));
+      long elapsedMillis = (System.nanoTime() - started) / 1_000_000;
+
+      assertTrue(elapsedMillis < 500, "provider selection waited " + elapsedMillis + "ms");
+      assertTrue(model.view().contains("MCP 正在连接"), model.view());
+    } finally {
+      model.close();
+      server.stop(0);
+    }
   }
 
   @Test
@@ -471,8 +642,9 @@ class MewCodeModelTest {
         client.lastMessages.get());
   }
 
-  private static MewCodeModel model(List<ProviderConfig> providers, LlmClient client) {
-    return new MewCodeModel(providers, (provider, prompt) -> client);
+  private MewCodeModel model(List<ProviderConfig> providers, LlmClient client) {
+    return new MewCodeModel(
+        providers, projectRoot, (provider, prompt) -> client, projectRoot.resolve("test-home"));
   }
 
   private static ProviderConfig provider(String name, String model) {
@@ -567,6 +739,22 @@ class MewCodeModelTest {
     fail("expected " + expected + " provider calls, got " + client.calls.get());
   }
 
+  private static void waitForFile(Path file) throws Exception {
+    for (int attempt = 0; attempt < 300; attempt++) {
+      if (Files.exists(file)) return;
+      Thread.sleep(10);
+    }
+    fail("memory note was not created: " + file);
+  }
+
+  private static void waitForContent(Path file, String content) throws Exception {
+    for (int attempt = 0; attempt < 300; attempt++) {
+      if (Files.exists(file) && Files.readString(file).contains(content)) return;
+      Thread.sleep(10);
+    }
+    fail("memory file did not contain expected content: " + file);
+  }
+
   private static void awaitIdle(MewCodeModel model) throws Exception {
     for (int attempt = 0; attempt < 150; attempt++) {
       model.update(new MewCodeModel.StreamPollMessage());
@@ -582,6 +770,50 @@ class MewCodeModelTest {
     } else if (command instanceof Command.Batch batch) {
       for (Command child : batch.commands()) collectPrintLines(child, output);
     }
+  }
+
+  private static void delayedMcp(HttpExchange exchange) throws java.io.IOException {
+    String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+    if ("DELETE".equals(exchange.getRequestMethod())) {
+      exchange.sendResponseHeaders(204, -1);
+      exchange.close();
+      return;
+    }
+    JsonNode request = JSON.readTree(body);
+    String method = request.path("method").asText();
+    if ("initialize".equals(method)) {
+      try {
+        Thread.sleep(1_000);
+      } catch (InterruptedException error) {
+        Thread.currentThread().interrupt();
+      }
+    }
+    if ("notifications/initialized".equals(method)) {
+      exchange.sendResponseHeaders(202, -1);
+      exchange.close();
+      return;
+    }
+    ObjectNode result = JSON.createObjectNode();
+    if ("initialize".equals(method)) {
+      result.put("protocolVersion", com.mewcode.mcp.McpManager.SUPPORTED_PROTOCOL_VERSION);
+      result.set("capabilities", JSON.createObjectNode().set("tools", JSON.createObjectNode()));
+      result.set("serverInfo", JSON.createObjectNode().put("name", "slow").put("version", "1"));
+      exchange.getResponseHeaders().add("Mcp-Session-Id", "test-session");
+    } else if ("tools/list".equals(method)) {
+      result.set("tools", JSON.createArrayNode());
+    } else {
+      exchange.sendResponseHeaders(404, -1);
+      exchange.close();
+      return;
+    }
+    ObjectNode response = JSON.createObjectNode().put("jsonrpc", "2.0");
+    response.set("id", request.get("id"));
+    response.set("result", result);
+    byte[] responseBody = JSON.writeValueAsBytes(response);
+    exchange.getResponseHeaders().set("Content-Type", "application/json");
+    exchange.sendResponseHeaders(200, responseBody.length);
+    exchange.getResponseBody().write(responseBody);
+    exchange.close();
   }
 
   private static int indexContaining(List<String> lines, String needle) {
@@ -605,6 +837,32 @@ class MewCodeModelTest {
   private static final Pattern ANSI_ESCAPE =
       Pattern.compile("\\033\\[[0-9;]*[a-zA-Z]|\\033\\][^\\007\\033]*(?:\\007|\\033\\\\\\\\)");
 
+  private static final ObjectMapper JSON = new ObjectMapper();
+
+  private static final class MemoryQueueClient implements LlmClient {
+    private static final String MEMORY_RESPONSE =
+        "[{\"action\":\"create\",\"level\":\"project\",\"type\":\"project_knowledge\",\"title\":\"CI\",\"slug\":\"ci\",\"content\":\"Use GitHub Actions.\"}]";
+
+    private final List<PromptRequest> requests = new ArrayList<>();
+
+    @Override
+    public synchronized CancellableLlmStream openStream(PromptRequest request) {
+      requests.add(request);
+      String system = request.flattenedSystemPrompt();
+      if (system.contains("会话标题生成器")) return new CancellableLlmStream(response("记忆测试"), () -> {});
+      if (system.contains("长期记忆整理器")) {
+        return new CancellableLlmStream(response(MEMORY_RESPONSE), () -> {});
+      }
+      return new CancellableLlmStream(response("已记录。"), () -> {});
+    }
+
+    private synchronized List<PromptRequest> memoryRequests() {
+      return requests.stream()
+          .filter(request -> request.flattenedSystemPrompt().contains("长期记忆整理器"))
+          .toList();
+    }
+  }
+
   private static final class QueueClient implements LlmClient {
     private final ArrayDeque<BlockingQueue<StreamEvent>> queues = new ArrayDeque<>();
     private final AtomicInteger calls = new AtomicInteger();
@@ -627,6 +885,10 @@ class MewCodeModelTest {
 
     @Override
     public synchronized CancellableLlmStream openStream(PromptRequest request) {
+      if (isBackgroundRequest(request)) {
+        return new CancellableLlmStream(
+            response(request.flattenedSystemPrompt().contains("会话标题生成器") ? "标题" : "[]"), () -> {});
+      }
       calls.incrementAndGet();
       lastRequest.set(request);
       lastMessages.set(request.history());
@@ -636,6 +898,13 @@ class MewCodeModelTest {
       BlockingQueue<StreamEvent> response =
           queues.isEmpty() ? new LinkedBlockingQueue<>() : queues.removeFirst();
       return new CancellableLlmStream(response, () -> {});
+    }
+
+    private static boolean isBackgroundRequest(PromptRequest request) {
+      String system = request.flattenedSystemPrompt();
+      return system.contains("长期记忆整理器")
+          || system.contains("会话标题生成器")
+          || system.contains("memory 索引裁剪器");
     }
   }
 }

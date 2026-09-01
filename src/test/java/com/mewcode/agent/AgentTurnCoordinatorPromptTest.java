@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.mewcode.compact.ContextManager;
 import com.mewcode.compact.ContextTrigger;
 import com.mewcode.conversation.ConversationManager;
+import com.mewcode.conversation.Message;
 import com.mewcode.llm.CancellableLlmStream;
 import com.mewcode.llm.LlmClient;
 import com.mewcode.llm.PromptRequest;
@@ -17,13 +18,17 @@ import com.mewcode.tool.ToolApiProtocol;
 import com.mewcode.tool.ToolExecutionContext;
 import com.mewcode.tool.ToolExecutor;
 import com.mewcode.tool.ToolRegistry;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -74,6 +79,275 @@ class AgentTurnCoordinatorPromptTest {
   }
 
   @Test
+  void injectsDynamicPromptAdditionsAndNotifiesAfterCompletedTurn() throws Exception {
+    var client = new CapturingClient(List.of(response("done")));
+    var conversation = new ConversationManager();
+    var registry = ToolRegistry.createDefault();
+    var completed = new AtomicReference<List<Message>>();
+
+    try (var executor =
+        new ToolExecutor(
+            registry,
+            new ToolExecutionContext(projectRoot, Duration.ofSeconds(2), new FileStateCache()))) {
+      var coordinator =
+          new AgentTurnCoordinator(
+              client,
+              registry,
+              executor,
+              conversation,
+              ToolApiProtocol.OPENAI,
+              new AgentLoopConfig(),
+              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+      coordinator.setPromptAdditionsSupplier(
+          () ->
+              new PromptAdditions(
+                  "MEMORY_INDEX", Optional.of(new Message("user", "RESUME_REMINDER"))));
+      coordinator.setCompletionListener(completed::set);
+
+      AgentRun run = coordinator.startRun("hello", AgentMode.EXECUTE);
+      while (!(run.events().next() instanceof AgentEvent.LoopComplete)) {
+        // drain the run until the completion callback has run
+      }
+
+      PromptRequest request = client.requests.getFirst();
+      assertTrue(
+          request.systemSegments().stream().anyMatch(segment -> segment.contains("MEMORY_INDEX")));
+      assertTrue(request.reminder().orElseThrow().textContent().contains("RESUME_REMINDER"));
+      assertEquals(
+          List.of(new Message("user", "hello"), new Message("assistant", "done")), completed.get());
+    }
+  }
+
+  @Test
+  void routesRememberRequestsToMemoryInsteadOfProjectInstructionFiles() throws Exception {
+    var client = new CapturingClient(List.of(response("已记住。")));
+    var conversation = new ConversationManager();
+    var registry = ToolRegistry.createDefault();
+
+    try (var executor =
+        new ToolExecutor(
+            registry,
+            new ToolExecutionContext(projectRoot, Duration.ofSeconds(2), new FileStateCache()))) {
+      var coordinator =
+          new AgentTurnCoordinator(
+              client,
+              registry,
+              executor,
+              conversation,
+              ToolApiProtocol.OPENAI,
+              new AgentLoopConfig(),
+              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+
+      AgentRun run = coordinator.startRun("记住我正在找 agent 相关工作", AgentMode.EXECUTE);
+      while (!(run.events().next() instanceof AgentEvent.LoopComplete)) {
+        // drain the run
+      }
+
+      String system = client.requests.getFirst().flattenedSystemPrompt();
+      assertTrue(system.contains("长期 memory"), system);
+      assertTrue(system.contains("不要修改 MEWCODE.md"), system);
+    }
+  }
+
+  @Test
+  void memoryOnlyRequestsDoNotExposeFileTools() throws Exception {
+    assertMemoryRequestHasNoTools("记录下，项目知识：项目使用 GitHub Actions 做 CI");
+  }
+
+  @Test
+  void commonMemoryPhrasesDoNotExposeFileTools() throws Exception {
+    for (String request :
+        List.of("记下：项目使用 Gradle 构建", "保存为个人偏好：回答使用中文", "remember that this project uses Java 21")) {
+      assertMemoryRequestHasNoTools(request);
+    }
+  }
+
+  @Test
+  void memoryOnlyRequestsRejectAProviderToolCallBeforeItCanWriteFiles() throws Exception {
+    Path instructionFile = projectRoot.resolve("MEWCODE.md");
+    String path = instructionFile.toAbsolutePath().normalize().toString();
+    var client =
+        new CapturingClient(
+            List.of(
+                response(
+                    new StreamEvent.ToolCallComplete(
+                        "call-write", "WriteFile", Map.of("path", path, "content", "bad")),
+                    new StreamEvent.StreamEnd("tool_use"))));
+    var conversation = new ConversationManager();
+    var registry = ToolRegistry.createDefault();
+
+    try (var executor =
+        new ToolExecutor(
+            registry,
+            new ToolExecutionContext(projectRoot, Duration.ofSeconds(2), new FileStateCache()))) {
+      var coordinator =
+          new AgentTurnCoordinator(
+              client,
+              registry,
+              executor,
+              conversation,
+              ToolApiProtocol.OPENAI,
+              new AgentLoopConfig(),
+              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+
+      AgentRun run = coordinator.startRun("记住这条项目知识：不要把它写进文件", AgentMode.EXECUTE);
+      while (!(run.events().next() instanceof AgentEvent.LoopComplete)) {
+        // drain the run
+      }
+
+      assertTrue(client.requests.getFirst().tools().isEmpty());
+      assertFalse(Files.exists(instructionFile));
+    }
+  }
+
+  @Test
+  void explicitFileMutationKeepsToolsAvailableEvenWhenTheRequestSaysRemember() throws Exception {
+    var client = new CapturingClient(List.of(response("我会修改文件。")));
+    var conversation = new ConversationManager();
+    var registry = ToolRegistry.createDefault();
+
+    try (var executor =
+        new ToolExecutor(
+            registry,
+            new ToolExecutionContext(projectRoot, Duration.ofSeconds(2), new FileStateCache()))) {
+      var coordinator =
+          new AgentTurnCoordinator(
+              client,
+              registry,
+              executor,
+              conversation,
+              ToolApiProtocol.OPENAI,
+              new AgentLoopConfig(),
+              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+
+      AgentRun run = coordinator.startRun("记住这条规则，并修改 README.md", AgentMode.EXECUTE);
+      while (!(run.events().next() instanceof AgentEvent.LoopComplete)) {
+        // drain the run
+      }
+
+      assertFalse(client.requests.getFirst().tools().isEmpty());
+    }
+  }
+
+  @Test
+  void recordingToARegularFileIsNotMistakenForAMemoryRequest() throws Exception {
+    var client = new CapturingClient(List.of(response("我会记录到文件。")));
+    var conversation = new ConversationManager();
+    var registry = ToolRegistry.createDefault();
+
+    try (var executor =
+        new ToolExecutor(
+            registry,
+            new ToolExecutionContext(projectRoot, Duration.ofSeconds(2), new FileStateCache()))) {
+      var coordinator =
+          new AgentTurnCoordinator(
+              client,
+              registry,
+              executor,
+              conversation,
+              ToolApiProtocol.OPENAI,
+              new AgentLoopConfig(),
+              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+
+      AgentRun run = coordinator.startRun("记录测试结果到 results.txt", AgentMode.EXECUTE);
+      while (!(run.events().next() instanceof AgentEvent.LoopComplete)) {
+        // drain the run
+      }
+
+      assertFalse(client.requests.getFirst().tools().isEmpty());
+    }
+  }
+
+  @Test
+  void investigatingARecordInTheCodebaseStillKeepsToolsAvailable() throws Exception {
+    var client = new CapturingClient(List.of(response("我会检查代码。")));
+    var conversation = new ConversationManager();
+    var registry = ToolRegistry.createDefault();
+
+    try (var executor =
+        new ToolExecutor(
+            registry,
+            new ToolExecutionContext(projectRoot, Duration.ofSeconds(2), new FileStateCache()))) {
+      var coordinator =
+          new AgentTurnCoordinator(
+              client,
+              registry,
+              executor,
+              conversation,
+              ToolApiProtocol.OPENAI,
+              new AgentLoopConfig(),
+              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+
+      AgentRun run = coordinator.startRun("记录一下当前代码中的 TODO", AgentMode.EXECUTE);
+      while (!(run.events().next() instanceof AgentEvent.LoopComplete)) {
+        // drain the run
+      }
+
+      assertFalse(client.requests.getFirst().tools().isEmpty());
+    }
+  }
+
+  @Test
+  void providerFailureDoesNotNotifyTheMemoryCompletionListener() throws Exception {
+    var client = new CapturingClient(List.of(response(new StreamEvent.Error("provider failed"))));
+    var conversation = new ConversationManager();
+    var registry = ToolRegistry.createDefault();
+    var notified = new AtomicReference<List<Message>>();
+
+    try (var executor =
+        new ToolExecutor(
+            registry,
+            new ToolExecutionContext(projectRoot, Duration.ofSeconds(2), new FileStateCache()))) {
+      var coordinator =
+          new AgentTurnCoordinator(
+              client,
+              registry,
+              executor,
+              conversation,
+              ToolApiProtocol.OPENAI,
+              new AgentLoopConfig(),
+              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+      coordinator.setCompletionListener(notified::set);
+
+      AgentRun run = coordinator.startRun("记住这条信息", AgentMode.EXECUTE);
+      while (!(run.events().next() instanceof AgentEvent.LoopComplete)) {
+        // drain the run
+      }
+
+      assertTrue(notified.get() == null);
+      assertEquals(1, conversation.getMessages().size());
+    }
+  }
+
+  private void assertMemoryRequestHasNoTools(String requestText) throws Exception {
+    var client = new CapturingClient(List.of(response("已记住。")));
+    var conversation = new ConversationManager();
+    var registry = ToolRegistry.createDefault();
+
+    try (var executor =
+        new ToolExecutor(
+            registry,
+            new ToolExecutionContext(projectRoot, Duration.ofSeconds(2), new FileStateCache()))) {
+      var coordinator =
+          new AgentTurnCoordinator(
+              client,
+              registry,
+              executor,
+              conversation,
+              ToolApiProtocol.OPENAI,
+              new AgentLoopConfig(),
+              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+
+      AgentRun run = coordinator.startRun(requestText, AgentMode.EXECUTE);
+      while (!(run.events().next() instanceof AgentEvent.LoopComplete)) {
+        // drain the run
+      }
+
+      assertTrue(client.requests.getFirst().tools().isEmpty(), requestText);
+    }
+  }
+
+  @Test
   void preparesContextBeforeSendingAndRebuildsRequestAfterCompaction() throws Exception {
     var client = new CapturingClient(List.of(response(summary()), response("done")));
     var conversation = new ConversationManager();
@@ -102,6 +376,8 @@ class AgentTurnCoordinatorPromptTest {
               new AgentLoopConfig(),
               new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)),
               contextManager);
+      var completed = new AtomicReference<List<Message>>();
+      coordinator.setCompletionListener(completed::set);
 
       var events = new ArrayList<AgentEvent>();
       AgentRun run = coordinator.startRun("hello", AgentMode.EXECUTE);
@@ -128,6 +404,10 @@ class AgentTurnCoordinatorPromptTest {
                       event instanceof AgentEvent.CompactionStarted started
                           && started.trigger() == ContextTrigger.AUTO));
       assertTrue(events.stream().anyMatch(event -> event instanceof AgentEvent.CompactionComplete));
+      assertTrue(
+          completed.get().stream().anyMatch(message -> message.textContent().equals("hello")));
+      assertTrue(
+          completed.get().stream().anyMatch(message -> message.textContent().equals("done")));
       int startedIndex = -1;
       int completedIndex = -1;
       for (int index = 0; index < events.size(); index++) {

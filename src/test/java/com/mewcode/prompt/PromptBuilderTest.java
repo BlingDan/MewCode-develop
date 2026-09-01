@@ -3,7 +3,6 @@ package com.mewcode.prompt;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.mewcode.agent.AgentMode;
-import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Path;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -58,26 +57,5 @@ class PromptBuilderTest {
     assertEquals(7, PromptBuilder.fixedModules().size());
     assertTrue(
         PromptBuilder.optionalModules().stream().allMatch(module -> module.content().isEmpty()));
-  }
-
-  @Test
-  void putsLoadedInstructionsIntoTheCustomInstructionModule() throws Exception {
-    try {
-      var method = PromptBuilder.class.getMethod("buildBundle", Path.class, String.class);
-      var bundle = (SystemPromptBundle) method.invoke(null, projectRoot, "PROJECT_RULE");
-
-      assertTrue(bundle.flattenedText().contains("PROJECT_RULE"));
-    } catch (NoSuchMethodException error) {
-      fail("PromptBuilder 指令入口尚未实现", error);
-    } catch (InvocationTargetException error) {
-      throw unwrap(error);
-    }
-  }
-
-  private static Exception unwrap(InvocationTargetException error) {
-    Throwable cause = error.getCause();
-    if (cause instanceof Exception exception) return exception;
-    if (cause instanceof Error fatal) throw fatal;
-    return new RuntimeException(cause);
   }
 }

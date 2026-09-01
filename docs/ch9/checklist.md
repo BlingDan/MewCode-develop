@@ -18,7 +18,7 @@
 - [x] 创建项目根、项目 `.mewcode`、用户 `.mewcode` 三份文件。
 - [x] 启动/加载后文本顺序为：项目根 → 项目 `.mewcode` → 用户目录。
 - 证据：
-  `InstructionLoaderTest.loadsInstructionLayersInPriorityOrder`；`PromptBuilderTest.putsLoadedInstructionsIntoTheCustomInstructionModule`。
+  `InstructionLoaderTest.loadsInstructionLayersInPriorityOrder`；`MewCodeModelTest.loadsProjectInstructionsBeforeCreatingProvider`。
 
 ### AC2：高优先级靠前，顶层缺失不阻断
 
@@ -160,7 +160,7 @@
 - [x] 第二次请求不再包含该提醒。
 - [x] 提醒不写入 JSONL 或 ConversationManager 历史。
 - 证据：
-  `SessionManagerTest.marksSessionStaleAfterTwentyFourHours`、`PromptRequestFactoryTest.injectsDynamicMemoryAndOneShotReminderIntoRequestSnapshot`；tmux stale resume 输出“已插入过期提醒”，JSONL 未出现 reminder。
+  `SessionManagerTest.marksSessionStaleAfterTwentyFourHours`、`AgentTurnCoordinatorPromptTest.injectsDynamicPromptAdditionsAndNotifiesAfterCompletedTurn`；tmux stale resume 输出“已插入过期提醒”，JSONL 未出现 reminder。
 
 ### AC19：30 天过期清理
 

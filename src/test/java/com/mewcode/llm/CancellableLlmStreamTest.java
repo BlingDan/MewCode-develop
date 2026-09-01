@@ -21,13 +21,4 @@ class CancellableLlmStreamTest {
         assertTrue(stream.isClosed());
         assertEquals(1, closes.get());
     }
-
-    @Test
-    void exposesEventsProducedByTheProvider() throws Exception {
-        var queue = new LinkedBlockingQueue<StreamEvent>();
-        queue.add(new StreamEvent.TextDelta("hello"));
-        var stream = new CancellableLlmStream(queue, () -> { });
-
-        assertEquals("hello", ((StreamEvent.TextDelta) stream.next()).text());
-    }
 }

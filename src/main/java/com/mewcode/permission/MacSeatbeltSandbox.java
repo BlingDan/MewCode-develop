@@ -34,7 +34,7 @@ public final class MacSeatbeltSandbox implements BashSandbox {
         new StringBuilder("(version 1)\n(deny default)\n")
             .append("(allow process*)\n")
             .append("(allow file-read*)\n")
-            .append("(allow file-write* ");
+            .append("(allow file-write* (literal \"/dev/null\") ");
     for (Path scope : request.writableScopes()) {
       profile.append("(subpath \"").append(escape(realScope(scope).toString())).append("\") ");
     }

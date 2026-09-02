@@ -57,6 +57,14 @@ public final class ConversationCompactor {
     public CompactResult compact(
             ConversationManager conversation,
             ContextRequest request) {
+        return compact(conversation, request, "");
+    }
+
+    /** 可选重点只参与摘要提示，不写入会话历史。 */
+    public CompactResult compact(
+            ConversationManager conversation,
+            ContextRequest request,
+            String focus) {
         Objects.requireNonNull(conversation, "conversation");
         Objects.requireNonNull(request, "request");
         List<Message> history = conversation.getMessages();
@@ -68,7 +76,7 @@ public final class ConversationCompactor {
             return new CompactResult(beforeTokens, beforeTokens, false);
         }
 
-        String summary = requestSummary(oldMessages);
+        String summary = requestSummary(oldMessages, focus);
         var replacement = new ArrayList<Message>();
         boolean summaryInserted = false;
         for (Message message : oldMessages) {
@@ -89,8 +97,12 @@ public final class ConversationCompactor {
         return new CompactResult(beforeTokens, afterTokens, true);
     }
 
-    private String requestSummary(List<Message> oldMessages) {
-        var summaryContext = new ContextRequest(List.of(SUMMARY_SYSTEM), List.of(), Optional.empty());
+    private String requestSummary(List<Message> oldMessages, String focus) {
+        String normalizedFocus = focus == null ? "" : focus.strip();
+        List<String> systems = normalizedFocus.isEmpty()
+                ? List.of(SUMMARY_SYSTEM)
+                : List.of(SUMMARY_SYSTEM, "本次摘要额外保留重点：" + normalizedFocus);
+        var summaryContext = new ContextRequest(systems, List.of(), Optional.empty());
         var summaryHistory = List.of(new Message("user", serializeMessages(oldMessages)));
         var summaryRequest = new PromptRequest(
                 summaryContext.systemSegments(),

@@ -251,6 +251,11 @@ public class Program {
                 writer.flush();
                 renderView();
             }
+            case Command.ClearScreen ignored -> {
+                clearView();
+                writer.print("\033[2J\033[3J\033[H");
+                writer.flush();
+            }
         }
     }
 

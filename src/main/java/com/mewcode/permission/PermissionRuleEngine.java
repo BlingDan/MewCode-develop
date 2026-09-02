@@ -12,14 +12,19 @@ import java.util.regex.Pattern;
 /** 按会话、本地、项目、用户顺序执行的规则引擎。 */
 public final class PermissionRuleEngine {
   private final List<PermissionRule> rules;
-  private final Set<String> sessionGrants = ConcurrentHashMap.newKeySet();
+  private final Set<String> sessionGrants;
 
   public PermissionRuleEngine() {
     this(List.of());
   }
 
   public PermissionRuleEngine(List<PermissionRule> rules) {
+    this(rules, ConcurrentHashMap.newKeySet());
+  }
+
+  private PermissionRuleEngine(List<PermissionRule> rules, Set<String> sessionGrants) {
     this.rules = List.copyOf(Objects.requireNonNull(rules, "rules"));
+    this.sessionGrants = Objects.requireNonNull(sessionGrants, "sessionGrants");
   }
 
   public List<PermissionRule> rules() {
@@ -55,6 +60,11 @@ public final class PermissionRuleEngine {
 
   public Set<String> sessionGrants() {
     return Set.copyOf(sessionGrants);
+  }
+
+  /** 创建规则不可变、但继续共享本会话授权集合的派生引擎。 */
+  public PermissionRuleEngine withRules(List<PermissionRule> rules) {
+    return new PermissionRuleEngine(rules, sessionGrants);
   }
 
   /** 将工具调用转换成规则和授权共用的稳定目标文本。 */

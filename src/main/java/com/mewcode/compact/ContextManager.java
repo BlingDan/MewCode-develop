@@ -44,6 +44,15 @@ public final class ContextManager implements AutoCloseable {
         return prepareForRequest(conversation, request, ignored -> {});
     }
 
+    /** 只估算当前请求，不触发 Provider 或压缩。 */
+    public synchronized long estimateTokens(
+            ConversationManager conversation, ContextRequest request) {
+        ensureOpen();
+        return estimator.estimate(
+                Objects.requireNonNull(request, "request"),
+                Objects.requireNonNull(conversation, "conversation").getMessages());
+    }
+
     /** 请求前执行自动检查，并在真正开始摘要前通知调用方显示状态。 */
     public synchronized ContextPreparation prepareForRequest(
             ConversationManager conversation,
@@ -79,6 +88,15 @@ public final class ContextManager implements AutoCloseable {
             ConversationManager conversation,
             ContextRequest request,
             ContextTrigger trigger) {
+        return forceCompact(conversation, request, trigger, "");
+    }
+
+    /** 强制压缩，并把用户指定重点仅加入摘要请求。 */
+    public synchronized CompactResult forceCompact(
+            ConversationManager conversation,
+            ContextRequest request,
+            ContextTrigger trigger,
+            String focus) {
         ensureOpen();
         Objects.requireNonNull(conversation, "conversation");
         Objects.requireNonNull(request, "request");
@@ -87,7 +105,7 @@ public final class ContextManager implements AutoCloseable {
             throw new ContextException("自动上下文压缩已熔断。");
         }
         try {
-            CompactResult result = compactor.compact(conversation, request);
+            CompactResult result = compactor.compact(conversation, request, focus);
             if (result.changed()
                     && result.afterTokens() >= Math.max(0L, contextWindowTokens - safetyMargin(trigger))) {
                 throw new ContextException("上下文压缩后仍未达到可用预算。请减少本轮输入或继续拆分任务。");

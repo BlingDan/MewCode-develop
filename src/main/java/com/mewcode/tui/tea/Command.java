@@ -13,7 +13,8 @@ import java.util.function.Supplier;
 
 // 异步命令：Program 在后台执行，执行结果以 Message 形式回送给 update()
 public sealed interface Command
-        permits Command.Simple, Command.Tick, Command.CheckWindowSize, Command.Batch, Command.PrintLine {
+        permits Command.Simple, Command.Tick, Command.CheckWindowSize, Command.Batch, Command.PrintLine,
+                Command.ClearScreen {
 
     // 包装一个 Supplier<Message> 为 Command（如 QuitMessage::new）
     static Command of(Supplier<Message> fn) {
@@ -40,9 +41,15 @@ public sealed interface Command
         return new PrintLine(text);
     }
 
+    // 清空整个终端和 scrollback。
+    static Command clearScreen() {
+        return new ClearScreen();
+    }
+
     record Simple(Supplier<Message> fn) implements Command {}
     record Tick(Duration delay, Function<Instant, Message> fn) implements Command {}
     record CheckWindowSize() implements Command {}
     record Batch(List<Command> commands) implements Command {}
     record PrintLine(String text) implements Command {}
+    record ClearScreen() implements Command {}
 }

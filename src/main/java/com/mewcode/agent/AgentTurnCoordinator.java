@@ -18,6 +18,7 @@ import com.mewcode.permission.PermissionContext;
 import com.mewcode.permission.PermissionGate;
 import com.mewcode.permission.PermissionMode;
 import com.mewcode.permission.PermissionRuleEngine;
+import com.mewcode.permission.PermissionRuntime;
 import com.mewcode.tool.ToolApiProtocol;
 import com.mewcode.tool.ToolCall;
 import com.mewcode.tool.ToolExecutor;
@@ -58,6 +59,7 @@ public final class AgentTurnCoordinator {
   private final PermissionGate permissionGate;
   private final PermissionMode configuredPermissionMode;
   private final PermissionRuleEngine permissionRuleEngine;
+  private PermissionRuntime permissionRuntime;
   private final PathAuthorizationStore pathAuthorizationStore;
   private final BashSandbox bashSandbox;
   private volatile Supplier<PromptAdditions> promptAdditionsSupplier = PromptAdditions::empty;
@@ -171,6 +173,37 @@ public final class AgentTurnCoordinator {
         Objects.requireNonNull(bashSandbox, "bashSandbox"));
   }
 
+  /** 创建使用可变运行期权限、但按 Agent Run 固定快照的协调器。 */
+  public AgentTurnCoordinator(
+      LlmClient client,
+      ToolRegistry registry,
+      ToolExecutor executor,
+      ConversationManager conversation,
+      ToolApiProtocol protocol,
+      AgentLoopConfig config,
+      PromptRequestFactory promptRequestFactory,
+      ContextManager contextManager,
+      PermissionGate permissionGate,
+      PermissionRuntime permissionRuntime,
+      PathAuthorizationStore pathAuthorizationStore,
+      BashSandbox bashSandbox) {
+    this(
+        client,
+        registry,
+        executor,
+        conversation,
+        protocol,
+        config,
+        promptRequestFactory,
+        contextManager,
+        permissionGate,
+        Objects.requireNonNull(permissionRuntime, "permissionRuntime").mode(),
+        permissionRuntime.snapshot().ruleEngine(),
+        pathAuthorizationStore,
+        bashSandbox);
+    this.permissionRuntime = permissionRuntime;
+  }
+
   /** 创建同时启用上下文管理和五层权限系统的协调器。 */
   public AgentTurnCoordinator(
       LlmClient client,
@@ -258,6 +291,10 @@ public final class AgentTurnCoordinator {
     this.permissionGate = permissionGate;
     this.configuredPermissionMode = permissionMode;
     this.permissionRuleEngine = permissionRuleEngine;
+    this.permissionRuntime =
+        permissionMode == null || permissionRuleEngine == null
+            ? null
+            : new PermissionRuntime(permissionMode, permissionRuleEngine);
     this.pathAuthorizationStore = pathAuthorizationStore;
     this.bashSandbox = bashSandbox;
   }
@@ -287,8 +324,11 @@ public final class AgentTurnCoordinator {
         request -> run.events().publish(new AgentEvent.PermissionRequested(request)));
     try {
       int startingMessageCount = conversation.getMessages().size();
+      PermissionRuntime.Snapshot permissionSnapshot =
+          permissionRuntime == null ? null : permissionRuntime.snapshot();
       conversation.addUserMessage(userText);
-      Thread.startVirtualThread(() -> runLoop(run, effectiveMode, startingMessageCount, userText));
+      Thread.startVirtualThread(
+          () -> runLoop(run, effectiveMode, startingMessageCount, userText, permissionSnapshot));
     } catch (Throwable error) {
       finish(run, 0, "Agent Loop 启动失败：" + safeMessage(error), AgentEvent.ErrorCategory.LOOP);
     }
@@ -297,6 +337,11 @@ public final class AgentTurnCoordinator {
 
   /** 启动一次不增加用户消息、不计入 Agent 轮次的手动上下文压缩。 */
   public AgentRun startManualCompaction(AgentMode mode) {
+    return startManualCompaction(mode, "");
+  }
+
+  /** 启动带可选保留重点的手动压缩。 */
+  public AgentRun startManualCompaction(AgentMode mode, String focus) {
     AgentMode effectiveMode = mode == null ? AgentMode.EXECUTE : mode;
     var run = new AgentRun();
     run.setPermissionPublisher(
@@ -306,14 +351,26 @@ public final class AgentTurnCoordinator {
       return run;
     }
     try {
-      Thread.startVirtualThread(() -> manualCompactionLoop(run, effectiveMode));
+      Thread.startVirtualThread(() -> manualCompactionLoop(run, effectiveMode, focus));
     } catch (Throwable error) {
       finish(run, 0, "手动上下文压缩启动失败：" + safeMessage(error), AgentEvent.ErrorCategory.CONTEXT);
     }
     return run;
   }
 
-  private void manualCompactionLoop(AgentRun run, AgentMode mode) {
+  /** 返回手动压缩请求的当前 Token 估算，不触发 Provider。 */
+  public long estimateManualCompactionTokens(AgentMode mode) {
+    if (contextManager == null) return 0;
+    AgentMode effectiveMode = mode == null ? AgentMode.EXECUTE : mode;
+    ContextRequest request =
+        promptRequestFactory == null
+            ? contextRequestFromLegacyPrompt(effectiveMode)
+            : promptRequestFactory.createContextRequest(
+                effectiveMode, 1, true, List.of(), List.of());
+    return contextManager.estimateTokens(conversation, request);
+  }
+
+  private void manualCompactionLoop(AgentRun run, AgentMode mode, String focus) {
     Thread currentThread = Thread.currentThread();
     Runnable interruptThread = currentThread::interrupt;
     run.addCancellationHook(interruptThread);
@@ -323,7 +380,7 @@ public final class AgentTurnCoordinator {
               ? contextRequestFromLegacyPrompt(mode)
               : promptRequestFactory.createContextRequest(mode, 1, true, List.of(), List.of());
       run.events().publish(new AgentEvent.CompactionStarted(ContextTrigger.MANUAL));
-      var result = contextManager.forceCompact(conversation, request, ContextTrigger.MANUAL);
+      var result = contextManager.forceCompact(conversation, request, ContextTrigger.MANUAL, focus);
       run.events().publish(new AgentEvent.CompactionComplete(result));
       finish(run, 0, null, null);
     } catch (ContextException error) {
@@ -375,7 +432,12 @@ public final class AgentTurnCoordinator {
    * <p>收到无工具的完整 assistant 响应即正常结束；达到迭代上限、连续未知工具、 取消或异常也都从这里统一收口。工具结果按模型原始调用顺序回写，即使安全工具
    * 在后台并发执行，也不会改变下一轮看到的消息顺序。
    */
-  private void runLoop(AgentRun run, AgentMode mode, int startingMessageCount, String userText) {
+  private void runLoop(
+      AgentRun run,
+      AgentMode mode,
+      int startingMessageCount,
+      String userText,
+      PermissionRuntime.Snapshot permissionSnapshot) {
     var usage = new TokenUsageAccumulator();
     var collector = new TurnStreamCollector(usage);
     boolean memoryOnlyRequest = isMemoryOnlyRequest(userText);
@@ -391,7 +453,7 @@ public final class AgentTurnCoordinator {
       while (!run.cancellationToken().isCancelled()
           && completedRounds < config.getMaxIterations()) {
         int round = completedRounds + 1;
-        PermissionContext permissions = createPermissionContext(run, mode);
+        PermissionContext permissions = createPermissionContext(run, mode, permissionSnapshot);
         List<String> deferredToolNames =
             memoryOnlyRequest ? List.of() : registry.deferredToolNames();
         List<Map<String, Object>> schemas =
@@ -666,14 +728,17 @@ public final class AgentTurnCoordinator {
     }
   }
 
-  private PermissionContext createPermissionContext(AgentRun run, AgentMode mode) {
+  private PermissionContext createPermissionContext(
+      AgentRun run, AgentMode mode, PermissionRuntime.Snapshot snapshot) {
     if (permissionGate == null) return null;
     PermissionMode effectiveMode =
-        mode == AgentMode.PLAN ? PermissionMode.PLAN : configuredPermissionMode;
+        mode == AgentMode.PLAN
+            ? PermissionMode.PLAN
+            : snapshot == null ? configuredPermissionMode : snapshot.mode();
     return new PermissionContext(
         executor.projectRoot(),
         effectiveMode,
-        permissionRuleEngine,
+        snapshot == null ? permissionRuleEngine : snapshot.ruleEngine(),
         pathAuthorizationStore,
         bashSandbox,
         run.permissionBroker(),

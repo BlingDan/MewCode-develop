@@ -2,6 +2,7 @@ package com.mewcode.permission;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.mewcode.tool.ToolCall;
 import java.util.List;
@@ -90,5 +91,18 @@ class PermissionRuleEngineTest {
     assertThrows(
         IllegalArgumentException.class,
         () -> PermissionRule.of("Bash(git *)", "ask", RuleSource.USER));
+  }
+
+  @Test
+  void derivedRuleEngineSharesSessionGrantsButCopiesRules() {
+    var engine = new PermissionRuleEngine();
+    engine.addSessionGrant("Bash(git status)");
+
+    var derived =
+        engine.withRules(List.of(PermissionRule.of("Bash(git *)", "allow", RuleSource.SESSION)));
+
+    assertTrue(derived.isSessionGranted("Bash(git status)"));
+    assertEquals(1, derived.rules().size());
+    assertEquals(0, engine.rules().size());
   }
 }

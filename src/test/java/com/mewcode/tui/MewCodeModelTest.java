@@ -14,10 +14,13 @@ import com.mewcode.llm.CancellableLlmStream;
 import com.mewcode.llm.LlmClient;
 import com.mewcode.llm.PromptRequest;
 import com.mewcode.llm.StreamEvent;
+import com.mewcode.permission.BashSandbox;
 import com.mewcode.permission.BashSandboxFactory;
+import com.mewcode.permission.BashSandboxRequest;
 import com.mewcode.permission.PathAuthorizationStore;
 import com.mewcode.permission.PermissionMode;
 import com.mewcode.permission.PermissionRuleEngine;
+import com.mewcode.permission.SandboxedProcess;
 import com.mewcode.session.HistoryStore;
 import com.mewcode.tui.tea.Command;
 import com.mewcode.tui.tea.KeyPressMessage;
@@ -149,7 +152,7 @@ class MewCodeModelTest {
   }
 
   @Test
-  void planAndDoAreLocalPersistentModeSwitches() {
+  void planTogglesLocallyAndRetiredDoDoesNotReachProvider() {
     var client = new QueueClient();
     var model = model(List.of(provider("one", "model-one")), client);
     model.update(new WindowSizeMessage(80, 24));
@@ -160,11 +163,151 @@ class MewCodeModelTest {
     assertTrue(model.view().contains("Plan Mode"));
     assertEquals(0, client.calls.get());
 
-    type(model, "/do");
+    type(model, "/plan");
     var execute = model.update(key("enter"));
     assertNotNull(execute.command());
     assertTrue(model.view().contains("Execute Mode"));
+
+    type(model, "/do");
+    var unknown = model.update(key("enter"));
+    var printed = new ArrayList<String>();
+    collectPrintLines(unknown.command(), printed);
+    assertTrue(printed.stream().anyMatch(line -> line.contains("未知命令") && line.contains("/help")));
     assertEquals(0, client.calls.get());
+  }
+
+  @Test
+  void helpIsLocalAndReviewSendsOnlyTheExpandedPromptToAgent() throws Exception {
+    var client = new QueueClient(response("审查完成"));
+    var model = model(List.of(provider("one", "model-one")), client);
+    model.update(new WindowSizeMessage(100, 30));
+
+    type(model, "/help");
+    var help = model.update(key("enter"));
+    var printed = new ArrayList<String>();
+    collectPrintLines(help.command(), printed);
+    assertTrue(printed.stream().anyMatch(line -> line.contains("/review")));
+    assertEquals(0, client.calls.get());
+
+    type(model, "/review 特别注意并发安全");
+    model.update(key("enter"));
+    awaitCalls(client, 1);
+    assertTrue(client.lastMessages.get().getLast().textContent().contains("git diff"));
+    assertTrue(client.lastMessages.get().getLast().textContent().contains("特别注意并发安全"));
+    assertFalse(client.lastMessages.get().getLast().textContent().startsWith("/review"));
+    awaitIdle(model);
+  }
+
+  @Test
+  void permissionPromptIsRenderedOnlyOnce() throws Exception {
+    var response = new LinkedBlockingQueue<StreamEvent>();
+    response.add(
+        new StreamEvent.ToolCallComplete("call-bash", "Bash", Map.of("command", "git status")));
+    response.add(new StreamEvent.StreamEnd("tool_use"));
+    var client = new QueueClient(response);
+    var model =
+        new MewCodeModel(
+            List.of(provider("one", "model-one")),
+            projectRoot,
+            (provider, prompt) -> client,
+            new AgentLoopConfig(),
+            PermissionMode.DEFAULT,
+            new PermissionRuleEngine(),
+            new PathAuthorizationStore(projectRoot),
+            availableBashSandbox());
+    model.update(new WindowSizeMessage(100, 30));
+    type(model, "/review");
+    model.update(key("enter"));
+
+    var printed = new ArrayList<String>();
+    for (int attempt = 0; attempt < 100; attempt++) {
+      collectPrintLines(model.update(new MewCodeModel.StreamPollMessage()).command(), printed);
+      if (printed.stream().anyMatch(line -> line.contains("MewCode 想要执行以下操作"))) break;
+      Thread.sleep(10);
+    }
+
+    assertTrue(
+        printed.stream().anyMatch(line -> line.contains("MewCode 想要执行以下操作")), printed.toString());
+    assertFalse(model.view().contains("等待权限确认"), model.view());
+    model.update(key("n"));
+    model.close();
+  }
+
+  @Test
+  void memorySummaryShowsPinnedTitlesWithoutCallingProvider() {
+    var client = new QueueClient();
+    var model = model(List.of(provider("one", "model-one")), client);
+    model.update(new WindowSizeMessage(100, 30));
+
+    type(model, "/memory add user_preference 始终使用中文");
+    model.update(key("enter"));
+    type(model, "/memory");
+    var result = model.update(key("enter"));
+    var printed = new ArrayList<String>();
+    collectPrintLines(result.command(), printed);
+
+    assertTrue(printed.stream().anyMatch(line -> line.contains("始终使用中文")), printed.toString());
+    assertEquals(0, client.calls.get());
+    model.close();
+  }
+
+  @Test
+  void memoryClearRendersOnlyTheConfirmation() {
+    var model = model(List.of(provider("one", "model-one")), new QueueClient());
+    model.update(new WindowSizeMessage(100, 30));
+    type(model, "/memory clear");
+
+    var result = model.update(key("enter"));
+    var printed = new ArrayList<String>();
+    collectPrintLines(result.command(), printed);
+
+    assertFalse(printed.stream().anyMatch(line -> line.contains("等待确认")), printed.toString());
+    assertTrue(model.view().contains("确认清空全部记忆？"), model.view());
+    model.update(key("n"));
+    model.close();
+  }
+
+  @Test
+  void tabCompletesUniqueCommandAndOffersDeduplicatedMultipleChoices() {
+    var unique = model(List.of(provider("one", "model-one")), new QueueClient());
+    unique.update(new WindowSizeMessage(100, 30));
+    type(unique, "/cl");
+    unique.update(key("tab"));
+    assertTrue(unique.view().contains("/clear "));
+    unique.close();
+
+    var multiple = model(List.of(provider("one", "model-one")), new QueueClient());
+    multiple.update(new WindowSizeMessage(100, 30));
+    type(multiple, "/p");
+    multiple.update(key("tab"));
+    assertTrue(multiple.view().contains("/plan"));
+    assertTrue(multiple.view().contains("/permission"));
+    multiple.update(key("down"));
+    multiple.update(key("enter"));
+    assertTrue(multiple.view().contains("/permission "));
+    multiple.close();
+  }
+
+  @Test
+  void clearStartsANewSessionAndEmitsTerminalClearWithoutCallingProvider() throws Exception {
+    var client = new QueueClient();
+    var model = model(List.of(provider("one", "model-one")), client);
+    model.update(new WindowSizeMessage(100, 30));
+    Path sessions = projectRoot.resolve(".mewcode/sessions");
+    long before;
+    try (var paths = Files.list(sessions)) {
+      before = paths.filter(Files::isDirectory).count();
+    }
+
+    type(model, "/clear");
+    var result = model.update(key("enter"));
+
+    assertTrue(containsClearScreen(result.command()));
+    try (var paths = Files.list(sessions)) {
+      assertEquals(before + 1, paths.filter(Files::isDirectory).count());
+    }
+    assertEquals(0, client.calls.get());
+    model.close();
   }
 
   @Test
@@ -320,7 +463,7 @@ class MewCodeModelTest {
   }
 
   @Test
-  void sessionsCommandListsStoredSessionsWithoutCallingProvider() throws Exception {
+  void sessionListCommandListsStoredSessionsWithoutCallingProvider() throws Exception {
     String id = "20260831-120000-abcd";
     Path directory = projectRoot.resolve(".mewcode/sessions").resolve(id);
     try (var history = new HistoryStore(directory, id, "model-one")) {
@@ -335,13 +478,14 @@ class MewCodeModelTest {
             projectRoot.resolve("test-home"));
     model.update(new WindowSizeMessage(80, 24));
 
-    type(model, "/sessions");
+    type(model, "/session list");
     var result = model.update(key("enter"));
     var printed = new ArrayList<String>();
     collectPrintLines(result.command(), printed);
 
     assertEquals(0, client.calls.get());
     assertTrue(printed.stream().anyMatch(line -> line.contains(id)), printed.toString());
+    assertTrue(printed.stream().anyMatch(line -> line.contains("messages=1")), printed.toString());
     model.close();
   }
 
@@ -364,7 +508,7 @@ class MewCodeModelTest {
             projectRoot.resolve("test-home"));
     model.update(new WindowSizeMessage(80, 24));
 
-    type(model, "/resume " + id);
+    type(model, "/session resume " + id);
     var resume = model.update(key("enter"));
     var printed = new ArrayList<String>();
     collectPrintLines(resume.command(), printed);
@@ -430,6 +574,14 @@ class MewCodeModelTest {
 
       assertTrue(elapsedMillis < 500, "provider selection waited " + elapsedMillis + "ms");
       assertTrue(model.view().contains("MCP 正在连接"), model.view());
+
+      type(model, "/status");
+      long statusStarted = System.nanoTime();
+      var status = model.update(key("enter"));
+      long statusMillis = (System.nanoTime() - statusStarted) / 1_000_000;
+
+      assertTrue(statusMillis < 500, "/status waited for MCP " + statusMillis + "ms");
+      assertNotNull(status.command());
     } finally {
       model.close();
       server.stop(0);
@@ -618,17 +770,24 @@ class MewCodeModelTest {
   }
 
   @Test
-  void nonExitSlashInputIsSentAndPartialErrorIsNotAssistantHistory() throws Exception {
+  void unknownSlashInputStaysLocalAndPartialErrorIsNotAssistantHistory() throws Exception {
     var first = new LinkedBlockingQueue<StreamEvent>();
     var second = new LinkedBlockingQueue<StreamEvent>();
     var client = new QueueClient(first, second);
     var model = model(List.of(provider("one", "model-one")), client);
     model.update(new WindowSizeMessage(80, 24));
 
-    type(model, "/help");
+    type(model, "/unknown");
+    var unknown = model.update(key("enter"));
+    var printed = new ArrayList<String>();
+    collectPrintLines(unknown.command(), printed);
+    assertTrue(printed.stream().anyMatch(line -> line.contains("/help")));
+    assertEquals(0, client.calls.get());
+
+    type(model, "first");
     model.update(key("enter"));
     awaitCalls(client, 1);
-    assertEquals("/help", client.lastMessages.get().getFirst().textContent());
+    assertEquals("first", client.lastMessages.get().getFirst().textContent());
 
     first.offer(new StreamEvent.TextDelta("partial-secret"));
     first.offer(new StreamEvent.Error("Connection interrupted."));
@@ -638,7 +797,7 @@ class MewCodeModelTest {
     awaitCalls(client, 2);
 
     assertEquals(
-        List.of(new Message("user", "/help"), new Message("user", "next")),
+        List.of(new Message("user", "first"), new Message("user", "next")),
         client.lastMessages.get());
   }
 
@@ -654,6 +813,20 @@ class MewCodeModelTest {
     provider.setModel(model);
     provider.setApiKey("test-key");
     return provider;
+  }
+
+  private BashSandbox availableBashSandbox() {
+    return new BashSandbox() {
+      @Override
+      public boolean isAvailable() {
+        return true;
+      }
+
+      @Override
+      public SandboxedProcess prepare(BashSandboxRequest request) {
+        return new SandboxedProcess(List.of("true"), projectRoot);
+      }
+    };
   }
 
   private static KeyPressMessage key(String key) {
@@ -770,6 +943,14 @@ class MewCodeModelTest {
     } else if (command instanceof Command.Batch batch) {
       for (Command child : batch.commands()) collectPrintLines(child, output);
     }
+  }
+
+  private static boolean containsClearScreen(Command command) {
+    if (command instanceof Command.ClearScreen) return true;
+    if (command instanceof Command.Batch batch) {
+      return batch.commands().stream().anyMatch(MewCodeModelTest::containsClearScreen);
+    }
+    return false;
   }
 
   private static void delayedMcp(HttpExchange exchange) throws java.io.IOException {

@@ -216,7 +216,7 @@ public final class CommandRegistry {
     if (args.equalsIgnoreCase("list")) return String.join("\n", context.memoryList().get());
     if (args.equalsIgnoreCase("clear")) {
       context.ui().requestConfirmation("确认清空全部记忆？", context.memoryClear());
-      return "等待确认";
+      return "";
     }
     if (args.regionMatches(true, 0, "add ", 0, 4)) {
       String value = args.substring(4).strip();

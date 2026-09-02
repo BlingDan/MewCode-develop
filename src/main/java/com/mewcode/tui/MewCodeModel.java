@@ -1151,9 +1151,6 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
                   "%s %s… · %s · (%.0fs)"
                       .formatted(frame, spinnerVerb, iteration, elapsedSeconds())));
       view.append('\n').append(Styles.DIM.render("  " + usageLabel));
-      if (pendingPermission != null) {
-        view.append('\n').append(Styles.ERROR.render("  等待权限确认：y 本次 / s 本会话 / a 永久 / n 拒绝"));
-      }
       view.append('\n');
     } else if (mcpInitializing) {
       view.append('\n').append(Styles.DIM.render("  MCP 正在连接…")).append('\n');

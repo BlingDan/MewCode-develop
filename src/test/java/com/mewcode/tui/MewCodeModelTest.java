@@ -14,10 +14,13 @@ import com.mewcode.llm.CancellableLlmStream;
 import com.mewcode.llm.LlmClient;
 import com.mewcode.llm.PromptRequest;
 import com.mewcode.llm.StreamEvent;
+import com.mewcode.permission.BashSandbox;
 import com.mewcode.permission.BashSandboxFactory;
+import com.mewcode.permission.BashSandboxRequest;
 import com.mewcode.permission.PathAuthorizationStore;
 import com.mewcode.permission.PermissionMode;
 import com.mewcode.permission.PermissionRuleEngine;
+import com.mewcode.permission.SandboxedProcess;
 import com.mewcode.session.HistoryStore;
 import com.mewcode.tui.tea.Command;
 import com.mewcode.tui.tea.KeyPressMessage;
@@ -196,6 +199,41 @@ class MewCodeModelTest {
   }
 
   @Test
+  void permissionPromptIsRenderedOnlyOnce() throws Exception {
+    var response = new LinkedBlockingQueue<StreamEvent>();
+    response.add(
+        new StreamEvent.ToolCallComplete("call-bash", "Bash", Map.of("command", "git status")));
+    response.add(new StreamEvent.StreamEnd("tool_use"));
+    var client = new QueueClient(response);
+    var model =
+        new MewCodeModel(
+            List.of(provider("one", "model-one")),
+            projectRoot,
+            (provider, prompt) -> client,
+            new AgentLoopConfig(),
+            PermissionMode.DEFAULT,
+            new PermissionRuleEngine(),
+            new PathAuthorizationStore(projectRoot),
+            availableBashSandbox());
+    model.update(new WindowSizeMessage(100, 30));
+    type(model, "/review");
+    model.update(key("enter"));
+
+    var printed = new ArrayList<String>();
+    for (int attempt = 0; attempt < 100; attempt++) {
+      collectPrintLines(model.update(new MewCodeModel.StreamPollMessage()).command(), printed);
+      if (printed.stream().anyMatch(line -> line.contains("MewCode 想要执行以下操作"))) break;
+      Thread.sleep(10);
+    }
+
+    assertTrue(
+        printed.stream().anyMatch(line -> line.contains("MewCode 想要执行以下操作")), printed.toString());
+    assertFalse(model.view().contains("等待权限确认"), model.view());
+    model.update(key("n"));
+    model.close();
+  }
+
+  @Test
   void memorySummaryShowsPinnedTitlesWithoutCallingProvider() {
     var client = new QueueClient();
     var model = model(List.of(provider("one", "model-one")), client);
@@ -210,6 +248,22 @@ class MewCodeModelTest {
 
     assertTrue(printed.stream().anyMatch(line -> line.contains("始终使用中文")), printed.toString());
     assertEquals(0, client.calls.get());
+    model.close();
+  }
+
+  @Test
+  void memoryClearRendersOnlyTheConfirmation() {
+    var model = model(List.of(provider("one", "model-one")), new QueueClient());
+    model.update(new WindowSizeMessage(100, 30));
+    type(model, "/memory clear");
+
+    var result = model.update(key("enter"));
+    var printed = new ArrayList<String>();
+    collectPrintLines(result.command(), printed);
+
+    assertFalse(printed.stream().anyMatch(line -> line.contains("等待确认")), printed.toString());
+    assertTrue(model.view().contains("确认清空全部记忆？"), model.view());
+    model.update(key("n"));
     model.close();
   }
 
@@ -759,6 +813,20 @@ class MewCodeModelTest {
     provider.setModel(model);
     provider.setApiKey("test-key");
     return provider;
+  }
+
+  private BashSandbox availableBashSandbox() {
+    return new BashSandbox() {
+      @Override
+      public boolean isAvailable() {
+        return true;
+      }
+
+      @Override
+      public SandboxedProcess prepare(BashSandboxRequest request) {
+        return new SandboxedProcess(List.of("true"), projectRoot);
+      }
+    };
   }
 
   private static KeyPressMessage key(String key) {

@@ -6,6 +6,7 @@ import com.mewcode.permission.PermissionResponse;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiFunction;
 
 /**
  * 一次 Agent Loop 的运行句柄和取消边界。
@@ -24,6 +25,8 @@ public final class AgentRun implements AutoCloseable {
   private final CancellationToken cancellationToken = new CancellationToken();
   private final PermissionBroker permissionBroker = new PermissionBroker();
   private final CopyOnWriteArrayList<Runnable> cancellationHooks = new CopyOnWriteArrayList<>();
+  private final CopyOnWriteArrayList<BiFunction<String, PermissionResponse, Boolean>>
+      permissionDelegates = new CopyOnWriteArrayList<>();
   private final AtomicReference<State> state = new AtomicReference<>(State.RUNNING);
 
   /** 返回本次运行的异步事件流。 */
@@ -48,7 +51,19 @@ public final class AgentRun implements AutoCloseable {
 
   /** 将 TUI 的确认响应交回等待中的工具调用。 */
   public boolean resolvePermission(String requestId, PermissionResponse response) {
-    return permissionBroker.resolve(requestId, response);
+    if (permissionBroker.resolve(requestId, response)) return true;
+    for (var delegate : permissionDelegates) {
+      if (Boolean.TRUE.equals(delegate.apply(requestId, response))) return true;
+    }
+    return false;
+  }
+
+  /** 让父运行把 TUI 的权限回答转交给阻塞中的子运行；返回移除动作。 */
+  public Runnable delegatePermissionsTo(AgentRun child) {
+    Objects.requireNonNull(child, "child");
+    BiFunction<String, PermissionResponse, Boolean> delegate = child::resolvePermission;
+    permissionDelegates.add(delegate);
+    return () -> permissionDelegates.remove(delegate);
   }
 
   /** 返回当前运行状态。 */
@@ -74,6 +89,7 @@ public final class AgentRun implements AutoCloseable {
       }
     }
     cancellationHooks.clear();
+    permissionDelegates.clear();
     return true;
   }
 
@@ -99,6 +115,7 @@ public final class AgentRun implements AutoCloseable {
   public void complete() {
     state.compareAndSet(State.RUNNING, State.COMPLETED);
     cancellationHooks.clear();
+    permissionDelegates.clear();
     permissionBroker.close();
     events.complete();
   }

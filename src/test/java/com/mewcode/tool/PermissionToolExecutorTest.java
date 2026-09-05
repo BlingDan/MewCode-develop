@@ -3,7 +3,9 @@ package com.mewcode.tool;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.mewcode.agent.AgentMode;
 import com.mewcode.agent.CancellationToken;
+import com.mewcode.agent.ToolPolicy;
 import com.mewcode.permission.BashSandbox;
 import com.mewcode.permission.BashSandboxRequest;
 import com.mewcode.permission.PathAuthorizationStore;
@@ -102,6 +104,33 @@ class PermissionToolExecutorTest {
               new ToolCall("call-3", "ReadFile", Map.of("path", outside.toString())), context);
       assertFalse(result.result().isError(), result.result().content());
       assertTrue(result.result().content().contains("outside"));
+    }
+  }
+
+  @Test
+  void rejectsSkillWhitelistViolationsBeforePermissionEvaluation() {
+    var registry = new ToolRegistry();
+    registry.register(new ReadFileTool());
+    var broker = new PermissionBroker();
+    broker.setPublisher(
+        request -> {
+          throw new AssertionError("policy deny must not ask");
+        });
+    var context = permissionContext(PermissionMode.BYPASS_PERMISSIONS, broker);
+    var policy = ToolPolicy.forModeAndTools(AgentMode.EXECUTE, java.util.Set.of(), true);
+
+    try (var executor =
+        new ToolExecutor(
+            registry,
+            new ToolExecutionContext(projectRoot, Duration.ofSeconds(2), new FileStateCache()),
+            new PermissionGate())) {
+      ToolInvocationResult result =
+          executor.executeSingle(
+              new ToolCall("call-4", "ReadFile", Map.of("path", projectRoot.toString())),
+              policy,
+              context);
+      assertTrue(result.result().isError());
+      assertTrue(result.result().content().contains("Skill"));
     }
   }
 

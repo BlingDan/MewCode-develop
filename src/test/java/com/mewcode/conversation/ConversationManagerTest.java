@@ -5,8 +5,22 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.ArrayList;
+import java.util.List;
 
 class ConversationManagerTest {
+
+    @Test
+    void appendsForkSummaryAsOneAtomicExchange() {
+        ConversationManager manager = new ConversationManager();
+        java.util.List<ConversationManager.Mutation> mutations = new java.util.ArrayList<>();
+        manager.setMutationListener(mutations::add);
+
+        manager.addExchange("/review focus", "review summary");
+
+        assertEquals(List.of("user", "assistant"), manager.getMessages().stream().map(Message::role).toList());
+        assertEquals(1, mutations.size());
+        assertEquals(2, mutations.getFirst().messages().size());
+    }
 
     @Test
     void preservesOrderAndMultilineContent() {

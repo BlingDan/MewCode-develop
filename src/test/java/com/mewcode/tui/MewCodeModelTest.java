@@ -177,7 +177,7 @@ class MewCodeModelTest {
   }
 
   @Test
-  void helpIsLocalAndReviewSendsOnlyTheExpandedPromptToAgent() throws Exception {
+  void helpIsLocalAndReviewRunsTheBuiltinForkSkill() throws Exception {
     var client = new QueueClient(response("审查完成"));
     var model = model(List.of(provider("one", "model-one")), client);
     model.update(new WindowSizeMessage(100, 30));
@@ -192,9 +192,33 @@ class MewCodeModelTest {
     type(model, "/review 特别注意并发安全");
     model.update(key("enter"));
     awaitCalls(client, 1);
-    assertTrue(client.lastMessages.get().getLast().textContent().contains("git diff"));
-    assertTrue(client.lastMessages.get().getLast().textContent().contains("特别注意并发安全"));
-    assertFalse(client.lastMessages.get().getLast().textContent().startsWith("/review"));
+    assertTrue(client.lastRequest.get().flattenedSystemPrompt().contains("检查当前 Git diff"));
+    assertTrue(client.lastRequest.get().flattenedSystemPrompt().contains("特别注意并发安全"));
+    assertTrue(client.lastMessages.get().getLast().textContent().startsWith("/review"));
+    awaitIdle(model);
+  }
+
+  @Test
+  void projectSharedSkillHotLoadsFromSlashAndPinsRenderedSop() throws Exception {
+    Path skills = projectRoot.resolve(".mewcode/skills");
+    Files.createDirectories(skills);
+    var client = new QueueClient(response("完成"));
+    var model = model(List.of(provider("one", "model-one")), client);
+    model.update(new WindowSizeMessage(100, 30));
+    Files.writeString(
+        skills.resolve("hello.md"),
+        "---\nname: hello\ndescription: say hello\ntools: [ReadFile]\n---\nSay {{arguments}}\n");
+
+    type(model, "/hello raw words");
+    model.update(key("enter"));
+    awaitCalls(client, 1);
+
+    assertEquals("/hello raw words", client.lastRequest.get().history().getLast().textContent());
+    assertEquals(
+        "# 当前已激活 Skills\n\n## hello\n\nSay raw words",
+        client.lastRequest.get().systemSegments().getLast());
+    assertTrue(client.lastRequest.get().tools().toString().contains("ReadFile"));
+    assertFalse(client.lastRequest.get().tools().toString().contains("WriteFile"));
     awaitIdle(model);
   }
 

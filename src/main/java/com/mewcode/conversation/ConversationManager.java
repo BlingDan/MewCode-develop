@@ -44,6 +44,11 @@ public final class ConversationManager {
         append(List.of(new Message("assistant", content)));
     }
 
+    /** 原子追加一次 fork 调用及其摘要，避免只持久化其中一半。 */
+    public synchronized void addExchange(String userText, String assistantText) {
+        append(List.of(new Message("user", userText), new Message("assistant", assistantText)));
+    }
+
     /** 追加一条工具结果消息；通常由原子回合方法代替。 */
     public synchronized void addToolResults(List<ToolResultBlock> results) {
         append(List.of(new Message("user", new ArrayList<>(results))));

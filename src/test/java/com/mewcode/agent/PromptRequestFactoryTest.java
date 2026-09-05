@@ -60,4 +60,29 @@ class PromptRequestFactoryTest {
     assertEquals(tools, request.tools());
     assertTrue(request.reminder().isPresent());
   }
+
+  @Test
+  void injectsCatalogSummaryWithoutBodiesAndPinsActiveSopLast() {
+    var factory = new PromptRequestFactory(PromptBuilder.buildBundle(Path.of("project")));
+    var additions =
+        new PromptAdditions(
+            "memory",
+            java.util.Optional.empty(),
+            "# 可用 Skills\n- review: review changes",
+            "# 当前已激活 Skills\nFULL SOP");
+
+    PromptRequest request =
+        factory.create(AgentMode.EXECUTE, 1, true, List.of(), List.of(), List.of(), additions);
+
+    assertTrue(request.systemSegments().contains("# 可用 Skills\n- review: review changes"));
+    assertEquals("# 当前已激活 Skills\nFULL SOP", request.systemSegments().getLast());
+    int memoryIndex =
+        java.util.stream.IntStream.range(0, request.systemSegments().size())
+            .filter(
+                index -> request.systemSegments().get(index).startsWith("Long-term memory index"))
+            .findFirst()
+            .orElseThrow();
+    assertTrue(
+        request.systemSegments().indexOf("# 可用 Skills\n- review: review changes") < memoryIndex);
+  }
 }

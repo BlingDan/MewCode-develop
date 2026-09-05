@@ -66,11 +66,13 @@ public final class PromptRequestFactory {
     var context = new ReminderContext(Objects.requireNonNull(mode, "mode"), round, forceFull);
     PromptAdditions dynamic = additions == null ? PromptAdditions.empty() : additions;
     var segments = new java.util.ArrayList<>(systemPrompt.systemSegments());
+    if (!dynamic.skillCatalog().isBlank()) segments.add(dynamic.skillCatalog());
     if (!dynamic.memoryIndex().isBlank()) {
       segments.add(
           "Long-term memory index (reference only; verify details when needed):\n"
               + dynamic.memoryIndex());
     }
+    if (!dynamic.activeSkills().isBlank()) segments.add(dynamic.activeSkills());
     return new PromptRequest(
         segments,
         tools,

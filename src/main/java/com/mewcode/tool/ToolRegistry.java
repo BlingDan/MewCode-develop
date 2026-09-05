@@ -26,6 +26,7 @@ public final class ToolRegistry {
   private final Map<String, Tool> tools = new ConcurrentHashMap<>();
   private final List<String> registrationOrder = new ArrayList<>();
   private final Set<String> discoveredTools = ConcurrentHashMap.newKeySet();
+  private final Set<String> skillTools = ConcurrentHashMap.newKeySet();
 
   /** 注册或替换工具；首次注册顺序保持不变。 */
   public synchronized void register(Tool tool) {
@@ -33,6 +34,43 @@ public final class ToolRegistry {
     if (!tools.containsKey(tool.name())) registrationOrder.add(tool.name());
     tools.put(tool.name(), tool);
     if (!tool.shouldDefer()) discoveredTools.remove(tool.name());
+  }
+
+  /** 原子替换当前 Catalog 提供的脚本工具；冲突时不改变旧集合并返回冲突名称。 */
+  public synchronized List<String> replaceSkillTools(List<? extends Tool> replacements) {
+    List<? extends Tool> incoming = replacements == null ? List.of() : List.copyOf(replacements);
+    var names = new java.util.LinkedHashSet<String>();
+    var conflicts = new ArrayList<String>();
+    for (Tool tool : incoming) {
+      if (tool == null || !names.add(tool.name())) {
+        if (tool != null) conflicts.add(tool.name());
+        continue;
+      }
+      if (tools.containsKey(tool.name()) && !skillTools.contains(tool.name())) {
+        conflicts.add(tool.name());
+      }
+    }
+    if (!conflicts.isEmpty()) return List.copyOf(conflicts.stream().distinct().toList());
+
+    for (String name : List.copyOf(skillTools)) {
+      tools.remove(name);
+      registrationOrder.remove(name);
+      discoveredTools.remove(name);
+    }
+    skillTools.clear();
+    for (Tool tool : incoming) {
+      tools.put(tool.name(), tool);
+      registrationOrder.add(tool.name());
+      skillTools.add(tool.name());
+    }
+    return List.of();
+  }
+
+  /** 当前非 Skill 工具名快照，供 Catalog 白名单校验。 */
+  public synchronized Set<String> ordinaryToolNames() {
+    var result = new java.util.LinkedHashSet<>(registrationOrder);
+    result.removeAll(skillTools);
+    return Set.copyOf(result);
   }
 
   /** 按模型返回的工具名查找实现。 */

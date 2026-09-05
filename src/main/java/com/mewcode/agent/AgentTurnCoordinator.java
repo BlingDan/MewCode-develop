@@ -19,12 +19,18 @@ import com.mewcode.permission.PermissionGate;
 import com.mewcode.permission.PermissionMode;
 import com.mewcode.permission.PermissionRuleEngine;
 import com.mewcode.permission.PermissionRuntime;
+import com.mewcode.skill.ProviderRouter;
+import com.mewcode.skill.SkillCatalog;
+import com.mewcode.skill.SkillDefinition;
+import com.mewcode.skill.SkillExecutor;
+import com.mewcode.skill.SkillRun;
 import com.mewcode.tool.ToolApiProtocol;
 import com.mewcode.tool.ToolCall;
 import com.mewcode.tool.ToolExecutor;
 import com.mewcode.tool.ToolInvocationResult;
 import com.mewcode.tool.ToolRegistry;
 import com.mewcode.tool.ToolResult;
+import com.mewcode.tool.impl.LoadSkillTool;
 import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Locale;
@@ -64,6 +70,10 @@ public final class AgentTurnCoordinator {
   private final BashSandbox bashSandbox;
   private volatile Supplier<PromptAdditions> promptAdditionsSupplier = PromptAdditions::empty;
   private volatile Consumer<List<Message>> completionListener = ignored -> {};
+  private volatile SkillCatalog skillCatalog;
+  private volatile Supplier<SkillCatalog.RefreshResult> skillRefresher;
+  private volatile ProviderRouter providerRouter;
+  private volatile Function<SkillExecutor.ForkRequest, ToolResult> forkRunner;
 
   public AgentTurnCoordinator(
       LlmClient client,
@@ -317,7 +327,13 @@ public final class AgentTurnCoordinator {
    * 的消息处理线程。
    */
   public AgentRun startRun(String userText, AgentMode mode) {
+    return startRun(userText, mode, new SkillRun());
+  }
+
+  /** 启动带预激活 Skill 的请求；主要供动态斜杠命令使用。 */
+  public AgentRun startRun(String userText, AgentMode mode, SkillRun skills) {
     Objects.requireNonNull(userText, "userText");
+    SkillRun runSkills = Objects.requireNonNull(skills, "skills");
     AgentMode effectiveMode = mode == null ? AgentMode.EXECUTE : mode;
     var run = new AgentRun();
     run.setPermissionPublisher(
@@ -328,7 +344,14 @@ public final class AgentTurnCoordinator {
           permissionRuntime == null ? null : permissionRuntime.snapshot();
       conversation.addUserMessage(userText);
       Thread.startVirtualThread(
-          () -> runLoop(run, effectiveMode, startingMessageCount, userText, permissionSnapshot));
+          () ->
+              runLoop(
+                  run,
+                  effectiveMode,
+                  startingMessageCount,
+                  userText,
+                  permissionSnapshot,
+                  runSkills));
     } catch (Throwable error) {
       finish(run, 0, "Agent Loop 启动失败：" + safeMessage(error), AgentEvent.ErrorCategory.LOOP);
     }
@@ -426,6 +449,18 @@ public final class AgentTurnCoordinator {
     completionListener = Objects.requireNonNull(listener, "listener");
   }
 
+  /** 注入可选 Skill 运行依赖；旧调用方不配置时保持原行为。 */
+  public void configureSkills(
+      SkillCatalog catalog,
+      Supplier<SkillCatalog.RefreshResult> refresher,
+      ProviderRouter router,
+      Function<SkillExecutor.ForkRequest, ToolResult> forkRunner) {
+    this.skillCatalog = Objects.requireNonNull(catalog, "catalog");
+    this.skillRefresher = Objects.requireNonNull(refresher, "refresher");
+    this.providerRouter = router;
+    this.forkRunner = forkRunner;
+  }
+
   /**
    * 执行 ReAct 主循环。
    *
@@ -437,11 +472,11 @@ public final class AgentTurnCoordinator {
       AgentMode mode,
       int startingMessageCount,
       String userText,
-      PermissionRuntime.Snapshot permissionSnapshot) {
+      PermissionRuntime.Snapshot permissionSnapshot,
+      SkillRun skills) {
     var usage = new TokenUsageAccumulator();
     var collector = new TurnStreamCollector(usage);
     boolean memoryOnlyRequest = isMemoryOnlyRequest(userText);
-    var policy = ToolPolicy.forMode(mode);
     int completedRounds = 0;
     int unknownToolRounds = 0;
     int emergencyRecoveryRound = -1;
@@ -453,63 +488,35 @@ public final class AgentTurnCoordinator {
       while (!run.cancellationToken().isCancelled()
           && completedRounds < config.getMaxIterations()) {
         int round = completedRounds + 1;
+        var policy =
+            ToolPolicy.forModeAndTools(
+                mode, skills.allowedTools(), !skills.activeSkills().isEmpty());
         PermissionContext permissions = createPermissionContext(run, mode, permissionSnapshot);
-        List<String> deferredToolNames =
-            memoryOnlyRequest ? List.of() : registry.deferredToolNames();
-        List<Map<String, Object>> schemas =
-            memoryOnlyRequest
-                ? List.of()
-                : permissionGate == null
-                    ? registry.toAPIFormateForModel(protocol, policy::isAllowed)
-                    : registry.toAPIFormateForModel(protocol, null);
-        CancellableLlmStream stream;
-        PromptRequest sentRequest = null;
-        ContextRequest sentContextRequest = null;
-        if (promptRequestFactory != null) {
-          PromptAdditions additions = promptAdditionsSupplier.get();
-          if (additions == null) additions = PromptAdditions.empty();
-          ContextRequest contextRequest =
-              promptRequestFactory.createContextRequest(
-                  mode, round, round == 1, schemas, deferredToolNames, additions);
-          if (contextManager != null) {
-            ContextPreparation preparation =
-                contextManager.prepareForRequest(
-                    conversation,
-                    contextRequest,
-                    trigger -> run.events().publish(new AgentEvent.CompactionStarted(trigger)));
-            if (preparation.compacted()) {
-              run.events()
-                  .publish(
-                      new AgentEvent.CompactionComplete(preparation.compactResult().orElseThrow()));
-            }
-          }
-          sentRequest =
-              promptRequestFactory.create(
-                  mode,
-                  round,
-                  round == 1,
-                  conversation.getMessages(),
-                  schemas,
-                  deferredToolNames,
-                  additions);
-          sentContextRequest =
-              new ContextRequest(
-                  sentRequest.systemSegments(), sentRequest.tools(), sentRequest.reminder());
-          stream = client.openStream(sentRequest);
-        } else {
-          String systemPrompt = systemPromptProvider.apply(mode);
-          stream =
-              systemPrompt == null
-                  ? client.openStream(conversation, schemas)
-                  : client.openStream(conversation, schemas, systemPrompt);
+        ProviderRouter.Route route =
+            providerRouter == null
+                ? new ProviderRouter.Route(null, client, protocol, false)
+                : providerRouter.select(skills.preferredProvider().orElse(null));
+        PromptAdditions additions = skillAdditions(promptAdditionsSupplier.get(), skills);
+        Attempt attempt =
+            openAttempt(run, mode, round, memoryOnlyRequest, policy, route, additions);
+        CollectedTurn turn = collector.collect(run, attempt.stream(), round * 2 - 1);
+        recordUsage(turn, attempt);
+
+        if (!turn.complete()
+            && providerRouter != null
+            && route.client() != providerRouter.main().client()
+            && !run.cancellationToken().isCancelled()) {
+          ProviderRouter.Route main = providerRouter.main();
+          run.events()
+              .publish(
+                  new AgentEvent.ProviderFallback(
+                      route.config().getName(), main.config().getName()));
+          attempt = openAttempt(run, mode, round, memoryOnlyRequest, policy, main, additions);
+          turn = collector.collect(run, attempt.stream(), round * 2);
+          recordUsage(turn, attempt);
         }
-        CollectedTurn turn = collector.collect(run, stream, round);
-        if (contextManager != null && sentRequest != null && sentContextRequest != null) {
-          if (turn.usage().isPresent()) {
-            contextManager.recordUsage(
-                turn.usage().get(), sentRequest.history(), sentContextRequest);
-          }
-        }
+        PromptRequest sentRequest = attempt.request();
+        ContextRequest sentContextRequest = attempt.contextRequest();
 
         if (run.cancellationToken().isCancelled()) {
           finish(run, completedRounds, null, null);
@@ -540,7 +547,10 @@ public final class AgentTurnCoordinator {
 
         completedRounds = round;
         run.events().publish(new AgentEvent.TurnComplete(round));
-        if (memoryOnlyRequest && !turn.calls().isEmpty()) {
+        if (memoryOnlyRequest
+            && turn.calls().stream()
+                .map(call -> registry.get(call.toolName()).orElse(null))
+                .anyMatch(tool -> tool == null || !tool.isSystem())) {
           // ponytail: 关键词启发式只负责工具隔离，复杂意图识别再引入独立解析器。
           finish(run, completedRounds, "记忆请求不允许调用工具。", AgentEvent.ErrorCategory.LOOP);
           return;
@@ -552,14 +562,22 @@ public final class AgentTurnCoordinator {
           return;
         }
 
+        Map<String, String> parseErrors = turn.parseErrors();
         List<ToolCall> executableCalls =
             turn.calls().stream()
-                .filter(call -> !turn.parseErrors().containsKey(call.toolUseId()))
+                .filter(call -> !parseErrors.containsKey(call.toolUseId()))
                 .toList();
-        List<ToolInvocationResult> executed =
-            permissionGate == null
-                ? executor.executeBatch(executableCalls, policy, run.cancellationToken())
-                : executor.executeBatch(executableCalls, permissions);
+        boolean loadsSkill =
+            executableCalls.stream().anyMatch(call -> LoadSkillTool.NAME.equals(call.toolName()));
+        List<ToolInvocationResult> executed;
+        if (loadsSkill) {
+          executed = executeSkillLoads(executableCalls, mode, run, skills);
+        } else {
+          executed =
+              permissionGate == null
+                  ? executor.executeBatch(executableCalls, policy, run.cancellationToken())
+                  : executor.executeBatch(executableCalls, policy, permissions);
+        }
         List<ToolResultBlock> resultBlocks =
             ToolResultAssembler.assemble(turn.calls(), executed, turn.parseErrors());
         // 工具调用和结果必须成对提交，取消发生在工具执行期间也不能留下悬空 assistant 消息。
@@ -576,12 +594,9 @@ public final class AgentTurnCoordinator {
         }
 
         boolean hasExecutableKnownTool =
-            permissionGate == null
-                ? executableCalls.stream()
-                    .anyMatch(
-                        call -> registry.get(call.toolName()).filter(policy::isAllowed).isPresent())
-                : executableCalls.stream()
-                    .anyMatch(call -> registry.get(call.toolName()).isPresent());
+            executableCalls.stream()
+                .anyMatch(
+                    call -> registry.get(call.toolName()).filter(policy::isAllowed).isPresent());
         unknownToolRounds = hasExecutableKnownTool ? 0 : unknownToolRounds + 1;
         if (unknownToolRounds >= config.getUnknownToolRoundLimit()) {
           finish(
@@ -638,9 +653,123 @@ public final class AgentTurnCoordinator {
             AgentEvent.ErrorCategory.LOOP);
       }
     } finally {
+      skills.clear();
       run.removeCancellationHook(interruptThread);
     }
   }
+
+  private Attempt openAttempt(
+      AgentRun run,
+      AgentMode mode,
+      int round,
+      boolean memoryOnlyRequest,
+      ToolPolicy policy,
+      ProviderRouter.Route route,
+      PromptAdditions additions) {
+    List<String> deferredToolNames = memoryOnlyRequest ? List.of() : registry.deferredToolNames();
+    List<Map<String, Object>> schemas =
+        registry.toAPIFormateForModel(
+            route.protocol(), tool -> memoryOnlyRequest ? tool.isSystem() : policy.isAllowed(tool));
+    if (promptRequestFactory == null) {
+      String systemPrompt = systemPromptProvider.apply(mode);
+      CancellableLlmStream stream =
+          systemPrompt == null
+              ? route.client().openStream(conversation, schemas)
+              : route.client().openStream(conversation, schemas, systemPrompt);
+      return new Attempt(stream, null, null);
+    }
+    ContextRequest contextRequest =
+        promptRequestFactory.createContextRequest(
+            mode, round, round == 1, schemas, deferredToolNames, additions);
+    if (contextManager != null) {
+      ContextPreparation preparation =
+          contextManager.prepareForRequest(
+              conversation,
+              contextRequest,
+              trigger -> run.events().publish(new AgentEvent.CompactionStarted(trigger)));
+      if (preparation.compacted()) {
+        run.events()
+            .publish(new AgentEvent.CompactionComplete(preparation.compactResult().orElseThrow()));
+      }
+    }
+    PromptRequest request =
+        promptRequestFactory.create(
+            mode,
+            round,
+            round == 1,
+            conversation.getMessages(),
+            schemas,
+            deferredToolNames,
+            additions);
+    ContextRequest sent =
+        new ContextRequest(request.systemSegments(), request.tools(), request.reminder());
+    return new Attempt(route.client().openStream(request), request, sent);
+  }
+
+  private void recordUsage(CollectedTurn turn, Attempt attempt) {
+    if (contextManager != null
+        && attempt.request() != null
+        && attempt.contextRequest() != null
+        && turn.usage().isPresent()) {
+      contextManager.recordUsage(
+          turn.usage().get(), attempt.request().history(), attempt.contextRequest());
+    }
+  }
+
+  private PromptAdditions skillAdditions(PromptAdditions base, SkillRun skills) {
+    PromptAdditions value = base == null ? PromptAdditions.empty() : base;
+    String summary = skillCatalog == null ? value.skillCatalog() : skillCatalog.promptSummary();
+    String active = skills.promptBlock().isBlank() ? value.activeSkills() : skills.promptBlock();
+    return new PromptAdditions(value.memoryIndex(), value.resumeReminder(), summary, active);
+  }
+
+  private List<ToolInvocationResult> executeSkillLoads(
+      List<ToolCall> calls, AgentMode mode, AgentRun parentRun, SkillRun skills) {
+    var results = new java.util.ArrayList<ToolInvocationResult>();
+    for (ToolCall call : calls) {
+      if (!LoadSkillTool.NAME.equals(call.toolName())) {
+        results.add(
+            new ToolInvocationResult(
+                call.toolUseId(), ToolResult.error("Skill 已更新，请在下一轮根据新的可用工具重新选择。")));
+        continue;
+      }
+      results.add(
+          new ToolInvocationResult(call.toolUseId(), loadSkill(call, mode, parentRun, skills)));
+    }
+    return List.copyOf(results);
+  }
+
+  private ToolResult loadSkill(ToolCall call, AgentMode mode, AgentRun parentRun, SkillRun skills) {
+    Object rawName = call.arguments().get("name");
+    Object rawArguments = call.arguments().getOrDefault("arguments", "");
+    if (!(rawName instanceof String name) || name.isBlank()) {
+      return ToolResult.error("请传入要加载的 Skill 名称。");
+    }
+    if (!(rawArguments instanceof String arguments)) {
+      return ToolResult.error("Skill arguments 必须是字符串。");
+    }
+    if (skillRefresher != null) skillRefresher.get();
+    SkillDefinition definition = skillCatalog == null ? null : skillCatalog.find(name).orElse(null);
+    if (definition == null) return ToolResult.error("未知 Skill：" + name);
+    if (definition.meta().mode() == SkillDefinition.Mode.FORK) {
+      if (forkRunner == null) return ToolResult.error("fork Skill 运行器未初始化。");
+      return forkRunner.apply(
+          new SkillExecutor.ForkRequest(
+              definition, arguments, conversation.getMessages(), mode, parentRun));
+    }
+    skills.activate(definition, arguments);
+    ToolPolicy next =
+        ToolPolicy.forModeAndTools(mode, skills.allowedTools(), !skills.activeSkills().isEmpty());
+    List<String> filtered =
+        definition.meta().tools().stream()
+            .filter(nameOfTool -> registry.get(nameOfTool).filter(next::isAllowed).isEmpty())
+            .toList();
+    String suffix = filtered.isEmpty() ? "" : "；当前模式已过滤工具：" + String.join(", ", filtered);
+    return ToolResult.success("已加载 Skill " + definition.meta().name() + suffix);
+  }
+
+  private record Attempt(
+      CancellableLlmStream stream, PromptRequest request, ContextRequest contextRequest) {}
 
   private static boolean isMemoryOnlyRequest(String userText) {
     String text = userText == null ? "" : userText.toLowerCase(Locale.ROOT);

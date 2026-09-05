@@ -108,6 +108,16 @@ public final class ToolExecutor implements AutoCloseable {
 
   /** 使用五层权限上下文执行一次调用；该入口用于新 Agent Run。 */
   public ToolInvocationResult executeSingle(ToolCall call, PermissionContext permissions) {
+    AgentMode mode =
+        permissions != null && permissions.mode() == com.mewcode.permission.PermissionMode.PLAN
+            ? AgentMode.PLAN
+            : AgentMode.EXECUTE;
+    return executeSingle(call, ToolPolicy.forMode(mode), permissions);
+  }
+
+  /** 先应用本轮工具策略，再进入五层权限系统。 */
+  public ToolInvocationResult executeSingle(
+      ToolCall call, ToolPolicy policy, PermissionContext permissions) {
     long started = System.nanoTime();
     if (permissions == null || permissionGate == null) {
       return result(call, ToolResult.error("权限运行时未初始化，工具调用已安全拒绝。"), started, null);
@@ -118,6 +128,10 @@ public final class ToolExecutor implements AutoCloseable {
     if (tool == null) {
       return result(
           call, ToolResult.error("未知工具：" + call.toolName() + "。请从当前可用工具列表中选择工具。"), started, null);
+    }
+    if (policy == null || !policy.isAllowed(tool)) {
+      return result(
+          call, ToolResult.error("当前 Skill 或模式不允许调用工具：" + call.toolName() + "。"), started, tool);
     }
 
     PermissionCheck check = permissionGate.check(call, tool, permissions);
@@ -166,6 +180,16 @@ public final class ToolExecutor implements AutoCloseable {
   /** 使用五层权限上下文执行一批调用；需要确认的调用按原始顺序串行处理。 */
   public List<ToolInvocationResult> executeBatch(
       List<ToolCall> calls, PermissionContext permissions) {
+    AgentMode mode =
+        permissions != null && permissions.mode() == com.mewcode.permission.PermissionMode.PLAN
+            ? AgentMode.PLAN
+            : AgentMode.EXECUTE;
+    return executeBatch(calls, ToolPolicy.forMode(mode), permissions);
+  }
+
+  /** 使用同一 ToolPolicy 和权限快照执行一批调用。 */
+  public List<ToolInvocationResult> executeBatch(
+      List<ToolCall> calls, ToolPolicy policy, PermissionContext permissions) {
     if (calls == null || calls.isEmpty()) return List.of();
     if (permissions == null || permissionGate == null) {
       return calls.stream()
@@ -185,20 +209,20 @@ public final class ToolExecutor implements AutoCloseable {
         break;
       }
       ToolCall current = calls.get(index);
-      if (!isPermissionSafe(current, permissions)) {
-        results.add(permissionDuplicateAware(current, seenIds, permissions));
+      if (!isPermissionSafe(current, policy, permissions)) {
+        results.add(permissionDuplicateAware(current, seenIds, policy, permissions));
         index++;
         continue;
       }
       int end = index;
-      while (end < calls.size() && isPermissionSafe(calls.get(end), permissions)) end++;
+      while (end < calls.size() && isPermissionSafe(calls.get(end), policy, permissions)) end++;
       var futures = new ArrayList<Future<ToolInvocationResult>>(end - index);
       for (int i = index; i < end; i++) {
         ToolCall call = calls.get(i);
         if (!seenIds.add(call.toolUseId())) {
           futures.add(executor.submit(() -> duplicateResult(call)));
         } else {
-          futures.add(executor.submit(() -> executeSingle(call, permissions)));
+          futures.add(executor.submit(() -> executeSingle(call, policy, permissions)));
         }
       }
       for (int i = 0; i < futures.size(); i++) {
@@ -212,14 +236,16 @@ public final class ToolExecutor implements AutoCloseable {
   }
 
   private ToolInvocationResult permissionDuplicateAware(
-      ToolCall call, Set<String> seenIds, PermissionContext permissions) {
+      ToolCall call, Set<String> seenIds, ToolPolicy policy, PermissionContext permissions) {
     if (!seenIds.add(call.toolUseId())) return duplicateResult(call);
-    return executeSingle(call, permissions);
+    return executeSingle(call, policy, permissions);
   }
 
-  private boolean isPermissionSafe(ToolCall call, PermissionContext permissions) {
+  private boolean isPermissionSafe(
+      ToolCall call, ToolPolicy policy, PermissionContext permissions) {
     return registry
         .get(call.toolName())
+        .filter(policy::isAllowed)
         .filter(tool -> tool.isConcurrencySafe(call.arguments()))
         .map(
             tool ->

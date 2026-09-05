@@ -39,6 +39,16 @@ public interface Tool {
     return false;
   }
 
+  /** 系统工具不受 Skill 白名单和 Agent 模式裁剪。 */
+  default boolean isSystem() {
+    return false;
+  }
+
+  /** 是否只应在某个 Skill 激活并列入白名单时出现。 */
+  default boolean isSkillTool() {
+    return false;
+  }
+
   /** 返回 null 表示校验通过，否则返回面向模型的调整提示。 */
   String validateInput(Map<String, Object> input);
 

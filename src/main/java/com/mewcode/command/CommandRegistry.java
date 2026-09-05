@@ -1,5 +1,6 @@
 package com.mewcode.command;
 
+import com.mewcode.skill.SkillDefinition;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -15,12 +16,10 @@ import java.util.function.Function;
 /** 斜杠命令的注册、查找、解析与补全中心。 */
 public final class CommandRegistry {
 
-  private static final String REVIEW_PROMPT =
-      "请检查当前 git diff 中的未提交改动，重点识别缺陷、回归、安全风险和测试缺口。请按严重程度列出发现，并给出对应文件和理由。";
-
   private final Map<String, Command> commands = new LinkedHashMap<>();
   private final Map<String, Command> aliases = new HashMap<>();
   private final Map<String, Function<CommandContext, String>> handlers = new HashMap<>();
+  private volatile Map<String, Command> skillCommands = Map.of();
 
   public static CommandRegistry createDefault() {
     CommandRegistry registry = new CommandRegistry();
@@ -84,20 +83,40 @@ public final class CommandRegistry {
     registry.register(
         command("status", List.of("st"), "显示运行状态", "/status", Command.CommandType.LOCAL, ""),
         context -> context.status().get());
-    registry.register(
-        command(
-            "review",
-            List.of("r"),
-            "审查未提交改动",
-            "/review [额外关注点]",
-            Command.CommandType.PROMPT,
-            "[额外关注点]"),
-        context -> {
-          String focus = context.args().strip();
-          context.ui().sendUserMessage(REVIEW_PROMPT + (focus.isEmpty() ? "" : "\n额外关注点：" + focus));
-          return "";
-        });
     return registry;
+  }
+
+  /** 用最新 Catalog 整体替换动态 Skill 命令。 */
+  public synchronized List<String> replaceSkillCommands(List<SkillDefinition> skills) {
+    var next = new LinkedHashMap<String, Command>();
+    var conflicts = new ArrayList<String>();
+    if (skills != null) {
+      for (SkillDefinition skill : skills) {
+        String name = normalize(skill.meta().name());
+        if (commands.containsKey(name) || aliases.containsKey(name) || next.containsKey(name)) {
+          conflicts.add(name);
+          continue;
+        }
+        next.put(
+            name,
+            command(
+                name,
+                List.of(),
+                skill.meta().description(),
+                "/" + name + " [参数]",
+                Command.CommandType.SKILL,
+                "[参数]"));
+      }
+    }
+    skillCommands = java.util.Collections.unmodifiableMap(new LinkedHashMap<>(next));
+    return List.copyOf(conflicts);
+  }
+
+  /** 静态命令名和别名均为 Skill 保留标识。 */
+  public synchronized Set<String> reservedNames() {
+    var result = new LinkedHashSet<String>(commands.keySet());
+    result.addAll(aliases.keySet());
+    return Set.copyOf(result);
   }
 
   public void register(Command command, Function<CommandContext, String> handler) {
@@ -124,11 +143,16 @@ public final class CommandRegistry {
   public Optional<Command> find(String name) {
     String normalized = normalize(name);
     Command command = commands.get(normalized);
-    return Optional.ofNullable(command != null ? command : aliases.get(normalized));
+    if (command == null) command = aliases.get(normalized);
+    if (command == null) command = skillCommands.get(normalized);
+    return Optional.ofNullable(command);
   }
 
   public List<Command> listVisible() {
-    return commands.values().stream().filter(command -> !command.hidden()).toList();
+    var result = new ArrayList<Command>();
+    commands.values().stream().filter(command -> !command.hidden()).forEach(result::add);
+    skillCommands.values().stream().filter(command -> !command.hidden()).forEach(result::add);
+    return List.copyOf(result);
   }
 
   public List<Command> search(String prefix) {
@@ -145,6 +169,10 @@ public final class CommandRegistry {
       }
       if (matches) result.add(command);
     }
+    for (Command command : skillCommands.values()) {
+      if (!command.hidden() && normalize(command.name()).startsWith(normalized))
+        result.add(command);
+    }
     return List.copyOf(result);
   }
 
@@ -158,6 +186,7 @@ public final class CommandRegistry {
 
   public String execute(CommandCall call, CommandContext context) {
     Objects.requireNonNull(call, "call");
+    if (call.command().type() == Command.CommandType.SKILL) return "";
     Function<CommandContext, String> handler = handlers.get(normalize(call.command().name()));
     if (handler == null) throw new IllegalArgumentException("命令未注册: " + call.command().name());
     try {

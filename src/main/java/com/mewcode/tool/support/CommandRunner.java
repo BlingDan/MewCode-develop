@@ -7,9 +7,11 @@ import com.mewcode.permission.SandboxedProcess;
 import com.mewcode.tool.ToolExecutionContext;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
@@ -65,6 +67,76 @@ public final class CommandRunner {
     return new Result(output.text(), process.exitValue(), false, output.truncated());
   }
 
+  /** 在 Skill 目录运行一个已校验脚本，stdin/stdout/stderr 使用独立的有界通道。 */
+  public ScriptResult runScript(
+      Path executable, Path workingDirectory, String input, ToolExecutionContext context)
+      throws IOException {
+    if (context.cancellationToken().isCancelled()) {
+      return new ScriptResult("", "", -1, false, true, false);
+    }
+    BashSandbox selected =
+        context.permissionContext() == null ? sandbox : context.permissionContext().bashSandbox();
+    String command = "'" + executable.toString().replace("'", "'\"'\"'") + "'";
+    SandboxedProcess prepared =
+        selected.prepare(
+            new BashSandboxRequest(command, workingDirectory, List.of(context.projectRoot())));
+    ProcessBuilder builder =
+        new ProcessBuilder(prepared.argv()).directory(prepared.workingDirectory().toFile());
+    Map<String, String> environment = builder.environment();
+    String path = environment.getOrDefault("PATH", "/usr/bin:/bin:/usr/sbin:/sbin");
+    String temp = environment.getOrDefault("TMPDIR", "/tmp");
+    environment.clear();
+    environment.put("PATH", path);
+    environment.put("TMPDIR", temp);
+    environment.put("MEWCODE_PROJECT_ROOT", context.projectRoot().toString());
+    Process process = builder.start();
+    try (OutputStream stdin = process.getOutputStream()) {
+      stdin.write(input.getBytes(StandardCharsets.UTF_8));
+      stdin.write('\n');
+    }
+
+    var stdout = new OutputCollector(MAX_OUTPUT_CHARS);
+    var stderr = new OutputCollector(MAX_OUTPUT_CHARS);
+    Thread outReader =
+        Thread.startVirtualThread(() -> readOutput(process.getInputStream(), stdout));
+    Thread errorReader =
+        Thread.startVirtualThread(() -> readOutput(process.getErrorStream(), stderr));
+    long deadline = System.nanoTime() + context.timeout().toNanos();
+    boolean timedOut = false;
+    boolean cancelled = false;
+    try {
+      while (process.isAlive()) {
+        if (context.cancellationToken().isCancelled()) {
+          cancelled = true;
+          process.destroyForcibly();
+          break;
+        }
+        long remaining = deadline - System.nanoTime();
+        if (remaining <= 0) {
+          timedOut = true;
+          process.destroyForcibly();
+          break;
+        }
+        process.waitFor(
+            Math.min(TimeUnit.NANOSECONDS.toMillis(remaining), 50), TimeUnit.MILLISECONDS);
+      }
+    } catch (InterruptedException error) {
+      process.destroyForcibly();
+      Thread.currentThread().interrupt();
+      throw new IOException("脚本执行被中断", error);
+    }
+    joinReader(outReader);
+    joinReader(errorReader);
+    int exitCode = process.isAlive() ? -1 : process.exitValue();
+    return new ScriptResult(
+        stdout.text(),
+        stderr.text(),
+        exitCode,
+        timedOut,
+        cancelled,
+        stdout.truncated() || stderr.truncated());
+  }
+
   /** 判断退出码是否表示工具失败；grep/find 等命令的 1 可表示“没有结果”。 */
   public static boolean isErrorExit(String command, int exitCode) {
     if (exitCode == 0) return false;
@@ -105,6 +177,14 @@ public final class CommandRunner {
   }
 
   public record Result(String output, int exitCode, boolean timedOut, boolean truncated) {}
+
+  public record ScriptResult(
+      String stdout,
+      String stderr,
+      int exitCode,
+      boolean timedOut,
+      boolean cancelled,
+      boolean truncated) {}
 
   private static final class OutputCollector {
     private final int limit;

@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.mewcode.command.Command.CommandType;
+import com.mewcode.skill.SkillDefinition;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -62,40 +64,32 @@ class CommandRegistryTest {
   }
 
   @Test
-  void createsTheNineApprovedBuiltInsAndLeavesRetiredCommandsUnknown() {
+  void createsEightStaticCommandsAndLeavesReviewForSkills() {
     CommandRegistry registry = CommandRegistry.createDefault();
 
     assertEquals(
-        List.of(
-            "help",
-            "compact",
-            "clear",
-            "plan",
-            "session",
-            "memory",
-            "permission",
-            "status",
-            "review"),
+        List.of("help", "compact", "clear", "plan", "session", "memory", "permission", "status"),
         registry.listVisible().stream().map(Command::name).toList());
     assertEquals(CommandType.LOCAL_UI, registry.find("CLS").orElseThrow().type());
     assertEquals(CommandType.LOCAL_UI, registry.find("p").orElseThrow().type());
-    assertEquals(CommandType.PROMPT, registry.find("r").orElseThrow().type());
+    assertTrue(registry.find("r").isEmpty());
     for (String retired : List.of("do", "d", "exit", "sessions", "resume")) {
       assertTrue(registry.find(retired).isEmpty());
     }
   }
 
   @Test
-  void reviewSendsExpandedPromptAndPlanTogglesThroughUiOnly() {
+  void dynamicallyAddsReviewSkillAndPlanStillTogglesThroughUiOnly() {
     CommandRegistry registry = CommandRegistry.createDefault();
     FakeUi ui = new FakeUi();
+    registry.replaceSkillCommands(List.of(skill("review", "独立审查代码")));
 
-    registry.execute(registry.parse("/review 特别注意并发安全").orElseThrow(), context("特别注意并发安全", ui));
+    CommandRegistry.CommandCall review = registry.parse("/review 特别注意并发安全").orElseThrow();
     registry.execute(registry.parse("/plan").orElseThrow(), context("", ui));
 
-    assertTrue(ui.sent.get().contains("git diff"));
-    assertTrue(ui.sent.get().contains("缺陷、回归、安全风险和测试缺口"));
-    assertTrue(ui.sent.get().contains("特别注意并发安全"));
+    assertEquals(CommandType.SKILL, review.command().type());
+    assertEquals("特别注意并发安全", review.args());
+    assertEquals("独立审查代码", review.command().description());
     assertTrue(ui.planMode.get());
     assertTrue(ui.refreshed.get());
   }
@@ -245,5 +239,23 @@ class CommandRegistryTest {
 
   private static Command command(String name, List<String> aliases) {
     return new Command(name, aliases, "描述", "/" + name, CommandType.LOCAL, "", false);
+  }
+
+  private static SkillDefinition skill(String name, String description) {
+    Path entry = Path.of("/tmp", name + ".md");
+    return new SkillDefinition(
+        new SkillDefinition.Meta(
+            name,
+            description,
+            List.of(),
+            SkillDefinition.Mode.SHARED,
+            SkillDefinition.ForkContext.NONE,
+            3,
+            null),
+        "body",
+        SkillDefinition.Source.BUILTIN,
+        entry,
+        entry.getParent(),
+        List.of());
   }
 }

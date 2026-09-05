@@ -27,6 +27,7 @@ public record Command(
   public enum CommandType {
     LOCAL,
     LOCAL_UI,
-    PROMPT
+    PROMPT,
+    SKILL
   }
 }

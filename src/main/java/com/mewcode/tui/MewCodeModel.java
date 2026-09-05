@@ -35,10 +35,18 @@ import com.mewcode.session.HistoryStore;
 import com.mewcode.session.ResumeResult;
 import com.mewcode.session.SessionInfo;
 import com.mewcode.session.SessionManager;
+import com.mewcode.skill.ProviderRouter;
+import com.mewcode.skill.ScriptTool;
+import com.mewcode.skill.SkillCatalog;
+import com.mewcode.skill.SkillDefinition;
+import com.mewcode.skill.SkillExecutor;
+import com.mewcode.skill.SkillRun;
 import com.mewcode.tool.FileStateCache;
 import com.mewcode.tool.ToolApiProtocol;
 import com.mewcode.tool.ToolExecutor;
 import com.mewcode.tool.ToolRegistry;
+import com.mewcode.tool.ToolResult;
+import com.mewcode.tool.impl.LoadSkillTool;
 import com.mewcode.tui.tea.Command;
 import com.mewcode.tui.tea.KeyPressMessage;
 import com.mewcode.tui.tea.Message;
@@ -76,6 +84,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   private final List<McpServerConfig> mcpServerConfigs;
   private final PermissionRuntime permissionRuntime;
   private final CommandRegistry commandRegistry;
+  private SkillCatalog skillCatalog;
   private final PathAuthorizationStore pathAuthorizationStore;
   private final BashSandbox bashSandbox;
   private final Path userHome;
@@ -96,6 +105,9 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   private AgentTurnCoordinator coordinator;
   private volatile McpManager mcpManager;
   private ContextManager contextManager;
+  private ProviderRouter providerRouter;
+  private final PermissionGate permissionGate = new PermissionGate();
+  private SkillRun activeSkillRun;
   private int providerCursor;
   private int inputCursor;
   private int spinnerFrame;
@@ -256,6 +268,14 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
             Objects.requireNonNull(permissionMode, "permissionMode"),
             Objects.requireNonNull(permissionRuleEngine, "permissionRuleEngine"));
     this.commandRegistry = CommandRegistry.createDefault();
+    this.skillCatalog = SkillCatalog.load(this.projectRoot, this.userHome);
+    SkillCatalog.RefreshResult initialSkills =
+        this.skillCatalog.refresh(
+            java.util.Set.of(
+                "ReadFile", "WriteFile", "EditFile", "Bash", "Glob", "Grep", LoadSkillTool.NAME),
+            this.commandRegistry.reservedNames());
+    this.commandRegistry.replaceSkillCommands(initialSkills.skills());
+    initialSkills.diagnostics().forEach(this::recordDiagnostic);
     this.pathAuthorizationStore =
         Objects.requireNonNull(pathAuthorizationStore, "pathAuthorizationStore");
     this.bashSandbox = Objects.requireNonNull(bashSandbox, "bashSandbox");
@@ -364,16 +384,26 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   /** 创建 provider、默认工具注册表和 Agent 协调器；失败只阻塞当前会话而不崩溃 TUI。 */
   private void initializeProvider() {
     closeContextManager();
-    closeMcpManager();
     closeToolExecutor();
     try {
       client = clientFactory.apply(selectedProvider, systemPromptBundle.flattenedText());
+      providerRouter =
+          new ProviderRouter(
+              providers,
+              selectedProvider,
+              client,
+              clientFactory,
+              systemPromptBundle.flattenedText());
       sessionManager.attachTitleClient(client, selectedProvider.getModel());
       memoryManager.attachClient(client, selectedProvider.getModel());
-      toolRegistry = ToolRegistry.createDefault();
-      var gate = new PermissionGate();
-      toolExecutor = new ToolExecutor(toolRegistry, projectRoot, new FileStateCache(), gate);
-      mcpManager = new McpManager(toolRegistry);
+      if (toolRegistry == null) {
+        toolRegistry = ToolRegistry.createDefault();
+        toolRegistry.register(new LoadSkillTool());
+        refreshSkills();
+      }
+      toolExecutor =
+          new ToolExecutor(toolRegistry, projectRoot, new FileStateCache(), permissionGate);
+      if (mcpManager == null) mcpManager = new McpManager(toolRegistry);
       contextManager =
           new ContextManager(projectRoot, client, selectedProvider.getContextWindowTokens());
       contextManager.resetForSession(sessionManager.currentSessionDirectory());
@@ -391,7 +421,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
               loopConfig,
               new PromptRequestFactory(systemPromptBundle),
               contextManager,
-              gate,
+              permissionGate,
               permissionRuntime,
               pathAuthorizationStore,
               bashSandbox);
@@ -399,21 +429,33 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
           () ->
               new PromptAdditions(
                   memoryManager.indexText(), sessionManager.consumeResumeReminder()));
+      coordinator.configureSkills(
+          skillCatalog, this::refreshSkills, providerRouter, this::runForkSkill);
       coordinator.setCompletionListener(
           completedTurn -> {
             sessionManager.onCompletedTurn(completedTurn);
             memoryManager.updateAsync(completedTurn);
           });
-      startMcpInitialization();
+      if (mcpManager.connectedServers().isEmpty() && mcpManager.errors().isEmpty()) {
+        startMcpInitialization();
+      }
       initializationError = null;
     } catch (RuntimeException error) {
       closeContextManager();
-      closeMcpManager();
       closeToolExecutor();
       client = null;
       coordinator = null;
       initializationError = "Provider initialization failed.";
     }
+  }
+
+  /** 使用入口在 TUI 出现前已发现并校验的 Skill/MCP 工具集合。 */
+  public void useSkillBootstrap(SkillCatalog catalog, ToolRegistry registry, McpManager manager) {
+    if (ready || client != null) throw new IllegalStateException("TUI 已开始初始化");
+    this.skillCatalog = Objects.requireNonNull(catalog, "catalog");
+    this.toolRegistry = Objects.requireNonNull(registry, "registry");
+    this.mcpManager = Objects.requireNonNull(manager, "manager");
+    commandRegistry.replaceSkillCommands(catalog.list());
   }
 
   /** 将耗时的 MCP 握手和工具发现移出 TUI 主事件循环。 */
@@ -428,6 +470,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
                 McpManager.ConnectionReport report = manager.connectAll(mcpServerConfigs);
                 if (!report.errors().isEmpty())
                   recordDiagnostic(String.join("\n", report.errors()));
+                refreshSkills();
               } catch (RuntimeException error) {
                 if (!closed) recordDiagnostic("MCP 初始化失败。");
               } finally {
@@ -569,6 +612,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   }
 
   private UpdateResult<MewCodeModel> completeCommand() {
+    refreshSkills();
     String input = inputBuffer.toString();
     if (!input.startsWith("/") || inputCursor != input.length() || input.indexOf(' ') >= 0) {
       return UpdateResult.from(this);
@@ -638,10 +682,14 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   }
 
   private UpdateResult<MewCodeModel> dispatchCommand(String text) {
+    refreshSkills();
     var call = commandRegistry.parse(text);
     if (call.isEmpty()) {
       return UpdateResult.from(
           this, Command.println(Styles.DIM.render("未知命令：" + text.strip() + "，输入 /help 查看可用命令")));
+    }
+    if (call.get().command().type() == com.mewcode.command.Command.CommandType.SKILL) {
+      return startSkillRequest(text, call.get());
     }
     pendingPrompt = null;
     pendingCompactFocus = null;
@@ -658,6 +706,10 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   }
 
   private UpdateResult<MewCodeModel> startAgentRequest(String text) {
+    return startAgentRequest(text, null);
+  }
+
+  private UpdateResult<MewCodeModel> startAgentRequest(String text, SkillRun skills) {
     if (client == null || coordinator == null) {
       String message =
           initializationError != null ? initializationError : "No provider is available.";
@@ -677,7 +729,11 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     streaming = true;
 
     try {
-      activeRun = coordinator.startRun(text, agentMode);
+      activeSkillRun = skills;
+      activeRun =
+          skills == null
+              ? coordinator.startRun(text, agentMode)
+              : coordinator.startRun(text, agentMode, skills);
       streamEvents = activeRun.events();
     } catch (RuntimeException error) {
       activeRun = null;
@@ -692,6 +748,139 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
         Command.batch(
             Command.println(renderUser(text)),
             Command.tick(POLL_INTERVAL, ignored -> new StreamPollMessage())));
+  }
+
+  private UpdateResult<MewCodeModel> startSkillRequest(
+      String original, CommandRegistry.CommandCall call) {
+    SkillDefinition skill = skillCatalog.find(call.command().name()).orElse(null);
+    if (skill == null) {
+      return UpdateResult.from(this, Command.println(Styles.DIM.render("Skill 已被删除或更新，请重新补全后再试。")));
+    }
+    if (skill.meta().mode() == SkillDefinition.Mode.FORK) {
+      return startForkRequest(original, skill, call.args());
+    }
+    SkillRun skills = new SkillRun();
+    skills.activate(skill, call.args());
+    return startAgentRequest(original, skills);
+  }
+
+  private UpdateResult<MewCodeModel> startForkRequest(
+      String original, SkillDefinition skill, String arguments) {
+    if (client == null || coordinator == null || providerRouter == null) {
+      return UpdateResult.from(
+          this, Command.println(renderError("Provider initialization failed.", 0)));
+    }
+    chatMessages.add(new ChatMessage("user", original, 0));
+    streamBuffer.setLength(0);
+    requestStartMillis = System.currentTimeMillis();
+    spinnerVerb = "Forking";
+    spinnerFrame = 0;
+    currentIteration = 0;
+    pendingStreamError = null;
+    usageLabel = "Token 用量：unknown";
+    compactionRun = false;
+    streaming = true;
+    AgentRun parent = new AgentRun();
+    activeSkillRun = null;
+    activeRun = parent;
+    streamEvents = parent.events();
+    List<com.mewcode.conversation.Message> history = conversation.getMessages();
+    String sessionId = sessionManager.currentSessionId();
+    Thread.startVirtualThread(
+        () -> {
+          ToolResult result =
+              runForkSkill(
+                  new SkillExecutor.ForkRequest(skill, arguments, history, agentMode, parent));
+          if (!closed && sessionId.equals(sessionManager.currentSessionId())) {
+            conversation.addExchange(original, result.content());
+          }
+          parent.events().publish(new AgentEvent.StreamText(result.content()));
+          parent.events().publish(new AgentEvent.LoopComplete(1));
+          parent.complete();
+        });
+    return UpdateResult.from(
+        this,
+        Command.batch(
+            Command.println(renderUser(original)),
+            Command.tick(POLL_INTERVAL, ignored -> new StreamPollMessage())));
+  }
+
+  /** 重扫 Skill，并把脚本工具和动态命令整体切换到同一 Catalog 结果。 */
+  private synchronized SkillCatalog.RefreshResult refreshSkills() {
+    java.util.Set<String> known =
+        toolRegistry == null
+            ? java.util.Set.of(
+                "ReadFile", "WriteFile", "EditFile", "Bash", "Glob", "Grep", LoadSkillTool.NAME)
+            : toolRegistry.ordinaryToolNames();
+    SkillCatalog.RefreshResult result =
+        skillCatalog.refreshHot(known, commandRegistry.reservedNames());
+    if (toolRegistry != null) {
+      var scripts = new ArrayList<com.mewcode.tool.Tool>();
+      for (SkillDefinition skill : result.skills()) {
+        for (SkillDefinition.ToolSpec spec : skill.tools()) {
+          scripts.add(new ScriptTool(spec, skill.directory()));
+        }
+      }
+      List<String> conflicts = toolRegistry.replaceSkillTools(scripts);
+      if (!conflicts.isEmpty()) recordDiagnostic("Skill 工具名称冲突：" + String.join(", ", conflicts));
+    }
+    commandRegistry.replaceSkillCommands(result.skills());
+    result.diagnostics().forEach(this::recordDiagnostic);
+    if (!result.missingTools().isEmpty()) {
+      recordDiagnostic(
+          "Skill 引用了未知工具："
+              + result.missingTools().stream()
+                  .map(item -> item.skill() + "/" + item.tool())
+                  .reduce((left, right) -> left + ", " + right)
+                  .orElse(""));
+    }
+    return result;
+  }
+
+  private ToolResult runForkSkill(SkillExecutor.ForkRequest request) {
+    if (providerRouter == null || toolExecutor == null) {
+      return ToolResult.error("fork Skill 运行环境未初始化。");
+    }
+    var temporary = new ConversationManager();
+    temporary.loadMessages(
+        SkillExecutor.selectHistory(
+            request.mainHistory(),
+            request.skill().meta().context(),
+            request.skill().meta().contextCount()));
+    var temporaryContext =
+        new ContextManager(
+            projectRoot,
+            providerRouter.main().client(),
+            providerRouter.main().config().getContextWindowTokens());
+    try {
+      var child =
+          new AgentTurnCoordinator(
+              providerRouter.main().client(),
+              toolRegistry,
+              toolExecutor,
+              temporary,
+              providerRouter.main().protocol(),
+              loopConfig,
+              new PromptRequestFactory(systemPromptBundle),
+              temporaryContext,
+              permissionGate,
+              permissionRuntime,
+              pathAuthorizationStore,
+              bashSandbox);
+      child.setPromptAdditionsSupplier(PromptAdditions::empty);
+      child.configureSkills(
+          skillCatalog,
+          this::refreshSkills,
+          providerRouter,
+          ignored -> ToolResult.error("fork Skill 不支持嵌套 fork。"));
+      SkillRun skills = new SkillRun();
+      skills.activate(request.skill(), request.arguments());
+      return SkillExecutor.runFork(request, child, temporary, skills);
+    } catch (RuntimeException error) {
+      return ToolResult.error("fork Skill 执行失败。");
+    } finally {
+      temporaryContext.close();
+    }
   }
 
   /** 启动 /compact；该路径不写入用户消息，也不产生正常 Agent 轮次。 */
@@ -921,6 +1110,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
 
   @Override
   public void startNewConversation() {
+    if (activeSkillRun != null) activeSkillRun.clear();
     var session = sessionManager.startNewSession();
     if (contextManager != null) contextManager.resetForSession(session.sessionDirectory());
     chatMessages.clear();
@@ -968,6 +1158,13 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
           case AgentEvent.CompactionComplete complete ->
               printCommands.add(
                   Command.println(Styles.DIM.render(compactionCompleteText(complete))));
+          case AgentEvent.ProviderFallback fallback -> {
+            streamBuffer.setLength(0);
+            printCommands.add(
+                Command.println(
+                    Styles.DIM.render(
+                        "  Provider %s 不可用，已回退到 %s。".formatted(fallback.from(), fallback.to()))));
+          }
           case AgentEvent.LoopComplete ignored -> {
             if (compactionRun) {
               return withLeadingCommands(
@@ -1102,6 +1299,8 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
 
   /** 清空本轮临时状态，使取消或完成后可以继续输入下一条消息。 */
   private void resetStream() {
+    if (activeSkillRun != null) activeSkillRun.clear();
+    activeSkillRun = null;
     streaming = false;
     activeRun = null;
     streamEvents = null;

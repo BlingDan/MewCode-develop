@@ -70,6 +70,26 @@ class ToolRegistryTest {
   }
 
   @Test
+  void replacesSkillToolsAsOneGroupWithoutOverwritingOrdinaryTools() {
+    ToolRegistry registry = ToolRegistry.createDefault();
+
+    assertEquals(
+        List.of(), registry.replaceSkillTools(List.of(new StubTool("custom", ToolCategory.SHELL))));
+    assertTrue(registry.get("custom").isPresent());
+
+    assertEquals(
+        List.of("ReadFile"),
+        registry.replaceSkillTools(List.of(new StubTool("ReadFile", ToolCategory.SHELL))));
+    assertTrue(registry.get("custom").isPresent());
+    assertEquals(ToolCategory.FILE, registry.get("ReadFile").orElseThrow().category());
+
+    assertEquals(
+        List.of(), registry.replaceSkillTools(List.of(new StubTool("other", ToolCategory.SHELL))));
+    assertFalse(registry.get("custom").isPresent());
+    assertTrue(registry.get("other").isPresent());
+  }
+
+  @Test
   void apiDescriptionsRepeatTheCriticalToolRulesWithoutChangingSchemas() {
     ToolRegistry registry = ToolRegistry.createDefault();
 

@@ -23,6 +23,7 @@ public sealed interface AgentEvent
         AgentEvent.Usage,
         AgentEvent.CompactionStarted,
         AgentEvent.CompactionComplete,
+        AgentEvent.ProviderFallback,
         AgentEvent.Error,
         AgentEvent.PermissionRequested {
 
@@ -96,6 +97,14 @@ public sealed interface AgentEvent
   record CompactionComplete(CompactResult result) implements AgentEvent {
     public CompactionComplete {
       result = Objects.requireNonNull(result, "result");
+    }
+  }
+
+  /** Skill 偏好 Provider 失败，当前轮将清空临时展示并改用主 Provider。 */
+  record ProviderFallback(String from, String to) implements AgentEvent {
+    public ProviderFallback {
+      from = requireText(from, "from");
+      to = requireText(to, "to");
     }
   }
 

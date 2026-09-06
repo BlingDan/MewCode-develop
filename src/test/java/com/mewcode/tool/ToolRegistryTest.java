@@ -17,12 +17,12 @@ class ToolRegistryTest {
         List.of("ReadFile", "WriteFile", "EditFile", "Bash", "Glob", "Grep"),
         registry.getAll().stream().map(Tool::name).toList());
 
-    Map<String, Object> anthropic = registry.toAPIFormate(ToolApiProtocol.ANTHROPIC).getFirst();
+    Map<String, Object> anthropic = registry.toApiFormat(ToolApiProtocol.ANTHROPIC).getFirst();
     assertEquals("ReadFile", anthropic.get("name"));
     assertTrue(anthropic.containsKey("input_schema"));
     assertFalse(anthropic.containsKey("function"));
 
-    Map<String, Object> openAi = registry.toAPIFormate(ToolApiProtocol.OPENAI).getFirst();
+    Map<String, Object> openAi = registry.toApiFormat(ToolApiProtocol.OPENAI).getFirst();
     assertEquals("function", openAi.get("type"));
     assertEquals("ReadFile", ((Map<?, ?>) openAi.get("function")).get("name"));
     assertTrue(((Map<?, ?>) openAi.get("function")).containsKey("parameters"));
@@ -95,21 +95,21 @@ class ToolRegistryTest {
 
     String editDescription =
         (String)
-            registry.toAPIFormate(ToolApiProtocol.ANTHROPIC).stream()
+            registry.toApiFormat(ToolApiProtocol.ANTHROPIC).stream()
                 .filter(tool -> "EditFile".equals(tool.get("name")))
                 .findFirst()
                 .orElseThrow()
                 .get("description");
     String writeDescription =
         (String)
-            registry.toAPIFormate(ToolApiProtocol.ANTHROPIC).stream()
+            registry.toApiFormat(ToolApiProtocol.ANTHROPIC).stream()
                 .filter(tool -> "WriteFile".equals(tool.get("name")))
                 .findFirst()
                 .orElseThrow()
                 .get("description");
     String bashDescription =
         (String)
-            registry.toAPIFormate(ToolApiProtocol.OPENAI).stream()
+            registry.toApiFormat(ToolApiProtocol.OPENAI).stream()
                 .filter(tool -> "Bash".equals(((Map<?, ?>) tool.get("function")).get("name")))
                 .findFirst()
                 .orElseThrow()
@@ -154,7 +154,7 @@ class ToolRegistryTest {
     }
 
     @Override
-    public String validateInput(Map<String, Object> input) {
+    public String validateInput(ToolExecutionContext context, Map<String, Object> input) {
       return null;
     }
   }

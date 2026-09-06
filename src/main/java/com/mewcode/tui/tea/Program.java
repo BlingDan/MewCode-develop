@@ -39,17 +39,6 @@ public class Program {
         this.model = model;
     }
 
-    /** 向主消息循环投递一条外部消息。 */
-    public void send(Message msg) {
-        msgQueue.offer(msg);
-    }
-
-    /** 返回模型可用于动态内容的近似终端高度。 */
-    public int getAvailableHeight() {
-        int h = terminal != null ? terminal.getSize().getRows() : 24;
-        return Math.max(h - 1, 3);
-    }
-
     /** 打开 raw terminal，启动输入线程，并串行驱动模型更新与渲染。 */
     public void run() {
         try {
@@ -345,21 +334,9 @@ public class Program {
                 case "1","7" -> key("home"); case "4","8" -> key("end");
                 default -> null;
             };
-            case 'M','m' -> parseSGRMouse(params);
+            case 'M','m' -> null;
             default -> null;
         };
-    }
-
-    private Message parseSGRMouse(String params) {
-        if (!params.startsWith("<")) return null;
-        String[] parts = params.substring(1).split(";");
-        if (parts.length < 3) return null;
-        try {
-            int btn = Integer.parseInt(parts[0]);
-            if (btn == 64) return new MouseMessage(MouseMessage.MouseButton.MouseButtonWheelUp);
-            if (btn == 65) return new MouseMessage(MouseMessage.MouseButton.MouseButtonWheelDown);
-            return new MouseMessage(MouseMessage.MouseButton.OTHER);
-        } catch (NumberFormatException e) { return null; }
     }
 
     private static KeyPressMessage key(String name) {

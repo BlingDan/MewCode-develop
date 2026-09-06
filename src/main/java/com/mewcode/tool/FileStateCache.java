@@ -44,11 +44,6 @@ public final class FileStateCache {
             readStates.remove(normalized);
         }
     }
-
-    public void clear(Path path) {
-        readStates.remove(normalize(path));
-    }
-
     private static Path normalize(Path path) {
         return path.toAbsolutePath().normalize();
     }

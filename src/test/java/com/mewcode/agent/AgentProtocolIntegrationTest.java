@@ -6,12 +6,11 @@ import com.mewcode.llm.AnthropicClient;
 import com.mewcode.llm.LlmClient;
 import com.mewcode.llm.OpenAiClient;
 import com.mewcode.llm.StreamEvent;
-import com.mewcode.tool.FileStateCache;
+import com.mewcode.testsupport.AgentTestRuntime;
 import com.mewcode.tool.Tool;
 import com.mewcode.tool.ToolApiProtocol;
 import com.mewcode.tool.ToolCategory;
 import com.mewcode.tool.ToolExecutionContext;
-import com.mewcode.tool.ToolExecutor;
 import com.mewcode.tool.ToolRegistry;
 import com.mewcode.tool.ToolResult;
 import org.junit.jupiter.api.Test;
@@ -61,16 +60,16 @@ class AgentProtocolIntegrationTest {
         try (var service = new DeterministicService(anthropic)) {
             ProviderConfig provider = provider(service, protocol, anthropic);
             LlmClient client = anthropic
-                    ? new AnthropicClient(provider, "system")
-                    : new OpenAiClient(provider, "system");
+                    ? new AnthropicClient(provider)
+                    : new OpenAiClient(provider);
             var registry = new ToolRegistry();
             registry.register(new EchoTool());
             var conversation = new ConversationManager();
 
-            try (var executor = new ToolExecutor(registry,
-                    new ToolExecutionContext(tempDir, Duration.ofSeconds(2), new FileStateCache()))) {
-                var coordinator = new AgentTurnCoordinator(client, registry, executor,
-                        conversation, apiProtocol, new AgentLoopConfig(5, 3));
+            try (var runtime = AgentTestRuntime.create(
+                    tempDir, client, registry, conversation, apiProtocol,
+                    new AgentLoopConfig(5, 3), 128_000)) {
+                var coordinator = runtime.coordinator();
                 var events = collect(coordinator.startRun("inspect", AgentMode.EXECUTE));
 
                 assertEquals(2, service.requests.get(),
@@ -231,6 +230,7 @@ class AgentProtocolIntegrationTest {
         @Override public boolean isReadOnly() { return true; }
         @Override public boolean isDestructive() { return false; }
         @Override public boolean isConcurrencySafe(Map<String, Object> input) { return true; }
-        @Override public String validateInput(Map<String, Object> input) { return null; }
+        @Override public String validateInput(
+                ToolExecutionContext context, Map<String, Object> input) { return null; }
     }
 }

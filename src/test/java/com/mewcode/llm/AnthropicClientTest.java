@@ -16,7 +16,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -45,8 +44,11 @@ class AnthropicClientTest {
 
       List<StreamEvent> events =
           collect(
-              new AnthropicClient(provider, PromptBuilder.buildSystemPrompt(Path.of(projectRoot)))
-                  .stream(history));
+              stream(
+                  new AnthropicClient(provider),
+                  String.join(
+                      "\n\n", PromptBuilder.buildBundle(Path.of(projectRoot)).systemSegments()),
+                  history));
 
       assertInstanceOf(StreamEvent.ThinkingDelta.class, events.get(0));
       assertEquals("HIDDEN_THOUGHT", ((StreamEvent.ThinkingDelta) events.get(0)).text());
@@ -76,8 +78,10 @@ class AnthropicClientTest {
       withThinking.addAssistantMessage(List.of(new ThinkingBlock("HIDDEN_THOUGHT", "dGVzdA==")));
       withThinking.addUserMessage("continue");
       collect(
-          new AnthropicClient(provider, PromptBuilder.buildSystemPrompt(Path.of(projectRoot)))
-              .stream(withThinking));
+          stream(
+              new AnthropicClient(provider),
+              String.join("\n\n", PromptBuilder.buildBundle(Path.of(projectRoot)).systemSegments()),
+              withThinking));
       assertTrue(body.get().contains("HIDDEN_THOUGHT"), body.get());
       assertTrue(body.get().contains("dGVzdA=="), body.get());
     } finally {
@@ -101,17 +105,18 @@ class AnthropicClientTest {
       history.addUserMessage("read the file");
       List<StreamEvent> events =
           collect(
-              new AnthropicClient(provider(server, "tool-key", false), "system")
-                  .stream(
-                      history,
-                      List.of(
-                          Map.of(
-                              "name",
-                              "ReadFile",
-                              "description",
-                              "read a file",
-                              "input_schema",
-                              Map.of("type", "object")))));
+              stream(
+                  new AnthropicClient(provider(server, "tool-key", false)),
+                  "system",
+                  history,
+                  List.of(
+                      Map.of(
+                          "name",
+                          "ReadFile",
+                          "description",
+                          "read a file",
+                          "input_schema",
+                          Map.of("type", "object")))));
 
       assertInstanceOf(StreamEvent.ToolCallComplete.class, events.get(0));
       var call = (StreamEvent.ToolCallComplete) events.get(0);
@@ -165,10 +170,7 @@ class AnthropicClientTest {
               history,
               Optional.of(reminder));
 
-      collect(
-          new AnthropicClient(provider(server, "structured-key", false), "legacy")
-              .openStream(request)
-              .events());
+      collect(new AnthropicClient(provider(server, "structured-key", false)).openStream(request));
 
       assertTrue(body.get().contains("stable system"), body.get());
       assertTrue(body.get().contains("stable environment"), body.get());
@@ -201,7 +203,7 @@ class AnthropicClientTest {
       var history = new ConversationManager();
       history.addUserMessage("hello");
 
-      List<StreamEvent> events = collect(new AnthropicClient(provider, "system").stream(history));
+      List<StreamEvent> events = collect(stream(new AnthropicClient(provider), "system", history));
 
       assertEquals(1, events.size());
       assertInstanceOf(StreamEvent.Error.class, events.getFirst());
@@ -233,8 +235,10 @@ class AnthropicClientTest {
       history.addUserMessage("hello");
       List<StreamEvent> events =
           collect(
-              new AnthropicClient(provider(server, "rate-limit-key", false), "system")
-                  .stream(history));
+              stream(
+                  new AnthropicClient(provider(server, "rate-limit-key", false)),
+                  "system",
+                  history));
 
       assertInstanceOf(StreamEvent.Error.class, events.getFirst());
       assertEquals(1, count.get());
@@ -260,8 +264,8 @@ class AnthropicClientTest {
       history.addUserMessage("hello");
       List<StreamEvent> events =
           collect(
-              new AnthropicClient(provider(server, "context-key", false), "system")
-                  .stream(history));
+              stream(
+                  new AnthropicClient(provider(server, "context-key", false)), "system", history));
 
       var error = assertInstanceOf(StreamEvent.Error.class, events.getFirst());
       assertEquals(StreamEvent.ErrorKind.CONTEXT_LENGTH, error.errorKind());
@@ -281,15 +285,31 @@ class AnthropicClientTest {
     return provider;
   }
 
-  private static List<StreamEvent> collect(java.util.concurrent.BlockingQueue<StreamEvent> queue)
-      throws Exception {
-    var events = new ArrayList<StreamEvent>();
-    while (true) {
-      StreamEvent event = queue.poll(5, TimeUnit.SECONDS);
-      assertNotNull(event, "stream timed out");
-      events.add(event);
-      if (event instanceof StreamEvent.StreamEnd || event instanceof StreamEvent.Error)
-        return events;
+  private static CancellableLlmStream stream(
+      LlmClient client, String system, ConversationManager history) {
+    return stream(client, system, history, List.of());
+  }
+
+  private static CancellableLlmStream stream(
+      LlmClient client,
+      String system,
+      ConversationManager history,
+      List<Map<String, Object>> tools) {
+    return client.openStream(
+        new PromptRequest(
+            List.of(system), tools, history.getMessages(), java.util.Optional.empty()));
+  }
+
+  private static List<StreamEvent> collect(CancellableLlmStream stream) throws Exception {
+    try (stream) {
+      var events = new ArrayList<StreamEvent>();
+      while (true) {
+        StreamEvent event = stream.next();
+        assertNotNull(event, "stream ended without a terminal event");
+        events.add(event);
+        if (event instanceof StreamEvent.StreamEnd || event instanceof StreamEvent.Error)
+          return events;
+      }
     }
   }
 

@@ -124,30 +124,25 @@ public final class ToolRegistry {
     return Optional.of(tool);
   }
 
-  /** 标记一个已注册的延迟工具已被发现。 */
-  public synchronized boolean markDiscovered(String name) {
-    return findAndDiscover(name).isPresent();
-  }
-
   /** 返回当前 Registry 中延迟工具的本地状态。 */
   public boolean isDiscovered(String name) {
     return name != null && discoveredTools.contains(name);
   }
 
   /** 按 Agent 当前可见性过滤并生成 provider 工具定义。 */
-  public List<Map<String, Object>> toAPIFormateForModel(
+  public List<Map<String, Object>> toApiFormatForModel(
       ToolApiProtocol protocol, Predicate<Tool> filter) {
-    return toAPIFormate(
+    return toApiFormat(
         protocol, tool -> modelVisible(tool) && (filter == null || filter.test(tool)));
   }
 
-  /** 兼容既有方案中的方法名，生成当前 provider 所需的工具定义。 */
-  public List<Map<String, Object>> toAPIFormate(ToolApiProtocol protocol) {
-    return toAPIFormate(protocol, tool -> true);
+  /** 生成当前 provider 所需的全部工具定义。 */
+  public List<Map<String, Object>> toApiFormat(ToolApiProtocol protocol) {
+    return toApiFormat(protocol, tool -> true);
   }
 
   /** 按策略过滤工具，并转换为目标 provider 的工具声明格式。 */
-  public List<Map<String, Object>> toAPIFormate(ToolApiProtocol protocol, Predicate<Tool> filter) {
+  public List<Map<String, Object>> toApiFormat(ToolApiProtocol protocol, Predicate<Tool> filter) {
     var result = new ArrayList<Map<String, Object>>();
     for (Tool tool : getAll()) {
       if (filter != null && !filter.test(tool)) continue;
@@ -158,10 +153,6 @@ public final class ToolRegistry {
       }
     }
     return List.copyOf(result);
-  }
-
-  public List<Map<String, Object>> toApiFormat(ToolApiProtocol protocol) {
-    return toAPIFormate(protocol);
   }
 
   /** 创建 MewCode 内置的文件、搜索和命令工具集合。 */

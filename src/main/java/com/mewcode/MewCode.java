@@ -5,6 +5,7 @@ import com.mewcode.config.ConfigLoader;
 import com.mewcode.config.McpConfigLoader;
 import com.mewcode.config.PermissionConfigLoader;
 import com.mewcode.mcp.McpManager;
+import com.mewcode.permission.PermissionRuntime;
 import com.mewcode.skill.ScriptTool;
 import com.mewcode.skill.SkillCatalog;
 import com.mewcode.tool.Tool;
@@ -30,6 +31,7 @@ public final class MewCode {
   /** 启动一次终端会话并把配置/初始化错误转换为进程退出码。 */
   static int run() {
     Path projectRoot = Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize();
+    Path userHome = Path.of(System.getProperty("user.home", ".")).toAbsolutePath().normalize();
     final com.mewcode.config.AppConfig config;
     try {
       config = ConfigLoader.load(projectRoot.resolve(".mewcode/config.yaml"));
@@ -51,10 +53,7 @@ public final class MewCode {
 
     ToolRegistry registry = ToolRegistry.createDefault();
     registry.register(new LoadSkillTool());
-    SkillCatalog catalog =
-        SkillCatalog.load(
-            projectRoot,
-            Path.of(System.getProperty("user.home", ".")).toAbsolutePath().normalize());
+    SkillCatalog catalog = SkillCatalog.load(projectRoot, userHome);
     CommandRegistry commands = CommandRegistry.createDefault();
     SkillCatalog.RefreshResult beforeMcp =
         catalog.refresh(registry.ordinaryToolNames(), commands.reservedNames());
@@ -97,14 +96,16 @@ public final class MewCode {
           new MewCodeModel(
               config.getProviders(),
               projectRoot,
+              userHome,
               com.mewcode.llm.LlmClients::create,
               config.getAgent().getLoop(),
-              permissions.mode(),
-              permissions.ruleEngine(),
+              new PermissionRuntime(permissions.mode(), permissions.ruleEngine()),
               permissions.pathAuthorizationStore(),
               com.mewcode.permission.BashSandboxFactory.create(),
-              mcp.servers());
-      model.useSkillBootstrap(catalog, registry, mcpManager);
+              mcp.servers(),
+              catalog,
+              registry,
+              mcpManager);
     } catch (RuntimeException error) {
       mcpManager.close();
       System.err.println("MewCode: Skill 初始化失败。");

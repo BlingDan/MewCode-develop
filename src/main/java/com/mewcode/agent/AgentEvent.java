@@ -114,10 +114,6 @@ public sealed interface AgentEvent
       message = requireText(message, "message");
       category = Objects.requireNonNull(category, "category");
     }
-
-    public Error(String message) {
-      this(message, ErrorCategory.LOOP);
-    }
   }
 
   /** 工具执行前等待用户判断的权限请求。 */

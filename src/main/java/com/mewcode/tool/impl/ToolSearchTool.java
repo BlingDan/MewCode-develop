@@ -77,7 +77,7 @@ public final class ToolSearchTool implements Tool {
   }
 
   @Override
-  public String validateInput(Map<String, Object> input) {
+  public String validateInput(ToolExecutionContext context, Map<String, Object> input) {
     return input == null || stringValue(input.get("tool_name")) == null
         ? "ToolSearch 需要字符串参数 tool_name。"
         : null;

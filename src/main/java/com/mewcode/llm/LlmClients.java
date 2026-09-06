@@ -8,10 +8,10 @@ public final class LlmClients {
     private LlmClients() {}
 
     /** 将配置中的协议名映射为对应的流式客户端实现。 */
-    public static LlmClient create(ProviderConfig provider, String systemPrompt) {
+    public static LlmClient create(ProviderConfig provider) {
         return switch (provider.getProtocol()) {
-            case "anthropic" -> new AnthropicClient(provider, systemPrompt);
-            case "openai", "deepseek" -> new OpenAiClient(provider, systemPrompt);
+            case "anthropic" -> new AnthropicClient(provider);
+            case "openai", "deepseek" -> new OpenAiClient(provider);
             default -> throw new IllegalArgumentException("Unsupported provider protocol");
         };
     }

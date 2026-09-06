@@ -20,13 +20,6 @@ public sealed interface StreamEvent {
                  java.util.OptionalLong cacheReadTokens,
                  java.util.OptionalLong cacheCreationTokens,
                  java.util.OptionalLong outputTokens) implements StreamEvent {
-        /** 兼容旧 Provider，只提供 input/output 时 cache 维度视为缺失。 */
-        public Usage(java.util.OptionalLong inputTokens,
-                     java.util.OptionalLong outputTokens) {
-            this(inputTokens, java.util.OptionalLong.empty(),
-                    java.util.OptionalLong.empty(), outputTokens);
-        }
-
         public Usage {
             java.util.Objects.requireNonNull(inputTokens, "inputTokens");
             java.util.Objects.requireNonNull(cacheReadTokens, "cacheReadTokens");
@@ -56,11 +49,6 @@ public sealed interface StreamEvent {
         public Error {
             message = java.util.Objects.requireNonNullElse(message, "Provider request failed.");
             errorKind = java.util.Objects.requireNonNull(errorKind, "errorKind");
-        }
-
-        /** 兼容旧调用方，默认按普通错误处理。 */
-        public Error(String message) {
-            this(message, ErrorKind.GENERAL);
         }
     }
 

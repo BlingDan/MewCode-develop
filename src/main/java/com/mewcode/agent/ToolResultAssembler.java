@@ -37,11 +37,7 @@ public final class ToolResultAssembler {
                 blocks.add(new ToolResultBlock(call.toolUseId(), parseError, true));
                 continue;
             }
-            var results = byId.get(call.toolUseId());
-            ToolResult result = results == null ? null : results.pollFirst();
-            if (result == null) {
-                result = ToolResult.error("工具没有返回结果，请重试该调用。");
-            }
+            ToolResult result = byId.get(call.toolUseId()).removeFirst();
             blocks.add(new ToolResultBlock(call.toolUseId(), result.content(), result.isError()));
         }
         return List.copyOf(blocks);

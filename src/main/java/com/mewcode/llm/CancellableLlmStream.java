@@ -22,11 +22,6 @@ public final class CancellableLlmStream implements AutoCloseable {
         this.closeAction = Objects.requireNonNull(closeAction, "closeAction");
     }
 
-    /** 返回底层事件队列，供旧式调用方直接消费。 */
-    public BlockingQueue<StreamEvent> events() {
-        return events;
-    }
-
     /** 阻塞读取下一条事件；关闭且队列排空时返回 {@code null}。 */
     public StreamEvent next() throws InterruptedException {
         while (true) {
@@ -34,11 +29,6 @@ public final class CancellableLlmStream implements AutoCloseable {
             if (event != null) return event;
             if (closed.get() && events.isEmpty()) return null;
         }
-    }
-
-    /** 判断调用方是否已经请求关闭流。 */
-    public boolean isClosed() {
-        return closed.get();
     }
 
     /** 立即请求底层连接和 worker 停止，重复调用不会重复关闭。 */

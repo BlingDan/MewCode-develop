@@ -50,13 +50,14 @@ class PromptRequestFactoryTest {
 
   @Test
   void createsContextRequestWithoutPersistingConversationHistory() {
-    var factory = new PromptRequestFactory(PromptBuilder.buildBundle(Path.of("project")));
+    var system = PromptBuilder.buildBundle(Path.of("project"));
+    var factory = new PromptRequestFactory(system);
     var tools = List.<Map<String, Object>>of(Map.of("name", "ReadFile"));
 
     ContextRequest request =
         factory.createContextRequest(AgentMode.EXECUTE, 1, false, tools, List.of());
 
-    assertEquals(factory.systemPrompt().systemSegments(), request.systemSegments());
+    assertEquals(system.systemSegments(), request.systemSegments());
     assertEquals(tools, request.tools());
     assertTrue(request.reminder().isPresent());
   }

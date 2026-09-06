@@ -80,7 +80,7 @@ public final class SkillExecutor {
     } finally {
       request.parentRun().removeCancellationHook(cancelChild);
       removePermissionDelegate.run();
-      child.close();
+      child.cancel();
       skills.clear();
     }
   }

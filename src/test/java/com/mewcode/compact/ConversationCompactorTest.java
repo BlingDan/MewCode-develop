@@ -25,23 +25,28 @@ class ConversationCompactorTest {
     @Test
     void summarizesOldAssistantAndToolContentWhilePreservingUsersAndTail() {
         var history = new com.mewcode.conversation.ConversationManager();
-        history.addUserMessage("original goal");
-        history.addAssistantMessage("old assistant response");
-        history.addUserMessage("old constraint");
-        history.addMessage(new Message(
-                "user",
-                List.<ContentBlock>of(new ToolResultBlock(
-                        "old-tool", "old tool output", false))));
-        history.addUserMessage("recent user");
-        history.addAssistantMessage("R".repeat(40_000));
-        history.addUserMessage("recent constraint");
-        history.addAssistantMessage("R".repeat(40_000));
-        history.addUserMessage("last user");
+        history.loadMessages(List.of(
+                new Message("user", "original goal"),
+                new Message("assistant", "old assistant response"),
+                new Message("user", "old constraint"),
+                new Message(
+                        "user",
+                        List.<ContentBlock>of(
+                                new ToolResultBlock("old-tool", "old tool output", false))),
+                new Message("user", "recent user"),
+                new Message("assistant", "R".repeat(40_000)),
+                new Message("user", "recent constraint"),
+                new Message("assistant", "R".repeat(40_000)),
+                new Message("user", "last user")));
 
         var client = new FakeLlmClient();
         client.enqueue(
                 new StreamEvent.TextDelta(summary()),
-                new StreamEvent.Usage(OptionalLong.of(20), OptionalLong.of(5)),
+                new StreamEvent.Usage(
+                        OptionalLong.of(20),
+                        OptionalLong.empty(),
+                        OptionalLong.empty(),
+                        OptionalLong.of(5)),
                 new StreamEvent.StreamEnd("end_turn"));
         var request = new ContextRequest(List.of("system"), List.of(), Optional.empty());
 

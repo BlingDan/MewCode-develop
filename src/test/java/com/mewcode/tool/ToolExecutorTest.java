@@ -2,6 +2,13 @@ package com.mewcode.tool;
 
 import com.mewcode.agent.CancellationToken;
 import com.mewcode.agent.ToolPolicy;
+import com.mewcode.permission.BashSandboxFactory;
+import com.mewcode.permission.PathAuthorizationStore;
+import com.mewcode.permission.PermissionBroker;
+import com.mewcode.permission.PermissionContext;
+import com.mewcode.permission.PermissionGate;
+import com.mewcode.permission.PermissionMode;
+import com.mewcode.permission.PermissionRuleEngine;
 import com.mewcode.tool.impl.EditFileTool;
 import com.mewcode.tool.impl.GlobTool;
 import com.mewcode.tool.impl.GrepTool;
@@ -34,9 +41,12 @@ class ToolExecutorTest {
         registry.register(new TestTool("Validate", true, calls, null, 0,
                 "参数不合法，请调整后重试。"));
 
-        try (var executor = new ToolExecutor(registry, context())) {
+        var token = new CancellationToken();
+        try (var executor = executor(registry)) {
             ToolInvocationResult result = executor.executeSingle(
-                    new ToolCall("call-1", "Validate", Map.of()));
+                    new ToolCall("call-1", "Validate", Map.of()),
+                    ToolPolicy.forMode(com.mewcode.agent.AgentMode.EXECUTE),
+                    permissions(token));
             assertTrue(result.result().isError());
             assertEquals("call-1", result.toolUseId());
             assertTrue(result.result().content().contains("参数不合法"));
@@ -63,9 +73,13 @@ class ToolExecutorTest {
                 new ToolCall("glob", "Glob", Map.of("pattern", "**/*.java")),
                 new ToolCall("grep", "Grep", Map.of("path", ".", "pattern", "needle")));
 
-        try (var executor = new ToolExecutor(registry, context())) {
+        var token = new CancellationToken();
+        try (var executor = executor(registry)) {
             for (ToolCall call : calls) {
-                ToolInvocationResult result = executor.executeSingle(call);
+                ToolInvocationResult result = executor.executeSingle(
+                        call,
+                        ToolPolicy.forMode(com.mewcode.agent.AgentMode.EXECUTE),
+                        permissions(token));
                 assertTrue(result.result().isError(), call.toolName());
                 assertTrue(result.result().content().contains("当前项目根目录"), result.result().content());
                 assertTrue(result.result().content().contains(tempDir.toAbsolutePath().normalize().toString()),
@@ -83,11 +97,15 @@ class ToolExecutorTest {
         registry.register(new TestTool("Safe", true, new AtomicInteger(), started, 0,
                 null, release));
 
-        try (var executor = new ToolExecutor(registry, context())) {
+        var token = new CancellationToken();
+        try (var executor = executor(registry)) {
             try (var waiter = Executors.newVirtualThreadPerTaskExecutor()) {
-                Future<List<ToolInvocationResult>> future = waiter.submit(() -> executor.executeBatch(List.of(
-                        new ToolCall("first", "Safe", Map.of()),
-                        new ToolCall("second", "Safe", Map.of()))));
+                Future<List<ToolInvocationResult>> future = waiter.submit(() -> executor.executeBatch(
+                        List.of(
+                                new ToolCall("first", "Safe", Map.of()),
+                                new ToolCall("second", "Safe", Map.of())),
+                        ToolPolicy.forMode(com.mewcode.agent.AgentMode.EXECUTE),
+                        permissions(token)));
                 assertTrue(started.await(1, TimeUnit.SECONDS), "safe calls did not start together");
                 release.countDown();
                 List<ToolInvocationResult> results = future.get(2, TimeUnit.SECONDS);
@@ -102,11 +120,15 @@ class ToolExecutorTest {
         var registry = new ToolRegistry();
         registry.register(new TestTool("Safe", true, new AtomicInteger(), null, 0, null));
 
-        try (var executor = new ToolExecutor(registry, context())) {
-            List<ToolInvocationResult> results = executor.executeBatch(List.of(
-                    new ToolCall("same", "Safe", Map.of()),
-                    new ToolCall("same", "Safe", Map.of()),
-                    new ToolCall("missing", "Missing", Map.of())));
+        var token = new CancellationToken();
+        try (var executor = executor(registry)) {
+            List<ToolInvocationResult> results = executor.executeBatch(
+                    List.of(
+                            new ToolCall("same", "Safe", Map.of()),
+                            new ToolCall("same", "Safe", Map.of()),
+                            new ToolCall("missing", "Missing", Map.of())),
+                    ToolPolicy.forMode(com.mewcode.agent.AgentMode.EXECUTE),
+                    permissions(token));
 
             assertEquals(List.of("same", "same", "missing"),
                     results.stream().map(ToolInvocationResult::toolUseId).toList());
@@ -124,10 +146,14 @@ class ToolExecutorTest {
         var registry = new ToolRegistry();
         registry.register(new SerialTool(active, maximum));
 
-        try (var executor = new ToolExecutor(registry, context())) {
-            List<ToolInvocationResult> results = executor.executeBatch(List.of(
-                    new ToolCall("one", "Serial", Map.of()),
-                    new ToolCall("two", "Serial", Map.of())));
+        var token = new CancellationToken();
+        try (var executor = executor(registry)) {
+            List<ToolInvocationResult> results = executor.executeBatch(
+                    List.of(
+                            new ToolCall("one", "Serial", Map.of()),
+                            new ToolCall("two", "Serial", Map.of())),
+                    ToolPolicy.forMode(com.mewcode.agent.AgentMode.EXECUTE),
+                    permissions(token));
 
             assertEquals(List.of("one", "two"),
                     results.stream().map(ToolInvocationResult::toolUseId).toList());
@@ -142,13 +168,14 @@ class ToolExecutorTest {
         registry.register(new TestTool("Write", false, executions, null, 0, null, null, false));
         var token = new CancellationToken();
 
-        try (var executor = new ToolExecutor(registry, context())) {
+        try (var executor = executor(registry)) {
             ToolInvocationResult result = executor.executeSingle(
                     new ToolCall("write-1", "Write", Map.of()),
-                    ToolPolicy.forMode(com.mewcode.agent.AgentMode.PLAN), token);
+                    ToolPolicy.forMode(com.mewcode.agent.AgentMode.PLAN),
+                    permissions(token));
 
             assertTrue(result.result().isError());
-            assertTrue(result.result().content().contains("当前模式"));
+            assertTrue(result.result().content().contains("模式"));
             assertEquals(0, executions.get());
         }
     }
@@ -161,11 +188,12 @@ class ToolExecutorTest {
                 10_000, null));
         var token = new CancellationToken();
 
-        try (var executor = new ToolExecutor(registry, context())) {
+        try (var executor = executor(registry)) {
             try (var waiter = Executors.newVirtualThreadPerTaskExecutor()) {
                 Future<List<ToolInvocationResult>> future = waiter.submit(() -> executor.executeBatch(
                         List.of(new ToolCall("blocking-1", "Blocking", Map.of())),
-                        ToolPolicy.forMode(com.mewcode.agent.AgentMode.EXECUTE), token));
+                        ToolPolicy.forMode(com.mewcode.agent.AgentMode.EXECUTE),
+                        permissions(token)));
                 assertTrue(started.await(1, TimeUnit.SECONDS));
                 token.cancel();
 
@@ -178,6 +206,21 @@ class ToolExecutorTest {
 
     private ToolExecutionContext context() {
         return new ToolExecutionContext(tempDir, Duration.ofSeconds(2), new FileStateCache());
+    }
+
+    private ToolExecutor executor(ToolRegistry registry) {
+        return new ToolExecutor(registry, context(), new PermissionGate());
+    }
+
+    private PermissionContext permissions(CancellationToken token) {
+        return new PermissionContext(
+                tempDir,
+                PermissionMode.BYPASS_PERMISSIONS,
+                new PermissionRuleEngine(),
+                new PathAuthorizationStore(tempDir),
+                BashSandboxFactory.create(),
+                new PermissionBroker(),
+                token);
     }
 
     private static final class TestTool implements Tool {
@@ -259,7 +302,8 @@ class ToolExecutorTest {
         public boolean isConcurrencySafe(Map<String, Object> input) { return safe; }
 
         @Override
-        public String validateInput(Map<String, Object> input) { return validation; }
+        public String validateInput(
+                ToolExecutionContext context, Map<String, Object> input) { return validation; }
     }
 
     private static final class SerialTool implements Tool {
@@ -278,7 +322,7 @@ class ToolExecutorTest {
         public String description() { return "serial test tool"; }
 
         @Override
-        public ToolCategory category() { return ToolCategory.FILE; }
+        public ToolCategory category() { return ToolCategory.SEARCH; }
 
         @Override
         public Map<String, Object> inputSchema() { return Map.of("type", "object"); }
@@ -308,6 +352,7 @@ class ToolExecutorTest {
         public boolean isConcurrencySafe(Map<String, Object> input) { return false; }
 
         @Override
-        public String validateInput(Map<String, Object> input) { return null; }
+        public String validateInput(
+                ToolExecutionContext context, Map<String, Object> input) { return null; }
     }
 }

@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.mewcode.compact.ContextManager;
 import com.mewcode.compact.ContextTrigger;
 import com.mewcode.conversation.ConversationManager;
 import com.mewcode.conversation.Message;
@@ -12,15 +11,11 @@ import com.mewcode.llm.CancellableLlmStream;
 import com.mewcode.llm.LlmClient;
 import com.mewcode.llm.PromptRequest;
 import com.mewcode.llm.StreamEvent;
-import com.mewcode.prompt.PromptBuilder;
-import com.mewcode.tool.FileStateCache;
+import com.mewcode.testsupport.AgentTestRuntime;
 import com.mewcode.tool.ToolApiProtocol;
-import com.mewcode.tool.ToolExecutionContext;
-import com.mewcode.tool.ToolExecutor;
 import com.mewcode.tool.ToolRegistry;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
@@ -42,19 +37,8 @@ class AgentTurnCoordinatorPromptTest {
     var conversation = new ConversationManager();
     var registry = ToolRegistry.createDefault();
 
-    try (var executor =
-        new ToolExecutor(
-            registry,
-            new ToolExecutionContext(projectRoot, Duration.ofSeconds(2), new FileStateCache()))) {
-      var coordinator =
-          new AgentTurnCoordinator(
-              client,
-              registry,
-              executor,
-              conversation,
-              ToolApiProtocol.OPENAI,
-              new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+    try (var runtime = runtime(client, registry, conversation)) {
+      var coordinator = runtime.coordinator();
 
       var events = new ArrayList<AgentEvent>();
       AgentRun run = coordinator.startRun("hello", AgentMode.EXECUTE);
@@ -85,19 +69,8 @@ class AgentTurnCoordinatorPromptTest {
     var registry = ToolRegistry.createDefault();
     var completed = new AtomicReference<List<Message>>();
 
-    try (var executor =
-        new ToolExecutor(
-            registry,
-            new ToolExecutionContext(projectRoot, Duration.ofSeconds(2), new FileStateCache()))) {
-      var coordinator =
-          new AgentTurnCoordinator(
-              client,
-              registry,
-              executor,
-              conversation,
-              ToolApiProtocol.OPENAI,
-              new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+    try (var runtime = runtime(client, registry, conversation)) {
+      var coordinator = runtime.coordinator();
       coordinator.setPromptAdditionsSupplier(
           () ->
               new PromptAdditions(
@@ -124,26 +97,15 @@ class AgentTurnCoordinatorPromptTest {
     var conversation = new ConversationManager();
     var registry = ToolRegistry.createDefault();
 
-    try (var executor =
-        new ToolExecutor(
-            registry,
-            new ToolExecutionContext(projectRoot, Duration.ofSeconds(2), new FileStateCache()))) {
-      var coordinator =
-          new AgentTurnCoordinator(
-              client,
-              registry,
-              executor,
-              conversation,
-              ToolApiProtocol.OPENAI,
-              new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+    try (var runtime = runtime(client, registry, conversation)) {
+      var coordinator = runtime.coordinator();
 
       AgentRun run = coordinator.startRun("记住我正在找 agent 相关工作", AgentMode.EXECUTE);
       while (!(run.events().next() instanceof AgentEvent.LoopComplete)) {
         // drain the run
       }
 
-      String system = client.requests.getFirst().flattenedSystemPrompt();
+      String system = String.join("\n\n", client.requests.getFirst().systemSegments());
       assertTrue(system.contains("长期 memory"), system);
       assertTrue(system.contains("不要修改 MEWCODE.md"), system);
     }
@@ -176,19 +138,8 @@ class AgentTurnCoordinatorPromptTest {
     var conversation = new ConversationManager();
     var registry = ToolRegistry.createDefault();
 
-    try (var executor =
-        new ToolExecutor(
-            registry,
-            new ToolExecutionContext(projectRoot, Duration.ofSeconds(2), new FileStateCache()))) {
-      var coordinator =
-          new AgentTurnCoordinator(
-              client,
-              registry,
-              executor,
-              conversation,
-              ToolApiProtocol.OPENAI,
-              new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+    try (var runtime = runtime(client, registry, conversation)) {
+      var coordinator = runtime.coordinator();
 
       AgentRun run = coordinator.startRun("记住这条项目知识：不要把它写进文件", AgentMode.EXECUTE);
       while (!(run.events().next() instanceof AgentEvent.LoopComplete)) {
@@ -206,19 +157,8 @@ class AgentTurnCoordinatorPromptTest {
     var conversation = new ConversationManager();
     var registry = ToolRegistry.createDefault();
 
-    try (var executor =
-        new ToolExecutor(
-            registry,
-            new ToolExecutionContext(projectRoot, Duration.ofSeconds(2), new FileStateCache()))) {
-      var coordinator =
-          new AgentTurnCoordinator(
-              client,
-              registry,
-              executor,
-              conversation,
-              ToolApiProtocol.OPENAI,
-              new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+    try (var runtime = runtime(client, registry, conversation)) {
+      var coordinator = runtime.coordinator();
 
       AgentRun run = coordinator.startRun("记住这条规则，并修改 README.md", AgentMode.EXECUTE);
       while (!(run.events().next() instanceof AgentEvent.LoopComplete)) {
@@ -235,19 +175,8 @@ class AgentTurnCoordinatorPromptTest {
     var conversation = new ConversationManager();
     var registry = ToolRegistry.createDefault();
 
-    try (var executor =
-        new ToolExecutor(
-            registry,
-            new ToolExecutionContext(projectRoot, Duration.ofSeconds(2), new FileStateCache()))) {
-      var coordinator =
-          new AgentTurnCoordinator(
-              client,
-              registry,
-              executor,
-              conversation,
-              ToolApiProtocol.OPENAI,
-              new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+    try (var runtime = runtime(client, registry, conversation)) {
+      var coordinator = runtime.coordinator();
 
       AgentRun run = coordinator.startRun("记录测试结果到 results.txt", AgentMode.EXECUTE);
       while (!(run.events().next() instanceof AgentEvent.LoopComplete)) {
@@ -264,19 +193,8 @@ class AgentTurnCoordinatorPromptTest {
     var conversation = new ConversationManager();
     var registry = ToolRegistry.createDefault();
 
-    try (var executor =
-        new ToolExecutor(
-            registry,
-            new ToolExecutionContext(projectRoot, Duration.ofSeconds(2), new FileStateCache()))) {
-      var coordinator =
-          new AgentTurnCoordinator(
-              client,
-              registry,
-              executor,
-              conversation,
-              ToolApiProtocol.OPENAI,
-              new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+    try (var runtime = runtime(client, registry, conversation)) {
+      var coordinator = runtime.coordinator();
 
       AgentRun run = coordinator.startRun("记录一下当前代码中的 TODO", AgentMode.EXECUTE);
       while (!(run.events().next() instanceof AgentEvent.LoopComplete)) {
@@ -289,24 +207,16 @@ class AgentTurnCoordinatorPromptTest {
 
   @Test
   void providerFailureDoesNotNotifyTheMemoryCompletionListener() throws Exception {
-    var client = new CapturingClient(List.of(response(new StreamEvent.Error("provider failed"))));
+    var client =
+        new CapturingClient(
+            List.of(
+                response(new StreamEvent.Error("provider failed", StreamEvent.ErrorKind.GENERAL))));
     var conversation = new ConversationManager();
     var registry = ToolRegistry.createDefault();
     var notified = new AtomicReference<List<Message>>();
 
-    try (var executor =
-        new ToolExecutor(
-            registry,
-            new ToolExecutionContext(projectRoot, Duration.ofSeconds(2), new FileStateCache()))) {
-      var coordinator =
-          new AgentTurnCoordinator(
-              client,
-              registry,
-              executor,
-              conversation,
-              ToolApiProtocol.OPENAI,
-              new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+    try (var runtime = runtime(client, registry, conversation)) {
+      var coordinator = runtime.coordinator();
       coordinator.setCompletionListener(notified::set);
 
       AgentRun run = coordinator.startRun("记住这条信息", AgentMode.EXECUTE);
@@ -324,19 +234,8 @@ class AgentTurnCoordinatorPromptTest {
     var conversation = new ConversationManager();
     var registry = ToolRegistry.createDefault();
 
-    try (var executor =
-        new ToolExecutor(
-            registry,
-            new ToolExecutionContext(projectRoot, Duration.ofSeconds(2), new FileStateCache()))) {
-      var coordinator =
-          new AgentTurnCoordinator(
-              client,
-              registry,
-              executor,
-              conversation,
-              ToolApiProtocol.OPENAI,
-              new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+    try (var runtime = runtime(client, registry, conversation)) {
+      var coordinator = runtime.coordinator();
 
       AgentRun run = coordinator.startRun(requestText, AgentMode.EXECUTE);
       while (!(run.events().next() instanceof AgentEvent.LoopComplete)) {
@@ -360,22 +259,8 @@ class AgentTurnCoordinatorPromptTest {
     conversation.addUserMessage("last");
     var registry = ToolRegistry.createDefault();
 
-    try (var executor =
-            new ToolExecutor(
-                registry,
-                new ToolExecutionContext(
-                    projectRoot, Duration.ofSeconds(2), new FileStateCache()));
-        var contextManager = new ContextManager(projectRoot, client, 30_000)) {
-      var coordinator =
-          new AgentTurnCoordinator(
-              client,
-              registry,
-              executor,
-              conversation,
-              ToolApiProtocol.OPENAI,
-              new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)),
-              contextManager);
+    try (var runtime = runtime(client, registry, conversation, 30_000)) {
+      var coordinator = runtime.coordinator();
       var completed = new AtomicReference<List<Message>>();
       coordinator.setCompletionListener(completed::set);
 
@@ -439,22 +324,8 @@ class AgentTurnCoordinatorPromptTest {
     conversation.addUserMessage("last");
     var registry = ToolRegistry.createDefault();
 
-    try (var executor =
-            new ToolExecutor(
-                registry,
-                new ToolExecutionContext(
-                    projectRoot, Duration.ofSeconds(2), new FileStateCache()));
-        var contextManager = new ContextManager(projectRoot, client, 128_000)) {
-      var coordinator =
-          new AgentTurnCoordinator(
-              client,
-              registry,
-              executor,
-              conversation,
-              ToolApiProtocol.OPENAI,
-              new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)),
-              contextManager);
+    try (var runtime = runtime(client, registry, conversation)) {
+      var coordinator = runtime.coordinator();
 
       var events = new ArrayList<AgentEvent>();
       AgentRun run = coordinator.startRun("hello", AgentMode.EXECUTE);
@@ -506,22 +377,8 @@ class AgentTurnCoordinatorPromptTest {
     conversation.addUserMessage("last");
     var registry = ToolRegistry.createDefault();
 
-    try (var executor =
-            new ToolExecutor(
-                registry,
-                new ToolExecutionContext(
-                    projectRoot, Duration.ofSeconds(2), new FileStateCache()));
-        var contextManager = new ContextManager(projectRoot, client, 128_000)) {
-      var coordinator =
-          new AgentTurnCoordinator(
-              client,
-              registry,
-              executor,
-              conversation,
-              ToolApiProtocol.OPENAI,
-              new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)),
-              contextManager);
+    try (var runtime = runtime(client, registry, conversation)) {
+      var coordinator = runtime.coordinator();
 
       var events = new ArrayList<AgentEvent>();
       AgentRun run = coordinator.startRun("hello", AgentMode.EXECUTE);
@@ -559,25 +416,11 @@ class AgentTurnCoordinatorPromptTest {
     conversation.addUserMessage("last");
     var registry = ToolRegistry.createDefault();
 
-    try (var executor =
-            new ToolExecutor(
-                registry,
-                new ToolExecutionContext(
-                    projectRoot, Duration.ofSeconds(2), new FileStateCache()));
-        var contextManager = new ContextManager(projectRoot, client, 128_000)) {
-      var coordinator =
-          new AgentTurnCoordinator(
-              client,
-              registry,
-              executor,
-              conversation,
-              ToolApiProtocol.OPENAI,
-              new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)),
-              contextManager);
+    try (var runtime = runtime(client, registry, conversation)) {
+      var coordinator = runtime.coordinator();
 
       var events = new ArrayList<AgentEvent>();
-      AgentRun run = coordinator.startManualCompaction(AgentMode.EXECUTE);
+      AgentRun run = coordinator.startManualCompaction(AgentMode.EXECUTE, "");
       while (true) {
         AgentEvent event = run.events().next();
         events.add(event);
@@ -600,6 +443,26 @@ class AgentTurnCoordinatorPromptTest {
               .filter(message -> message.textContent().equals("last"))
               .count());
     }
+  }
+
+  private AgentTestRuntime runtime(
+      LlmClient client, ToolRegistry registry, ConversationManager conversation) {
+    return runtime(client, registry, conversation, 128_000);
+  }
+
+  private AgentTestRuntime runtime(
+      LlmClient client,
+      ToolRegistry registry,
+      ConversationManager conversation,
+      int contextWindowTokens) {
+    return AgentTestRuntime.create(
+        projectRoot,
+        client,
+        registry,
+        conversation,
+        ToolApiProtocol.OPENAI,
+        new AgentLoopConfig(),
+        contextWindowTokens);
   }
 
   private static BlockingQueue<StreamEvent> response(String text) {

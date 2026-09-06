@@ -74,7 +74,7 @@ class SessionManagerTest {
         Path projectRoot = tempDir.resolve("project");
         Path userHome = tempDir.resolve("home");
         var client = new FakeLlmClient();
-        client.enqueue(new StreamEvent.Error("provider failed"));
+        client.enqueue(new StreamEvent.Error("provider failed", StreamEvent.ErrorKind.GENERAL));
 
         try (var manager = new SessionManager(projectRoot, userHome, ignored -> {})) {
             manager.attachTitleClient(client, "test-model");

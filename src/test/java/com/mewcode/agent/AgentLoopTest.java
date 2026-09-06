@@ -3,14 +3,14 @@ package com.mewcode.agent;
 import com.mewcode.conversation.ConversationManager;
 import com.mewcode.llm.CancellableLlmStream;
 import com.mewcode.llm.LlmClient;
+import com.mewcode.llm.PromptRequest;
 import com.mewcode.llm.StreamEvent;
-import com.mewcode.tool.FileStateCache;
+import com.mewcode.testsupport.AgentTestRuntime;
 import com.mewcode.tool.Tool;
 import com.mewcode.tool.ToolApiProtocol;
 import com.mewcode.tool.ToolCall;
 import com.mewcode.tool.ToolCategory;
 import com.mewcode.tool.ToolExecutionContext;
-import com.mewcode.tool.ToolExecutor;
 import com.mewcode.tool.ToolRegistry;
 import com.mewcode.tool.ToolResult;
 import org.junit.jupiter.api.Test;
@@ -38,22 +38,34 @@ class AgentLoopTest {
     void continuesReActRoundsUntilModelStopsRequestingTools() throws Exception {
         var client = new QueueClient(List.of(
                 queue(new StreamEvent.ToolCallComplete("call-1", "Echo", Map.of("value", "one")),
-                        new StreamEvent.Usage(OptionalLong.of(1), OptionalLong.of(2)),
+                        new StreamEvent.Usage(
+                                OptionalLong.of(1),
+                                OptionalLong.empty(),
+                                OptionalLong.empty(),
+                                OptionalLong.of(2)),
                         new StreamEvent.StreamEnd("tool_use")),
                 queue(new StreamEvent.ToolCallComplete("call-2", "Echo", Map.of("value", "two")),
-                        new StreamEvent.Usage(OptionalLong.of(3), OptionalLong.of(4)),
+                        new StreamEvent.Usage(
+                                OptionalLong.of(3),
+                                OptionalLong.empty(),
+                                OptionalLong.empty(),
+                                OptionalLong.of(4)),
                         new StreamEvent.StreamEnd("tool_use")),
                 queue(new StreamEvent.TextDelta("Finished."),
-                        new StreamEvent.Usage(OptionalLong.of(5), OptionalLong.of(6)),
+                        new StreamEvent.Usage(
+                                OptionalLong.of(5),
+                                OptionalLong.empty(),
+                                OptionalLong.empty(),
+                                OptionalLong.of(6)),
                         new StreamEvent.StreamEnd("end_turn"))));
         var registry = new ToolRegistry();
         registry.register(new EchoTool());
+        var conversation = new ConversationManager();
 
-        try (var executor = new ToolExecutor(registry,
-                new ToolExecutionContext(tempDir, java.time.Duration.ofSeconds(2), new FileStateCache()))) {
-            var coordinator = new AgentTurnCoordinator(client, registry, executor,
-                    new ConversationManager(), ToolApiProtocol.OPENAI,
-                    new AgentLoopConfig(5, 3));
+        try (var runtime = AgentTestRuntime.create(
+                tempDir, client, registry, conversation, ToolApiProtocol.OPENAI,
+                new AgentLoopConfig(5, 3), 128_000)) {
+            var coordinator = runtime.coordinator();
             var events = collect(coordinator.startRun("do it", AgentMode.EXECUTE));
 
             assertEquals(3, client.calls.get());
@@ -69,7 +81,7 @@ class AgentLoopTest {
             assertEquals(OptionalLong.of(12), usage.outputTokens());
             assertInstanceOf(AgentEvent.LoopComplete.class, events.getLast());
             assertEquals(3, ((AgentEvent.LoopComplete) events.getLast()).totalRounds());
-            assertEquals(6, coordinator.conversation().getMessages().size());
+            assertEquals(6, conversation.getMessages().size());
         }
     }
 
@@ -83,11 +95,10 @@ class AgentLoopTest {
         var registry = new ToolRegistry();
         registry.register(new EchoTool());
 
-        try (var executor = new ToolExecutor(registry,
-                new ToolExecutionContext(tempDir, java.time.Duration.ofSeconds(2), new FileStateCache()))) {
-            var coordinator = new AgentTurnCoordinator(client, registry, executor,
-                    new ConversationManager(), ToolApiProtocol.OPENAI,
-                    new AgentLoopConfig(2, 3));
+        try (var runtime = AgentTestRuntime.create(
+                tempDir, client, registry, new ConversationManager(), ToolApiProtocol.OPENAI,
+                new AgentLoopConfig(2, 3), 128_000)) {
+            var coordinator = runtime.coordinator();
             var events = collect(coordinator.startRun("keep going", AgentMode.EXECUTE));
 
             assertEquals(2, client.calls.get());
@@ -109,11 +120,10 @@ class AgentLoopTest {
         var registry = new ToolRegistry();
         registry.register(new EchoTool());
 
-        try (var executor = new ToolExecutor(registry,
-                new ToolExecutionContext(tempDir, java.time.Duration.ofSeconds(2), new FileStateCache()))) {
-            var coordinator = new AgentTurnCoordinator(client, registry, executor,
-                    new ConversationManager(), ToolApiProtocol.OPENAI,
-                    new AgentLoopConfig(5, 3));
+        try (var runtime = AgentTestRuntime.create(
+                tempDir, client, registry, new ConversationManager(), ToolApiProtocol.OPENAI,
+                new AgentLoopConfig(5, 3), 128_000)) {
+            var coordinator = runtime.coordinator();
             var events = collect(coordinator.startRun("find a tool", AgentMode.EXECUTE));
 
             assertEquals(3, client.calls.get());
@@ -136,11 +146,10 @@ class AgentLoopTest {
         var writeInvoked = new AtomicBoolean();
         registry.register(new WriteLikeTool(writeInvoked));
 
-        try (var executor = new ToolExecutor(registry,
-                new ToolExecutionContext(tempDir, java.time.Duration.ofSeconds(2), new FileStateCache()))) {
-            var coordinator = new AgentTurnCoordinator(client, registry, executor,
-                    new ConversationManager(), ToolApiProtocol.OPENAI,
-                    new AgentLoopConfig(5, 3));
+        try (var runtime = AgentTestRuntime.create(
+                tempDir, client, registry, new ConversationManager(), ToolApiProtocol.OPENAI,
+                new AgentLoopConfig(5, 3), 128_000)) {
+            var coordinator = runtime.coordinator();
             var events = collect(coordinator.startRun("plan it", AgentMode.PLAN));
 
             assertEquals(2, client.calls.get());
@@ -166,15 +175,13 @@ class AgentLoopTest {
         var registry = new ToolRegistry();
         registry.register(new EchoTool());
 
-        try (var executor = new ToolExecutor(registry,
-                new ToolExecutionContext(tempDir, java.time.Duration.ofSeconds(2), new FileStateCache()))) {
-            var coordinator = new AgentTurnCoordinator(client, registry, executor,
-                    new ConversationManager(), ToolApiProtocol.OPENAI,
-                    new AgentLoopConfig(), mode -> mode == AgentMode.PLAN
-                            ? "plan-system" : "execute-system");
+        try (var runtime = AgentTestRuntime.create(
+                tempDir, client, registry, new ConversationManager(), ToolApiProtocol.OPENAI,
+                new AgentLoopConfig(), 128_000)) {
+            var coordinator = runtime.coordinator();
             collect(coordinator.startRun("make a plan", AgentMode.PLAN));
 
-            assertEquals(List.of("plan-system"), client.prompts);
+            assertTrue(client.prompts.getFirst().contains("Current mode: PLAN"));
         }
     }
 
@@ -189,10 +196,9 @@ class AgentLoopTest {
         registry.register(new BlockingTool(started));
         var conversation = new ConversationManager();
 
-        try (var executor = new ToolExecutor(registry,
-                new ToolExecutionContext(tempDir, java.time.Duration.ofSeconds(20), new FileStateCache()))) {
-            var coordinator = new AgentTurnCoordinator(client, registry, executor,
-                    conversation, ToolApiProtocol.OPENAI);
+        try (var runtime = AgentTestRuntime.create(
+                tempDir, client, registry, conversation, ToolApiProtocol.OPENAI)) {
+            var coordinator = runtime.coordinator();
             var run = coordinator.startRun("cancel tool", AgentMode.EXECUTE);
             assertTrue(started.await(2, TimeUnit.SECONDS));
 
@@ -243,22 +249,14 @@ class AgentLoopTest {
         }
 
         @Override
-        public synchronized CancellableLlmStream openStream(
-                ConversationManager conversation,
-                List<Map<String, Object>> tools) {
+        public synchronized CancellableLlmStream openStream(PromptRequest request) {
             calls.incrementAndGet();
-            toolRequests.add(tools == null ? List.of() : List.copyOf(tools));
+            toolRequests.add(request.tools());
+            prompts.add(
+                    String.join("\n\n", request.systemSegments())
+                            + request.reminder().map(message -> message.textContent()).orElse(""));
             if (responses.isEmpty()) throw new AssertionError("unexpected extra model request");
             return new CancellableLlmStream(responses.removeFirst(), () -> { });
-        }
-
-        @Override
-        public synchronized CancellableLlmStream openStream(
-                ConversationManager conversation,
-                List<Map<String, Object>> tools,
-                String systemPrompt) {
-            prompts.add(systemPrompt);
-            return openStream(conversation, tools);
         }
     }
 
@@ -273,7 +271,8 @@ class AgentLoopTest {
         @Override public boolean isReadOnly() { return true; }
         @Override public boolean isDestructive() { return false; }
         @Override public boolean isConcurrencySafe(Map<String, Object> input) { return true; }
-        @Override public String validateInput(Map<String, Object> input) { return null; }
+        @Override public String validateInput(
+                ToolExecutionContext context, Map<String, Object> input) { return null; }
     }
 
     private static final class WriteLikeTool implements Tool {
@@ -294,7 +293,8 @@ class AgentLoopTest {
         @Override public boolean isReadOnly() { return false; }
         @Override public boolean isDestructive() { return true; }
         @Override public boolean isConcurrencySafe(Map<String, Object> input) { return false; }
-        @Override public String validateInput(Map<String, Object> input) { return null; }
+        @Override public String validateInput(
+                ToolExecutionContext context, Map<String, Object> input) { return null; }
     }
 
     private static final class BlockingTool implements Tool {
@@ -322,6 +322,7 @@ class AgentLoopTest {
         @Override public boolean isReadOnly() { return true; }
         @Override public boolean isDestructive() { return false; }
         @Override public boolean isConcurrencySafe(Map<String, Object> input) { return false; }
-        @Override public String validateInput(Map<String, Object> input) { return null; }
+        @Override public String validateInput(
+                ToolExecutionContext context, Map<String, Object> input) { return null; }
     }
 }

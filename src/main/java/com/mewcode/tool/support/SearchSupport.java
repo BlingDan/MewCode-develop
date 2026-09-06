@@ -5,7 +5,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
 import java.util.Comparator;
-import java.util.LinkedHashSet;
 import java.util.Set;
 
 /** Glob 和 Grep 共用的搜索边界和结果规则。 */
@@ -38,9 +37,5 @@ public final class SearchSupport {
     public static Comparator<Path> newestFirst() {
         return Comparator.comparing(SearchSupport::modifiedTime).reversed()
                 .thenComparing(Path::toString);
-    }
-
-    public static Set<String> copySkipDirs() {
-        return new LinkedHashSet<>(SKIP_DIRS);
     }
 }

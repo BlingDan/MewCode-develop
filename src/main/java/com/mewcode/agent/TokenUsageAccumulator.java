@@ -9,11 +9,6 @@ public final class TokenUsageAccumulator {
 
     private final Map<Integer, RoundUsage> rounds = new HashMap<>();
 
-    /** 兼容不带轮次的调用，每次调用视为一个独立轮次。 */
-    public synchronized void add(OptionalLong input, OptionalLong output) {
-        updateRound(rounds.size() + 1, input, output);
-    }
-
     /** provider 的 usage 是本轮总量，重复回传时覆盖而不是重复累加。 */
     public synchronized void updateRound(int round,
                                          OptionalLong input,

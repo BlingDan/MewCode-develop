@@ -105,11 +105,6 @@ public final class PromptRequestFactory {
     return new ContextRequest(request.systemSegments(), request.tools(), request.reminder());
   }
 
-  /** 返回会话级稳定 bundle；不会暴露可变内部集合。 */
-  public SystemPromptBundle systemPrompt() {
-    return systemPrompt;
-  }
-
   private static java.util.Optional<Message> mergeReminders(
       java.util.Optional<Message> base, java.util.Optional<Message> extra) {
     if (extra == null || extra.isEmpty()) return base;

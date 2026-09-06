@@ -54,7 +54,7 @@ class ToolPolicyTest {
         public boolean isReadOnly() { return true; }
         public boolean isDestructive() { return false; }
         public boolean isConcurrencySafe(Map<String, Object> input) { return true; }
-        public String validateInput(Map<String, Object> input) { return null; }
+        public String validateInput(ToolExecutionContext context, Map<String, Object> input) { return null; }
         public boolean isSystem() { return true; }
     }
 

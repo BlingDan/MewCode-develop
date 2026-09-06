@@ -17,17 +17,14 @@ import com.mewcode.conversation.ConversationManager;
 import com.mewcode.instructions.InstructionLoadResult;
 import com.mewcode.instructions.InstructionLoader;
 import com.mewcode.llm.LlmClient;
-import com.mewcode.llm.LlmClients;
 import com.mewcode.mcp.McpManager;
 import com.mewcode.memory.MemoryManager;
 import com.mewcode.permission.BashSandbox;
-import com.mewcode.permission.BashSandboxFactory;
 import com.mewcode.permission.PathAuthorizationStore;
 import com.mewcode.permission.PermissionGate;
 import com.mewcode.permission.PermissionMode;
 import com.mewcode.permission.PermissionRequest;
 import com.mewcode.permission.PermissionResponse;
-import com.mewcode.permission.PermissionRuleEngine;
 import com.mewcode.permission.PermissionRuntime;
 import com.mewcode.prompt.PromptBuilder;
 import com.mewcode.prompt.SystemPromptBundle;
@@ -46,7 +43,6 @@ import com.mewcode.tool.ToolApiProtocol;
 import com.mewcode.tool.ToolExecutor;
 import com.mewcode.tool.ToolRegistry;
 import com.mewcode.tool.ToolResult;
-import com.mewcode.tool.impl.LoadSkillTool;
 import com.mewcode.tui.tea.Command;
 import com.mewcode.tui.tea.KeyPressMessage;
 import com.mewcode.tui.tea.Message;
@@ -60,7 +56,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
-import java.util.function.BiFunction;
+import java.util.function.Function;
 
 /**
  * MewCode 终端交互模型，负责把 AgentEvent 投影为可重绘的 UI 状态。
@@ -79,12 +75,12 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   private final List<ProviderConfig> providers;
   private final Path projectRoot;
   private final SystemPromptBundle systemPromptBundle;
-  private final BiFunction<ProviderConfig, String, LlmClient> clientFactory;
+  private final Function<ProviderConfig, LlmClient> clientFactory;
   private final AgentLoopConfig loopConfig;
   private final List<McpServerConfig> mcpServerConfigs;
   private final PermissionRuntime permissionRuntime;
   private final CommandRegistry commandRegistry;
-  private SkillCatalog skillCatalog;
+  private final SkillCatalog skillCatalog;
   private final PathAuthorizationStore pathAuthorizationStore;
   private final BashSandbox bashSandbox;
   private final Path userHome;
@@ -101,7 +97,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   private AgentRun activeRun;
   private AgentEventStream streamEvents;
   private ToolExecutor toolExecutor;
-  private ToolRegistry toolRegistry;
+  private final ToolRegistry toolRegistry;
   private AgentTurnCoordinator coordinator;
   private volatile McpManager mcpManager;
   private ContextManager contextManager;
@@ -142,118 +138,20 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
 
   public record McpInitializationPollMessage() implements Message {}
 
-  public MewCodeModel(List<ProviderConfig> providers) {
-    this(providers, currentProjectRoot(), LlmClients::create);
-  }
-
-  public MewCodeModel(List<ProviderConfig> providers, Path projectRoot) {
-    this(providers, projectRoot, LlmClients::create);
-  }
-
-  MewCodeModel(
-      List<ProviderConfig> providers, BiFunction<ProviderConfig, String, LlmClient> clientFactory) {
-    this(providers, currentProjectRoot(), clientFactory, new AgentLoopConfig());
-  }
-
-  MewCodeModel(
-      List<ProviderConfig> providers,
-      Path projectRoot,
-      BiFunction<ProviderConfig, String, LlmClient> clientFactory) {
-    this(providers, projectRoot, clientFactory, new AgentLoopConfig());
-  }
-
-  MewCodeModel(
-      List<ProviderConfig> providers,
-      Path projectRoot,
-      BiFunction<ProviderConfig, String, LlmClient> clientFactory,
-      Path userHome) {
-    this(
-        providers,
-        projectRoot,
-        clientFactory,
-        new AgentLoopConfig(),
-        PermissionMode.DEFAULT,
-        new PermissionRuleEngine(),
-        new PathAuthorizationStore(projectRoot),
-        BashSandboxFactory.create(),
-        List.of(),
-        userHome);
-  }
-
   public MewCodeModel(
       List<ProviderConfig> providers,
       Path projectRoot,
-      BiFunction<ProviderConfig, String, LlmClient> clientFactory,
-      AgentLoopConfig loopConfig) {
-    this(
-        providers,
-        projectRoot,
-        clientFactory,
-        loopConfig,
-        PermissionMode.DEFAULT,
-        new PermissionRuleEngine(),
-        new PathAuthorizationStore(projectRoot),
-        BashSandboxFactory.create(),
-        List.of());
-  }
-
-  public MewCodeModel(
-      List<ProviderConfig> providers,
-      Path projectRoot,
-      BiFunction<ProviderConfig, String, LlmClient> clientFactory,
+      Path userHome,
+      Function<ProviderConfig, LlmClient> clientFactory,
       AgentLoopConfig loopConfig,
-      PermissionMode permissionMode,
-      PermissionRuleEngine permissionRuleEngine,
-      PathAuthorizationStore pathAuthorizationStore,
-      BashSandbox bashSandbox) {
-    this(
-        providers,
-        projectRoot,
-        clientFactory,
-        loopConfig,
-        permissionMode,
-        permissionRuleEngine,
-        pathAuthorizationStore,
-        bashSandbox,
-        List.of());
-  }
-
-  /** 创建模型并在 provider 启动前注入已校验的 MCP Server 配置。 */
-  public MewCodeModel(
-      List<ProviderConfig> providers,
-      Path projectRoot,
-      BiFunction<ProviderConfig, String, LlmClient> clientFactory,
-      AgentLoopConfig loopConfig,
-      PermissionMode permissionMode,
-      PermissionRuleEngine permissionRuleEngine,
-      PathAuthorizationStore pathAuthorizationStore,
-      BashSandbox bashSandbox,
-      List<McpServerConfig> mcpServerConfigs) {
-    this(
-        providers,
-        projectRoot,
-        clientFactory,
-        loopConfig,
-        permissionMode,
-        permissionRuleEngine,
-        pathAuthorizationStore,
-        bashSandbox,
-        mcpServerConfigs,
-        currentUserHome());
-  }
-
-  MewCodeModel(
-      List<ProviderConfig> providers,
-      Path projectRoot,
-      BiFunction<ProviderConfig, String, LlmClient> clientFactory,
-      AgentLoopConfig loopConfig,
-      PermissionMode permissionMode,
-      PermissionRuleEngine permissionRuleEngine,
+      PermissionRuntime permissionRuntime,
       PathAuthorizationStore pathAuthorizationStore,
       BashSandbox bashSandbox,
       List<McpServerConfig> mcpServerConfigs,
-      Path userHome) {
-    this.providers = providers == null ? List.of() : List.copyOf(providers);
+      SkillCatalog skillCatalog,
+      ToolRegistry toolRegistry,
+      McpManager mcpManager) {
+    this.providers = List.copyOf(providers);
     this.projectRoot =
         Objects.requireNonNull(projectRoot, "projectRoot").toAbsolutePath().normalize();
     this.userHome = Objects.requireNonNull(userHome, "userHome").toAbsolutePath().normalize();
@@ -262,20 +160,13 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     this.systemPromptBundle = PromptBuilder.buildBundle(this.projectRoot, instructions.text());
     this.clientFactory = Objects.requireNonNull(clientFactory, "clientFactory");
     this.loopConfig = Objects.requireNonNull(loopConfig, "loopConfig").copy();
-    this.mcpServerConfigs = mcpServerConfigs == null ? List.of() : List.copyOf(mcpServerConfigs);
-    this.permissionRuntime =
-        new PermissionRuntime(
-            Objects.requireNonNull(permissionMode, "permissionMode"),
-            Objects.requireNonNull(permissionRuleEngine, "permissionRuleEngine"));
+    this.mcpServerConfigs = List.copyOf(mcpServerConfigs);
+    this.permissionRuntime = Objects.requireNonNull(permissionRuntime, "permissionRuntime");
     this.commandRegistry = CommandRegistry.createDefault();
-    this.skillCatalog = SkillCatalog.load(this.projectRoot, this.userHome);
-    SkillCatalog.RefreshResult initialSkills =
-        this.skillCatalog.refresh(
-            java.util.Set.of(
-                "ReadFile", "WriteFile", "EditFile", "Bash", "Glob", "Grep", LoadSkillTool.NAME),
-            this.commandRegistry.reservedNames());
-    this.commandRegistry.replaceSkillCommands(initialSkills.skills());
-    initialSkills.diagnostics().forEach(this::recordDiagnostic);
+    this.skillCatalog = Objects.requireNonNull(skillCatalog, "skillCatalog");
+    this.toolRegistry = Objects.requireNonNull(toolRegistry, "toolRegistry");
+    this.mcpManager = Objects.requireNonNull(mcpManager, "mcpManager");
+    this.commandRegistry.replaceSkillCommands(this.skillCatalog.list());
     this.pathAuthorizationStore =
         Objects.requireNonNull(pathAuthorizationStore, "pathAuthorizationStore");
     this.bashSandbox = Objects.requireNonNull(bashSandbox, "bashSandbox");
@@ -292,7 +183,8 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
             recordDiagnostic("session 过期清理失败。");
           }
         });
-    this.agentMode = permissionMode == PermissionMode.PLAN ? AgentMode.PLAN : AgentMode.EXECUTE;
+    this.agentMode =
+        permissionRuntime.mode() == PermissionMode.PLAN ? AgentMode.PLAN : AgentMode.EXECUTE;
     if (this.providers.size() == 1) {
       selectedProvider = this.providers.getFirst();
       state = AppState.CHAT;
@@ -386,24 +278,12 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     closeContextManager();
     closeToolExecutor();
     try {
-      client = clientFactory.apply(selectedProvider, systemPromptBundle.flattenedText());
-      providerRouter =
-          new ProviderRouter(
-              providers,
-              selectedProvider,
-              client,
-              clientFactory,
-              systemPromptBundle.flattenedText());
+      client = clientFactory.apply(selectedProvider);
+      providerRouter = new ProviderRouter(providers, selectedProvider, client, clientFactory);
       sessionManager.attachTitleClient(client, selectedProvider.getModel());
       memoryManager.attachClient(client, selectedProvider.getModel());
-      if (toolRegistry == null) {
-        toolRegistry = ToolRegistry.createDefault();
-        toolRegistry.register(new LoadSkillTool());
-        refreshSkills();
-      }
       toolExecutor =
           new ToolExecutor(toolRegistry, projectRoot, new FileStateCache(), permissionGate);
-      if (mcpManager == null) mcpManager = new McpManager(toolRegistry);
       contextManager =
           new ContextManager(projectRoot, client, selectedProvider.getContextWindowTokens());
       contextManager.resetForSession(sessionManager.currentSessionDirectory());
@@ -421,7 +301,6 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
               loopConfig,
               new PromptRequestFactory(systemPromptBundle),
               contextManager,
-              permissionGate,
               permissionRuntime,
               pathAuthorizationStore,
               bashSandbox);
@@ -449,18 +328,9 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     }
   }
 
-  /** 使用入口在 TUI 出现前已发现并校验的 Skill/MCP 工具集合。 */
-  public void useSkillBootstrap(SkillCatalog catalog, ToolRegistry registry, McpManager manager) {
-    if (ready || client != null) throw new IllegalStateException("TUI 已开始初始化");
-    this.skillCatalog = Objects.requireNonNull(catalog, "catalog");
-    this.toolRegistry = Objects.requireNonNull(registry, "registry");
-    this.mcpManager = Objects.requireNonNull(manager, "manager");
-    commandRegistry.replaceSkillCommands(catalog.list());
-  }
-
   /** 将耗时的 MCP 握手和工具发现移出 TUI 主事件循环。 */
   private void startMcpInitialization() {
-    if (mcpServerConfigs.isEmpty() || mcpManager == null) return;
+    if (mcpServerConfigs.isEmpty()) return;
     McpManager manager = mcpManager;
     mcpInitializing = true;
     mcpInitializationThread =
@@ -807,23 +677,16 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
 
   /** 重扫 Skill，并把脚本工具和动态命令整体切换到同一 Catalog 结果。 */
   private synchronized SkillCatalog.RefreshResult refreshSkills() {
-    java.util.Set<String> known =
-        toolRegistry == null
-            ? java.util.Set.of(
-                "ReadFile", "WriteFile", "EditFile", "Bash", "Glob", "Grep", LoadSkillTool.NAME)
-            : toolRegistry.ordinaryToolNames();
     SkillCatalog.RefreshResult result =
-        skillCatalog.refreshHot(known, commandRegistry.reservedNames());
-    if (toolRegistry != null) {
-      var scripts = new ArrayList<com.mewcode.tool.Tool>();
-      for (SkillDefinition skill : result.skills()) {
-        for (SkillDefinition.ToolSpec spec : skill.tools()) {
-          scripts.add(new ScriptTool(spec, skill.directory()));
-        }
+        skillCatalog.refreshHot(toolRegistry.ordinaryToolNames(), commandRegistry.reservedNames());
+    var scripts = new ArrayList<com.mewcode.tool.Tool>();
+    for (SkillDefinition skill : result.skills()) {
+      for (SkillDefinition.ToolSpec spec : skill.tools()) {
+        scripts.add(new ScriptTool(spec, skill.directory()));
       }
-      List<String> conflicts = toolRegistry.replaceSkillTools(scripts);
-      if (!conflicts.isEmpty()) recordDiagnostic("Skill 工具名称冲突：" + String.join(", ", conflicts));
     }
+    List<String> conflicts = toolRegistry.replaceSkillTools(scripts);
+    if (!conflicts.isEmpty()) recordDiagnostic("Skill 工具名称冲突：" + String.join(", ", conflicts));
     commandRegistry.replaceSkillCommands(result.skills());
     result.diagnostics().forEach(this::recordDiagnostic);
     if (!result.missingTools().isEmpty()) {
@@ -863,7 +726,6 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
               loopConfig,
               new PromptRequestFactory(systemPromptBundle),
               temporaryContext,
-              permissionGate,
               permissionRuntime,
               pathAuthorizationStore,
               bashSandbox);
@@ -1038,7 +900,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     long tokens = getTokenCount();
     int window = selectedProvider == null ? 0 : selectedProvider.getContextWindowTokens();
     long percent = window <= 0 ? 0 : Math.min(100, tokens * 100 / window);
-    int tools = toolRegistry == null ? 0 : toolRegistry.getAll().size();
+    int tools = toolRegistry.getAll().size();
     String mcp =
         mcpInitializing
             ? "连接中"
@@ -1519,14 +1381,6 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
         + Styles.BANNER.render("( o.o )   " + model)
         + "\n"
         + Styles.BANNER.render(" > ^ <    " + projectRoot);
-  }
-
-  private static Path currentProjectRoot() {
-    return Path.of(".").toAbsolutePath().normalize();
-  }
-
-  private static Path currentUserHome() {
-    return Path.of(System.getProperty("user.home", ".")).toAbsolutePath().normalize();
   }
 
   private void recordDiagnostic(String message) {

@@ -98,7 +98,11 @@ class ContextManagerTest {
         var client = new FakeLlmClient();
         client.enqueue(
                 new StreamEvent.TextDelta(summary()),
-                new StreamEvent.Usage(OptionalLong.of(20), OptionalLong.of(5)),
+                new StreamEvent.Usage(
+                        OptionalLong.of(20),
+                        OptionalLong.empty(),
+                        OptionalLong.empty(),
+                        OptionalLong.of(5)),
                 new StreamEvent.StreamEnd("end_turn"));
         var conversation = historyLargeEnoughToCompact();
 

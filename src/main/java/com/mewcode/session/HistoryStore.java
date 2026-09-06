@@ -31,7 +31,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
-// TODO： 对话没有触发自动记录
+
 /** 一个 session 的 JSONL 追加存储、扫描和恢复实现。 */
 public final class HistoryStore implements Closeable {
 

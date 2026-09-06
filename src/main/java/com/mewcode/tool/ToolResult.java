@@ -21,10 +21,4 @@ public record ToolResult(String content, boolean isError, Map<String, Object> me
     public static ToolResult error(String content) {
         return new ToolResult(content, true, Map.of());
     }
-
-    public ToolResult withMetadata(Map<String, Object> extra) {
-        var merged = new LinkedHashMap<>(metadata);
-        if (extra != null) merged.putAll(extra);
-        return new ToolResult(content, isError, merged);
-    }
 }

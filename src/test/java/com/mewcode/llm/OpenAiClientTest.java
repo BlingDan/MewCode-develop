@@ -17,7 +17,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -47,8 +46,11 @@ class OpenAiClientTest {
 
       List<StreamEvent> events =
           collect(
-              new OpenAiClient(provider, PromptBuilder.buildSystemPrompt(Path.of(projectRoot)))
-                  .stream(history));
+              stream(
+                  new OpenAiClient(provider),
+                  String.join(
+                      "\n\n", PromptBuilder.buildBundle(Path.of(projectRoot)).systemSegments()),
+                  history));
 
       assertEquals("Hello ", ((StreamEvent.TextDelta) events.get(0)).text());
       assertEquals("OpenAI", ((StreamEvent.TextDelta) events.get(1)).text());
@@ -93,8 +95,10 @@ class OpenAiClientTest {
       history.addUserMessage("hello");
 
       collect(
-          new OpenAiClient(provider, PromptBuilder.buildSystemPrompt(Path.of(projectRoot)))
-              .stream(history));
+          stream(
+              new OpenAiClient(provider),
+              String.join("\n\n", PromptBuilder.buildBundle(Path.of(projectRoot)).systemSegments()),
+              history));
 
       assertTrue(body.get().contains(projectRoot), body.get());
     } finally {
@@ -125,10 +129,10 @@ class OpenAiClientTest {
     try {
       ProviderConfig provider = provider(server, "deepseek-key");
       provider.setProtocol("deepseek");
-      var client = new OpenAiClient(provider, "system");
+      var client = new OpenAiClient(provider);
       var first = new ConversationManager();
       first.addUserMessage("inspect");
-      List<StreamEvent> events = collect(client.stream(first));
+      List<StreamEvent> events = collect(stream(client, "system", first));
 
       var reasoning =
           events.stream()
@@ -142,7 +146,7 @@ class OpenAiClientTest {
       second.addUserMessage("inspect");
       second.addAssistantMessage(List.of(new ThinkingBlock(reasoning, ""), new TextBlock("Done")));
       second.addUserMessage("continue");
-      collect(client.stream(second));
+      collect(stream(client, "system", second));
 
       assertEquals(2, bodies.size());
       assertTrue(bodies.getLast().contains("reasoning_content"), bodies.getLast());
@@ -168,18 +172,19 @@ class OpenAiClientTest {
       history.addUserMessage("read the file");
       List<StreamEvent> events =
           collect(
-              new OpenAiClient(provider(server, "tool-key"), "system")
-                  .stream(
-                      history,
-                      List.of(
+              stream(
+                  new OpenAiClient(provider(server, "tool-key")),
+                  "system",
+                  history,
+                  List.of(
+                      Map.of(
+                          "type",
+                          "function",
+                          "function",
                           Map.of(
-                              "type",
-                              "function",
-                              "function",
-                              Map.of(
-                                  "name", "ReadFile",
-                                  "description", "read a file",
-                                  "parameters", Map.of("type", "object"))))));
+                              "name", "ReadFile",
+                              "description", "read a file",
+                              "parameters", Map.of("type", "object"))))));
 
       assertInstanceOf(StreamEvent.ToolCallComplete.class, events.get(0));
       var call = (StreamEvent.ToolCallComplete) events.get(0);
@@ -231,10 +236,7 @@ class OpenAiClientTest {
               history,
               Optional.of(reminder));
 
-      collect(
-          new OpenAiClient(provider(server, "structured-key"), "legacy")
-              .openStream(request)
-              .events());
+      collect(new OpenAiClient(provider(server, "structured-key")).openStream(request));
 
       assertTrue(body.get().contains("stable system"), body.get());
       assertTrue(body.get().contains("stable environment"), body.get());
@@ -267,7 +269,7 @@ class OpenAiClientTest {
       var history = new ConversationManager();
       history.addUserMessage("hello");
 
-      List<StreamEvent> events = collect(new OpenAiClient(provider, "system").stream(history));
+      List<StreamEvent> events = collect(stream(new OpenAiClient(provider), "system", history));
 
       assertEquals(1, events.size());
       assertInstanceOf(StreamEvent.Error.class, events.getFirst());
@@ -297,7 +299,7 @@ class OpenAiClientTest {
       var history = new ConversationManager();
       history.addUserMessage("hello");
       List<StreamEvent> events =
-          collect(new OpenAiClient(provider(server, "rate-limit-key"), "system").stream(history));
+          collect(stream(new OpenAiClient(provider(server, "rate-limit-key")), "system", history));
 
       assertInstanceOf(StreamEvent.Error.class, events.getFirst());
       assertEquals(1, count.get());
@@ -322,7 +324,7 @@ class OpenAiClientTest {
       var history = new ConversationManager();
       history.addUserMessage("hello");
       List<StreamEvent> events =
-          collect(new OpenAiClient(provider(server, "context-key"), "system").stream(history));
+          collect(stream(new OpenAiClient(provider(server, "context-key")), "system", history));
 
       var error = assertInstanceOf(StreamEvent.Error.class, events.getFirst());
       assertEquals(StreamEvent.ErrorKind.CONTEXT_LENGTH, error.errorKind());
@@ -341,15 +343,31 @@ class OpenAiClientTest {
     return provider;
   }
 
-  private static List<StreamEvent> collect(java.util.concurrent.BlockingQueue<StreamEvent> queue)
-      throws Exception {
-    var events = new ArrayList<StreamEvent>();
-    while (true) {
-      StreamEvent event = queue.poll(5, TimeUnit.SECONDS);
-      assertNotNull(event, "stream timed out");
-      events.add(event);
-      if (event instanceof StreamEvent.StreamEnd || event instanceof StreamEvent.Error)
-        return events;
+  private static CancellableLlmStream stream(
+      LlmClient client, String system, ConversationManager history) {
+    return stream(client, system, history, List.of());
+  }
+
+  private static CancellableLlmStream stream(
+      LlmClient client,
+      String system,
+      ConversationManager history,
+      List<Map<String, Object>> tools) {
+    return client.openStream(
+        new PromptRequest(
+            List.of(system), tools, history.getMessages(), java.util.Optional.empty()));
+  }
+
+  private static List<StreamEvent> collect(CancellableLlmStream stream) throws Exception {
+    try (stream) {
+      var events = new ArrayList<StreamEvent>();
+      while (true) {
+        StreamEvent event = stream.next();
+        assertNotNull(event, "stream ended without a terminal event");
+        events.add(event);
+        if (event instanceof StreamEvent.StreamEnd || event instanceof StreamEvent.Error)
+          return events;
+      }
     }
   }
 

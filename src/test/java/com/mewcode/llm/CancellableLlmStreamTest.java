@@ -18,7 +18,6 @@ class CancellableLlmStreamTest {
         stream.close();
         stream.close();
 
-        assertTrue(stream.isClosed());
         assertEquals(1, closes.get());
     }
 }

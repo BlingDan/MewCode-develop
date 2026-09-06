@@ -30,7 +30,5 @@ class FileStateCacheTest {
 
         cache.update(file);
         assertTrue(cache.canModify(file));
-        cache.clear(file);
-        assertFalse(cache.wasRead(file));
     }
 }

@@ -14,7 +14,6 @@ import com.anthropic.models.messages.ToolResultBlockParam;
 import com.anthropic.models.messages.ToolUseBlockParam;
 import com.mewcode.config.ProviderConfig;
 import com.mewcode.conversation.ContentBlock;
-import com.mewcode.conversation.ConversationManager;
 import com.mewcode.conversation.Message;
 import com.mewcode.conversation.TextBlock;
 import com.mewcode.conversation.ThinkingBlock;
@@ -40,24 +39,16 @@ public final class AnthropicClient implements LlmClient {
 
   private final com.anthropic.client.AnthropicClient client;
   private final String model;
-  private final String systemPrompt;
   private final boolean thinking;
 
-  public AnthropicClient(ProviderConfig provider, String systemPrompt) {
+  public AnthropicClient(ProviderConfig provider) {
     var builder = AnthropicOkHttpClient.builder().apiKey(provider.getApiKey()).maxRetries(0);
     if (provider.getBaseUrl() != null && !provider.getBaseUrl().isBlank()) {
       builder.baseUrl(provider.getBaseUrl());
     }
     this.client = builder.build();
     this.model = provider.getModel();
-    this.systemPrompt = systemPrompt;
     this.thinking = provider.isThinking();
-  }
-
-  @Override
-  public CancellableLlmStream openStream(
-      List<Message> messages, List<Map<String, Object>> apiTools) {
-    return openStream(messages, apiTools, systemPrompt);
   }
 
   @Override
@@ -69,43 +60,17 @@ public final class AnthropicClient implements LlmClient {
         request.systemSegments());
   }
 
-  @Override
-  public CancellableLlmStream openStream(
-      ConversationManager conversation, List<Map<String, Object>> apiTools, String prompt) {
-    return openStream(conversation.getMessages(), apiTools, prompt);
-  }
-
-  /** 创建后台 worker，把 Messages API 的 SSE 转成统一事件流。 */
-  private CancellableLlmStream openStream(
-      List<Message> messages, List<Map<String, Object>> apiTools, String prompt) {
-    String effectivePrompt = prompt == null ? systemPrompt : prompt;
-    List<String> systemSegments = effectivePrompt == null ? List.of() : List.of(effectivePrompt);
-    return openStream(messages, apiTools, systemSegments);
-  }
-
   private CancellableLlmStream openStream(
       List<Message> messages, List<Map<String, Object>> apiTools, List<String> systemSegments) {
     var queue = new LinkedBlockingQueue<StreamEvent>(QUEUE_CAPACITY);
-    List<Message> snapshot = messages == null ? List.of() : List.copyOf(messages);
-    List<Map<String, Object>> tools = apiTools == null ? List.of() : List.copyOf(apiTools);
+    List<Message> snapshot = List.copyOf(messages);
+    List<Map<String, Object>> tools = List.copyOf(apiTools);
     var control = new StreamControl();
     Thread worker =
         Thread.startVirtualThread(
             () -> streamInCurrentThread(snapshot, tools, systemSegments, queue, control));
     control.worker(worker);
     return new CancellableLlmStream(queue, control::close);
-  }
-
-  @Override
-  public BlockingQueue<StreamEvent> stream(
-      List<Message> messages, List<Map<String, Object>> apiTools) {
-    return openStream(messages, apiTools).events();
-  }
-
-  @Override
-  public BlockingQueue<StreamEvent> stream(
-      ConversationManager conversation, List<Map<String, Object>> apiTools) {
-    return stream(conversation.getMessages(), apiTools);
   }
 
   /** 在 worker 线程中消费 Anthropic 消息流，并提取 message/response usage。 */
@@ -269,9 +234,8 @@ public final class AnthropicClient implements LlmClient {
   /** 只在本次 Anthropic 请求副本中把 Reminder 追加到最后一个 user 消息。 */
   private static List<Message> appendReminder(
       List<Message> history, java.util.Optional<Message> reminder) {
-    if (reminder == null || reminder.isEmpty())
-      return history == null ? List.of() : List.copyOf(history);
-    var result = new ArrayList<>(history == null ? List.<Message>of() : history);
+    if (reminder.isEmpty()) return history;
+    var result = new ArrayList<>(history);
     int lastUser = -1;
     for (int i = 0; i < result.size(); i++) {
       if ("user".equals(result.get(i).role())) lastUser = i;

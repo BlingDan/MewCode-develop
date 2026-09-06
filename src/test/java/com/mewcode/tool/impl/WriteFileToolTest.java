@@ -68,8 +68,9 @@ class WriteFileToolTest {
     @Test
     void acceptsAnEmptyFileContent() {
         var tool = new WriteFileTool();
-        assertNull(tool.validateInput(Map.of("path", tempDir.resolve("empty.txt").toString(),
-                "content", "")));
+        assertNull(tool.validateInput(
+                context(),
+                Map.of("path", tempDir.resolve("empty.txt").toString(), "content", "")));
     }
 
     private ToolExecutionContext context() {

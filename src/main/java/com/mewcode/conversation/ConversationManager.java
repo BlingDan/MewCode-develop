@@ -49,22 +49,12 @@ public final class ConversationManager {
         append(List.of(new Message("user", userText), new Message("assistant", assistantText)));
     }
 
-    /** 追加一条工具结果消息；通常由原子回合方法代替。 */
-    public synchronized void addToolResults(List<ToolResultBlock> results) {
-        append(List.of(new Message("user", new ArrayList<>(results))));
-    }
-
     /** 原子提交一轮完整的 assistant 工具调用和对应结果。 */
     public synchronized void addToolTurn(List<ContentBlock> assistantContent,
                                           List<ToolResultBlock> results) {
         append(List.of(
                 new Message("assistant", assistantContent),
                 new Message("user", new ArrayList<>(results))));
-    }
-
-    /** 追加已经构造好的 provider 无关消息，主要用于兼容适配器和测试。 */
-    public synchronized void addMessage(Message message) {
-        append(List.of(message));
     }
 
     /** 原子替换完整会话快照，供上下文压缩成功后提交新历史。 */

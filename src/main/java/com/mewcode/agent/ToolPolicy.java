@@ -34,10 +34,6 @@ public final class ToolPolicy {
         return new ToolPolicy(mode, allowedTools, skillActive);
     }
 
-    public AgentMode mode() {
-        return mode;
-    }
-
     /** 判断工具是否可被当前模式声明并执行。 */
     public boolean isAllowed(Tool tool) {
         Objects.requireNonNull(tool, "tool");

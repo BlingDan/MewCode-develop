@@ -22,7 +22,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
-// TODO: memory 的更新逻辑，在对话时候不能更新
+
 /** 编排用户级和项目级 memory 的索引注入及异步 LLM 更新。 */
 public final class MemoryManager implements AutoCloseable {
 

@@ -8,18 +8,15 @@ import com.mewcode.llm.CancellableLlmStream;
 import com.mewcode.llm.LlmClient;
 import com.mewcode.llm.PromptRequest;
 import com.mewcode.llm.StreamEvent;
-import com.mewcode.prompt.PromptBuilder;
-import com.mewcode.tool.FileStateCache;
+import com.mewcode.testsupport.AgentTestRuntime;
 import com.mewcode.tool.Tool;
 import com.mewcode.tool.ToolApiProtocol;
 import com.mewcode.tool.ToolCategory;
 import com.mewcode.tool.ToolExecutionContext;
-import com.mewcode.tool.ToolExecutor;
 import com.mewcode.tool.ToolRegistry;
 import com.mewcode.tool.ToolResult;
 import com.mewcode.tool.impl.ToolSearchTool;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
@@ -50,21 +47,16 @@ class AgentTurnCoordinatorLazyToolTest {
                 response(new StreamEvent.TextDelta("done"))));
     var conversation = new ConversationManager();
 
-    try (var executor =
-        new ToolExecutor(
+    try (var runtime =
+        AgentTestRuntime.create(
+            projectRoot,
+            client,
             registry,
-            new ToolExecutionContext(projectRoot, Duration.ofSeconds(2), new FileStateCache()))) {
-      var coordinator =
-          new AgentTurnCoordinator(
-              client,
-              registry,
-              executor,
-              conversation,
-              ToolApiProtocol.OPENAI,
-              new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
-
-      awaitCompletion(coordinator.startRun("use the external tool", AgentMode.EXECUTE));
+            conversation,
+            ToolApiProtocol.OPENAI,
+            new AgentLoopConfig(),
+            128_000)) {
+      awaitCompletion(runtime.coordinator().startRun("use the external tool", AgentMode.EXECUTE));
     }
 
     assertFalse(containsTool(client.requests.get(0), "mcp_demo_echo"));
@@ -161,7 +153,7 @@ class AgentTurnCoordinatorLazyToolTest {
     }
 
     @Override
-    public String validateInput(Map<String, Object> input) {
+    public String validateInput(ToolExecutionContext context, Map<String, Object> input) {
       return null;
     }
 

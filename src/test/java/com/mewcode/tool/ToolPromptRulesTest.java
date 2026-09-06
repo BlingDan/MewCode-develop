@@ -65,7 +65,7 @@ class ToolPromptRulesTest {
     }
 
     @Override
-    public String validateInput(java.util.Map<String, Object> input) {
+    public String validateInput(ToolExecutionContext context, java.util.Map<String, Object> input) {
       return null;
     }
   }

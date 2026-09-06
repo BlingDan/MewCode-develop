@@ -5,27 +5,24 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import com.mewcode.agent.AgentLoopConfig;
 import com.mewcode.agent.AgentMode;
 import com.mewcode.agent.AgentRun;
-import com.mewcode.agent.AgentTurnCoordinator;
-import com.mewcode.agent.PromptRequestFactory;
 import com.mewcode.conversation.Message;
 import com.mewcode.conversation.TextBlock;
 import com.mewcode.conversation.ToolResultBlock;
 import com.mewcode.conversation.ToolUseBlock;
 import com.mewcode.llm.StreamEvent;
-import com.mewcode.prompt.PromptBuilder;
+import com.mewcode.testsupport.AgentTestRuntime;
 import com.mewcode.testsupport.FakeLlmClient;
-import com.mewcode.tool.FileStateCache;
 import com.mewcode.tool.ToolApiProtocol;
-import com.mewcode.tool.ToolExecutionContext;
-import com.mewcode.tool.ToolExecutor;
 import com.mewcode.tool.ToolRegistry;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class SkillExecutorTest {
+
+  @TempDir Path temp;
 
   @Test
   void selectsNoneRecentAndFullWithoutSplittingToolTurns() {
@@ -68,25 +65,20 @@ class SkillExecutorTest {
     SkillRun run = new SkillRun();
     run.activate(skill, "focus");
 
-    try (var tools =
-        new ToolExecutor(
+    try (var runtime =
+        AgentTestRuntime.create(
+            temp,
+            client,
             registry,
-            new ToolExecutionContext(
-                Path.of("/").toAbsolutePath(), Duration.ofSeconds(2), new FileStateCache()))) {
-      var coordinator =
-          new AgentTurnCoordinator(
-              client,
-              registry,
-              tools,
-              temporary,
-              ToolApiProtocol.OPENAI,
-              new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(Path.of("/tmp"))));
+            temporary,
+            ToolApiProtocol.OPENAI,
+            new AgentLoopConfig(),
+            128_000)) {
       var result =
           SkillExecutor.runFork(
               new SkillExecutor.ForkRequest(
                   skill, "focus", temporary.getMessages(), AgentMode.EXECUTE, new AgentRun()),
-              coordinator,
+              runtime.coordinator(),
               temporary,
               run);
 

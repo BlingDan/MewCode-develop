@@ -61,6 +61,8 @@ jacoco.exec
 !.env.example
 local.properties
 
+.trae/skills/
+
 # macOS
 .DS_Store
 .AppleDouble

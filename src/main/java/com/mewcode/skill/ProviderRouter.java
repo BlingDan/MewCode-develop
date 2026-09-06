@@ -7,7 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.function.BiFunction;
+import java.util.function.Function;
 
 /** 在一次 Agent 运行中按 Skill 偏好选择已配置 Provider。 */
 public final class ProviderRouter {
@@ -16,32 +16,25 @@ public final class ProviderRouter {
   private final Map<String, Route> routes = new LinkedHashMap<>();
   private final ProviderConfig mainConfig;
   private final Route main;
-  private final BiFunction<ProviderConfig, String, LlmClient> clientFactory;
-  private final String systemPrompt;
+  private final Function<ProviderConfig, LlmClient> clientFactory;
 
   public ProviderRouter(
       List<ProviderConfig> providers,
       ProviderConfig mainConfig,
       LlmClient mainClient,
-      BiFunction<ProviderConfig, String, LlmClient> clientFactory,
-      String systemPrompt) {
-    if (providers != null) {
-      for (ProviderConfig provider : providers) {
-        if (provider != null && provider.getName() != null) {
-          configurations.put(provider.getName(), provider);
-        }
-      }
+      Function<ProviderConfig, LlmClient> clientFactory) {
+    for (ProviderConfig provider : providers) {
+      configurations.put(provider.getName(), provider);
     }
     this.mainConfig = Objects.requireNonNull(mainConfig, "mainConfig");
     this.clientFactory = Objects.requireNonNull(clientFactory, "clientFactory");
-    this.systemPrompt = Objects.requireNonNullElse(systemPrompt, "");
     this.main =
         new Route(
             mainConfig,
             Objects.requireNonNull(mainClient, "mainClient"),
             protocol(mainConfig),
             false);
-    if (mainConfig.getName() != null) routes.put(mainConfig.getName(), main);
+    routes.put(mainConfig.getName(), main);
   }
 
   public Route main() {
@@ -60,9 +53,7 @@ public final class ProviderRouter {
     Route cached = routes.get(preferredName);
     if (cached != null) return cached;
     try {
-      Route created =
-          new Route(
-              selected, clientFactory.apply(selected, systemPrompt), protocol(selected), false);
+      Route created = new Route(selected, clientFactory.apply(selected), protocol(selected), false);
       routes.put(preferredName, created);
       return created;
     } catch (RuntimeException error) {

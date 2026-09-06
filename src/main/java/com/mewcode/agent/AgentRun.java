@@ -13,7 +13,7 @@ import java.util.function.BiFunction;
  *
  * <p>取消先设置共享 token，再执行 provider/工具注册的清理 hook；hook 失败会被隔离， 这样 Esc 触发的快速退出不会因为某个底层连接关闭异常而卡住整个 Loop。
  */
-public final class AgentRun implements AutoCloseable {
+public final class AgentRun {
 
   public enum State {
     RUNNING,
@@ -117,12 +117,6 @@ public final class AgentRun implements AutoCloseable {
     cancellationHooks.clear();
     permissionDelegates.clear();
     permissionBroker.close();
-    events.complete();
-  }
-
-  @Override
-  public void close() {
-    if (isRunning()) cancel();
     events.complete();
   }
 

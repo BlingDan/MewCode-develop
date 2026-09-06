@@ -51,25 +51,6 @@ public final class EditFileTool implements Tool {
   }
 
   @Override
-  public String validateInput(Map<String, Object> input) {
-    String pathError = ToolInput.requireString(input, "path", " 请传入项目根目录内的绝对路径。");
-    if (pathError != null) return pathError;
-    if (input == null || !(input.get("old_string") instanceof String)) {
-      return "参数 old_string 必须是字符串。请传入要精确匹配的原文。";
-    }
-    if (input == null || !(input.get("new_string") instanceof String)) {
-      return "参数 new_string 必须是字符串。请传入替换后的文本。";
-    }
-    try {
-      return Path.of(ToolInput.requiredString(input, "path")).isAbsolute()
-          ? null
-          : "参数 path 必须是绝对路径，请传入项目根目录内的绝对路径。";
-    } catch (RuntimeException error) {
-      return "参数 path 不是合法路径，请传入合法的绝对路径。";
-    }
-  }
-
-  @Override
   public String validateInput(ToolExecutionContext context, Map<String, Object> input) {
     String pathError = ToolInput.requireString(input, "path", " 请传入项目根目录内的绝对路径。");
     if (pathError != null) return pathError;

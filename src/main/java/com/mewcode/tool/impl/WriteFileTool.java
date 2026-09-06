@@ -58,24 +58,6 @@ public final class WriteFileTool implements Tool {
   }
 
   @Override
-  public String validateInput(Map<String, Object> input) {
-    String pathError = ToolInput.requireString(input, "path", " 请传入项目根目录内的绝对路径。");
-    if (pathError != null) return pathError;
-    String contentError = ToolInput.requireString(input, "content", " 即使要写入空文件，也请传入空字符串。");
-    if (contentError != null && input != null && input.get("content") instanceof String) {
-      contentError = null;
-    }
-    if (contentError != null) return contentError;
-    try {
-      return Path.of(ToolInput.requiredString(input, "path")).isAbsolute()
-          ? null
-          : "参数 path 必须是绝对路径，请传入项目根目录内的绝对路径。";
-    } catch (RuntimeException error) {
-      return "参数 path 不是合法路径，请传入合法的绝对路径。";
-    }
-  }
-
-  @Override
   public String validateInput(ToolExecutionContext context, Map<String, Object> input) {
     String pathError = ToolInput.requireString(input, "path", " 请传入项目根目录内的绝对路径。");
     if (pathError != null) return pathError;

@@ -27,9 +27,4 @@ public record SystemPromptBundle(List<PromptModule> modules, EnvironmentContext 
     if (stable.isEmpty()) return List.of(environmentText);
     return List.of(stable, environmentText);
   }
-
-  /** 提供给旧字符串接口的兼容文本。 */
-  public String flattenedText() {
-    return String.join("\n\n", systemSegments());
-  }
 }

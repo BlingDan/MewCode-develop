@@ -99,7 +99,7 @@ public final class ScriptTool implements Tool {
   }
 
   @Override
-  public String validateInput(Map<String, Object> input) {
+  public String validateInput(ToolExecutionContext context, Map<String, Object> input) {
     return validateValue(input, spec.inputSchema(), "input");
   }
 

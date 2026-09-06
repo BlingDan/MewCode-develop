@@ -21,7 +21,12 @@ class TurnStreamCollectorTest {
         var events = new LinkedBlockingQueue<StreamEvent>();
         events.add(new StreamEvent.TextDelta("before "));
         events.add(new StreamEvent.ThinkingDelta("internal", "signature-1"));
-        events.add(new StreamEvent.Usage(OptionalLong.of(7), OptionalLong.of(2)));
+        events.add(
+                new StreamEvent.Usage(
+                        OptionalLong.of(7),
+                        OptionalLong.empty(),
+                        OptionalLong.empty(),
+                        OptionalLong.of(2)));
         events.add(new StreamEvent.ToolCallComplete("call-1", "ReadFile",
                 Map.of("path", "/tmp/a")));
         events.add(new StreamEvent.TextDelta("after"));
@@ -72,8 +77,18 @@ class TurnStreamCollectorTest {
     @Test
     void deduplicatesUsageUpdatesAndMarksMissingUsageUnknown() throws Exception {
         var events = new LinkedBlockingQueue<StreamEvent>();
-        events.add(new StreamEvent.Usage(OptionalLong.of(7), OptionalLong.of(2)));
-        events.add(new StreamEvent.Usage(OptionalLong.of(7), OptionalLong.of(3)));
+        events.add(
+                new StreamEvent.Usage(
+                        OptionalLong.of(7),
+                        OptionalLong.empty(),
+                        OptionalLong.empty(),
+                        OptionalLong.of(2)));
+        events.add(
+                new StreamEvent.Usage(
+                        OptionalLong.of(7),
+                        OptionalLong.empty(),
+                        OptionalLong.empty(),
+                        OptionalLong.of(3)));
         events.add(new StreamEvent.StreamEnd("end_turn"));
         var run = new AgentRun();
 

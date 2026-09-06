@@ -12,7 +12,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <p>生产者只负责发布事件，消费者通过轮询或 {@link #next()} 读取事件，因此 Agent
  * 核心不依赖具体 UI。关闭只表示“不会再产生新事件”；队列中的尾部事件仍会先被消费。</p>
  */
-public final class AgentEventStream implements AutoCloseable {
+public final class AgentEventStream {
 
     private final BlockingQueue<AgentEvent> queue = new LinkedBlockingQueue<>();
     private final AtomicBoolean closed = new AtomicBoolean();
@@ -38,18 +38,8 @@ public final class AgentEventStream implements AutoCloseable {
         }
     }
 
-    /** 判断生产端是否已经声明不会再发布事件。 */
-    public boolean isClosed() {
-        return closed.get();
-    }
-
     /** 标记流结束，不清理已有队列内容。 */
     public void complete() {
         closed.set(true);
-    }
-
-    @Override
-    public void close() {
-        complete();
     }
 }

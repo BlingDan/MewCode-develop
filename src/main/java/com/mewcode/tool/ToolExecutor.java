@@ -1,6 +1,5 @@
 package com.mewcode.tool;
 
-import com.mewcode.agent.AgentMode;
 import com.mewcode.agent.CancellationToken;
 import com.mewcode.agent.ToolPolicy;
 import com.mewcode.permission.PermissionCheck;
@@ -13,6 +12,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -35,12 +35,6 @@ public final class ToolExecutor implements AutoCloseable {
   private final com.mewcode.permission.PermissionGate permissionGate;
   private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
-  public ToolExecutor(ToolRegistry registry, Path projectRoot, FileStateCache fileStateCache) {
-    this(
-        registry,
-        new ToolExecutionContext(projectRoot.toAbsolutePath().normalize(), fileStateCache));
-  }
-
   public ToolExecutor(
       ToolRegistry registry,
       Path projectRoot,
@@ -52,17 +46,13 @@ public final class ToolExecutor implements AutoCloseable {
         permissionGate);
   }
 
-  public ToolExecutor(ToolRegistry registry, ToolExecutionContext context) {
-    this(registry, context, null);
-  }
-
   public ToolExecutor(
       ToolRegistry registry,
       ToolExecutionContext context,
       com.mewcode.permission.PermissionGate permissionGate) {
-    this.registry = registry;
-    this.baseContext = context;
-    this.permissionGate = permissionGate;
+    this.registry = Objects.requireNonNull(registry, "registry");
+    this.baseContext = Objects.requireNonNull(context, "context");
+    this.permissionGate = Objects.requireNonNull(permissionGate, "permissionGate");
   }
 
   /** 返回所有工具共享的项目根目录。 */
@@ -70,58 +60,10 @@ public final class ToolExecutor implements AutoCloseable {
     return baseContext.projectRoot();
   }
 
-  /** 使用 Execute Mode 的默认策略执行一次工具调用。 */
-  public ToolInvocationResult executeSingle(ToolCall call) {
-    return executeSingle(call, ToolPolicy.forMode(AgentMode.EXECUTE), new CancellationToken());
-  }
-
-  /** 执行一次工具调用：先做模式和参数校验，再在可取消任务中执行并轮询等待。 未知工具、禁止调用、超时和运行时异常都会变成模型可见的错误结果。 */
-  public ToolInvocationResult executeSingle(
-      ToolCall call, ToolPolicy policy, CancellationToken token) {
-    long started = System.nanoTime();
-    if (token.isCancelled()) return cancelled(call, started, null);
-
-    Tool tool = registry.get(call.toolName()).orElse(null);
-    if (tool == null) {
-      return result(
-          call, ToolResult.error("未知工具：" + call.toolName() + "。请从当前可用工具列表中选择工具。"), started, null);
-    }
-    if (!policy.isAllowed(tool)) {
-      return result(
-          call, ToolResult.error("当前模式不允许调用工具：" + call.toolName() + "。请先切换到执行模式。"), started, tool);
-    }
-
-    ToolExecutionContext context = baseContext.withCancellationToken(token);
-    String validation = safeValidate(tool, context, call.arguments());
-    if (validation != null) {
-      return result(call, ToolResult.error(validation), started, tool);
-    }
-
-    Future<ToolResult> future =
-        executor.submit(
-            () -> {
-              token.throwIfCancelled();
-              return tool.execute(context, call.arguments());
-            });
-    return awaitSingle(future, call, tool, token, started);
-  }
-
-  /** 使用五层权限上下文执行一次调用；该入口用于新 Agent Run。 */
-  public ToolInvocationResult executeSingle(ToolCall call, PermissionContext permissions) {
-    AgentMode mode =
-        permissions != null && permissions.mode() == com.mewcode.permission.PermissionMode.PLAN
-            ? AgentMode.PLAN
-            : AgentMode.EXECUTE;
-    return executeSingle(call, ToolPolicy.forMode(mode), permissions);
-  }
-
   /** 先应用本轮工具策略，再进入五层权限系统。 */
   public ToolInvocationResult executeSingle(
       ToolCall call, ToolPolicy policy, PermissionContext permissions) {
     long started = System.nanoTime();
-    if (permissions == null || permissionGate == null) {
-      return result(call, ToolResult.error("权限运行时未初始化，工具调用已安全拒绝。"), started, null);
-    }
     CancellationToken token = permissions.cancellationToken();
     if (token.isCancelled()) return cancelled(call, started, null);
     Tool tool = registry.get(call.toolName()).orElse(null);
@@ -129,7 +71,7 @@ public final class ToolExecutor implements AutoCloseable {
       return result(
           call, ToolResult.error("未知工具：" + call.toolName() + "。请从当前可用工具列表中选择工具。"), started, null);
     }
-    if (policy == null || !policy.isAllowed(tool)) {
+    if (!policy.isAllowed(tool)) {
       return result(
           call, ToolResult.error("当前 Skill 或模式不允许调用工具：" + call.toolName() + "。"), started, tool);
     }
@@ -177,27 +119,10 @@ public final class ToolExecutor implements AutoCloseable {
     return awaitSingle(future, call, tool, token, started);
   }
 
-  /** 使用五层权限上下文执行一批调用；需要确认的调用按原始顺序串行处理。 */
-  public List<ToolInvocationResult> executeBatch(
-      List<ToolCall> calls, PermissionContext permissions) {
-    AgentMode mode =
-        permissions != null && permissions.mode() == com.mewcode.permission.PermissionMode.PLAN
-            ? AgentMode.PLAN
-            : AgentMode.EXECUTE;
-    return executeBatch(calls, ToolPolicy.forMode(mode), permissions);
-  }
-
   /** 使用同一 ToolPolicy 和权限快照执行一批调用。 */
   public List<ToolInvocationResult> executeBatch(
       List<ToolCall> calls, ToolPolicy policy, PermissionContext permissions) {
-    if (calls == null || calls.isEmpty()) return List.of();
-    if (permissions == null || permissionGate == null) {
-      return calls.stream()
-          .map(
-              call ->
-                  result(call, ToolResult.error("权限运行时未初始化，工具调用已安全拒绝。"), System.nanoTime(), null))
-          .toList();
-    }
+    if (calls.isEmpty()) return List.of();
     var results = new ArrayList<ToolInvocationResult>(calls.size());
     var seenIds = new HashSet<String>();
     int index = 0;
@@ -263,59 +188,6 @@ public final class ToolExecutor implements AutoCloseable {
         operation,
         check.message(),
         check.authorizationKey());
-  }
-
-  /** 使用 Execute Mode 的默认策略执行一批调用。 */
-  public List<ToolInvocationResult> executeBatch(List<ToolCall> calls) {
-    return executeBatch(calls, ToolPolicy.forMode(AgentMode.EXECUTE), new CancellationToken());
-  }
-
-  /** 按安全性分批执行工具：同一安全批次可并发，副作用调用按模型顺序串行。 取消会取消当前批次所有 Future，并为尚未执行的调用补充取消结果。 */
-  public List<ToolInvocationResult> executeBatch(
-      List<ToolCall> calls, ToolPolicy policy, CancellationToken token) {
-    if (calls == null || calls.isEmpty()) return List.of();
-    var results = new ArrayList<ToolInvocationResult>(calls.size());
-    var seenIds = new HashSet<String>();
-    int index = 0;
-    while (index < calls.size()) {
-      if (token.isCancelled()) {
-        for (int i = index; i < calls.size(); i++) {
-          results.add(cancelled(calls.get(i), System.nanoTime(), null));
-        }
-        break;
-      }
-
-      ToolCall current = calls.get(index);
-      boolean safe = isSafe(current, policy);
-      if (!safe) {
-        results.add(duplicateAware(current, seenIds, policy, token));
-        index++;
-        continue;
-      }
-
-      int end = index;
-      while (end < calls.size() && isSafe(calls.get(end), policy)) end++;
-      var futures = new ArrayList<Future<ToolInvocationResult>>(end - index);
-      for (int i = index; i < end; i++) {
-        ToolCall call = calls.get(i);
-        if (!seenIds.add(call.toolUseId())) {
-          futures.add(executor.submit(() -> duplicateResult(call)));
-        } else {
-          futures.add(executor.submit(() -> executeSingle(call, policy, token)));
-        }
-      }
-      for (int i = 0; i < futures.size(); i++) {
-        results.add(awaitBatchResult(futures.get(i), calls.get(index + i), futures, token));
-      }
-      index = end;
-    }
-    return List.copyOf(results);
-  }
-
-  private ToolInvocationResult duplicateAware(
-      ToolCall call, Set<String> seenIds, ToolPolicy policy, CancellationToken token) {
-    if (!seenIds.add(call.toolUseId())) return duplicateResult(call);
-    return executeSingle(call, policy, token);
   }
 
   /** 等待并发批次中的一个槽位，同时周期性检查共享取消 token。 */
@@ -397,15 +269,6 @@ public final class ToolExecutor implements AutoCloseable {
             call, ToolResult.error("工具执行异常：" + safeMessage(error) + "。请调整参数后重试。"), started, tool);
       }
     }
-  }
-
-  /** 只有已知且当前模式允许的工具才能参与安全并发批次。 */
-  private boolean isSafe(ToolCall call, ToolPolicy policy) {
-    return registry
-        .get(call.toolName())
-        .filter(policy::isAllowed)
-        .map(tool -> tool.isConcurrencySafe(call.arguments()))
-        .orElse(false);
   }
 
   private String safeValidate(

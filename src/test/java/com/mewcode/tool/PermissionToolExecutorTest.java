@@ -53,6 +53,7 @@ class PermissionToolExecutorTest {
           executor.executeSingle(
               new ToolCall(
                   "call-1", "WriteFile", Map.of("path", target.toString(), "content", "ok")),
+              ToolPolicy.forMode(AgentMode.EXECUTE),
               context);
       assertFalse(result.result().isError(), result.result().content());
       assertTrue(Files.exists(target));
@@ -77,7 +78,9 @@ class PermissionToolExecutorTest {
             new PermissionGate())) {
       ToolInvocationResult result =
           executor.executeSingle(
-              new ToolCall("call-2", "Bash", Map.of("command", "rm -rf /")), context);
+              new ToolCall("call-2", "Bash", Map.of("command", "rm -rf /")),
+              ToolPolicy.forMode(AgentMode.EXECUTE),
+              context);
       assertTrue(result.result().isError());
       assertTrue(result.result().content().contains("不可逆的系统损坏"));
     }
@@ -101,7 +104,9 @@ class PermissionToolExecutorTest {
             new PermissionGate())) {
       ToolInvocationResult result =
           executor.executeSingle(
-              new ToolCall("call-3", "ReadFile", Map.of("path", outside.toString())), context);
+              new ToolCall("call-3", "ReadFile", Map.of("path", outside.toString())),
+              ToolPolicy.forMode(AgentMode.EXECUTE),
+              context);
       assertFalse(result.result().isError(), result.result().content());
       assertTrue(result.result().content().contains("outside"));
     }

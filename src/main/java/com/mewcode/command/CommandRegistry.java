@@ -83,6 +83,9 @@ public final class CommandRegistry {
     registry.register(
         command("status", List.of("st"), "显示运行状态", "/status", Command.CommandType.LOCAL, ""),
         context -> context.status().get());
+    registry.register(
+        command("hooks", List.of(), "查看已加载 Hook", "/hooks", Command.CommandType.LOCAL, ""),
+        context -> context.args().isBlank() ? context.hooks().get() : "用法：/hooks");
     return registry;
   }
 

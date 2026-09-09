@@ -68,7 +68,16 @@ class CommandRegistryTest {
     CommandRegistry registry = CommandRegistry.createDefault();
 
     assertEquals(
-        List.of("help", "compact", "clear", "plan", "session", "memory", "permission", "status"),
+        List.of(
+            "help",
+            "compact",
+            "clear",
+            "plan",
+            "session",
+            "memory",
+            "permission",
+            "status",
+            "hooks"),
         registry.listVisible().stream().map(Command::name).toList());
     assertEquals(CommandType.LOCAL_UI, registry.find("CLS").orElseThrow().type());
     assertEquals(CommandType.LOCAL_UI, registry.find("p").orElseThrow().type());
@@ -76,6 +85,38 @@ class CommandRegistryTest {
     for (String retired : List.of("do", "d", "exit", "sessions", "resume")) {
       assertTrue(registry.find(retired).isEmpty());
     }
+  }
+
+  @Test
+  void hooksIsReadOnlyAndRejectsArguments() {
+    CommandRegistry registry = CommandRegistry.createDefault();
+    CommandContext base = context("", new FakeUi());
+    CommandContext hooks =
+        new CommandContext(
+            base.args(),
+            base.workDir(),
+            base.model(),
+            base.ui(),
+            base.status(),
+            base.compact(),
+            base.sessionInfo(),
+            base.sessionList(),
+            base.sessionResume(),
+            base.memorySummary(),
+            base.memoryList(),
+            base.memoryAdd(),
+            base.memoryClear(),
+            base.permissionSummary(),
+            base.permissionRules(),
+            base.permissionMode(),
+            base.permissionAdd(),
+            base.permissionReset(),
+            () -> "[startup] boot (shell) [once] source=hooks.yaml");
+
+    assertEquals(
+        "[startup] boot (shell) [once] source=hooks.yaml",
+        registry.execute(registry.parse("/hooks").orElseThrow(), hooks));
+    assertEquals(CommandType.LOCAL, registry.find("hooks").orElseThrow().type());
   }
 
   @Test

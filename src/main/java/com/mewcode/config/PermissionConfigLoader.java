@@ -68,13 +68,24 @@ public final class PermissionConfigLoader {
         throw new ConfigLoader.ConfigException("权限文件 rules[" + index + "] 必须是对象：" + file);
       }
       Object pattern = rule.get("pattern");
+      Object tool = rule.get("tool");
+      Object match = rule.get("match");
       Object decision = rule.get("decision");
-      if (!(pattern instanceof String patternText) || !(decision instanceof String decisionText)) {
+      boolean hasLegacy = pattern != null;
+      boolean hasStructured = tool != null || match != null;
+      if (hasLegacy == hasStructured
+          || !(decision instanceof String decisionText)
+          || (hasLegacy && !(pattern instanceof String patternText))
+          || (hasStructured && (!(tool instanceof String) || !(match instanceof Map<?, ?>)))) {
         throw new ConfigLoader.ConfigException(
-            "权限文件 rules[" + index + "] 缺少 pattern 或 decision：" + file);
+            "权限文件 rules[" + index + "] 必须提供互斥的 pattern 或 tool+match 及 decision：" + file);
       }
       try {
-        output.add(PermissionRule.of(patternText, decisionText, source));
+        if (hasLegacy) {
+          output.add(PermissionRule.of((String) pattern, decisionText, source));
+        } else {
+          output.add(PermissionRule.of((String) tool, (Map<?, ?>) match, decisionText, source));
+        }
       } catch (IllegalArgumentException error) {
         throw new ConfigLoader.ConfigException("权限文件 rules[" + index + "] 无效：" + file);
       }

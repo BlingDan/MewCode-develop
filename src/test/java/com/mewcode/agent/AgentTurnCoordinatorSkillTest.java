@@ -12,7 +12,6 @@ import com.mewcode.llm.StreamEvent;
 import com.mewcode.prompt.PromptBuilder;
 import com.mewcode.skill.ProviderRouter;
 import com.mewcode.skill.SkillCatalog;
-import com.mewcode.skill.SkillDefinition;
 import com.mewcode.skill.SkillRun;
 import com.mewcode.testsupport.FakeLlmClient;
 import com.mewcode.tool.FileStateCache;
@@ -68,10 +67,7 @@ class AgentTurnCoordinatorSkillTest {
               new AgentLoopConfig(),
               new PromptRequestFactory(PromptBuilder.buildBundle(temp)));
       coordinator.configureSkills(
-          catalog,
-          () -> catalog.refresh(registry.ordinaryToolNames(), Set.of()),
-          null,
-          null);
+          catalog, () -> catalog.refresh(registry.ordinaryToolNames(), Set.of()), null, null);
 
       await(coordinator.startRun("use it", AgentMode.EXECUTE));
       await(coordinator.startRun("plain request", AgentMode.EXECUTE));
@@ -124,7 +120,9 @@ class AgentTurnCoordinatorSkillTest {
               new PromptRequestFactory(PromptBuilder.buildBundle(temp)));
       coordinator.configureSkills(
           catalog,
-          () -> catalog.refresh(registry.ordinaryToolNames(), CommandRegistry.createDefault().reservedNames()),
+          () ->
+              catalog.refresh(
+                  registry.ordinaryToolNames(), CommandRegistry.createDefault().reservedNames()),
           router,
           null);
       events = await(coordinator.startRun("review", AgentMode.EXECUTE, skills));
@@ -182,14 +180,40 @@ class AgentTurnCoordinatorSkillTest {
   }
 
   private static final class EchoTool implements Tool {
-    public String name() { return "Echo"; }
-    public String description() { return "echo"; }
-    public ToolCategory category() { return ToolCategory.SEARCH; }
-    public Map<String, Object> inputSchema() { return Map.of("type", "object"); }
-    public ToolResult execute(ToolExecutionContext context, Map<String, Object> input) { return ToolResult.success("ok"); }
-    public boolean isReadOnly() { return true; }
-    public boolean isDestructive() { return false; }
-    public boolean isConcurrencySafe(Map<String, Object> input) { return true; }
-    public String validateInput(Map<String, Object> input) { return null; }
+    public String name() {
+      return "Echo";
+    }
+
+    public String description() {
+      return "echo";
+    }
+
+    public ToolCategory category() {
+      return ToolCategory.SEARCH;
+    }
+
+    public Map<String, Object> inputSchema() {
+      return Map.of("type", "object");
+    }
+
+    public ToolResult execute(ToolExecutionContext context, Map<String, Object> input) {
+      return ToolResult.success("ok");
+    }
+
+    public boolean isReadOnly() {
+      return true;
+    }
+
+    public boolean isDestructive() {
+      return false;
+    }
+
+    public boolean isConcurrencySafe(Map<String, Object> input) {
+      return true;
+    }
+
+    public String validateInput(Map<String, Object> input) {
+      return null;
+    }
   }
 }

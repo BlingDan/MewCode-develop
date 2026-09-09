@@ -35,6 +35,70 @@ class PermissionRuleEngineTest {
   }
 
   @Test
+  void matchesStructuredMatchersWithoutChangingRuleOrder() {
+    var engine =
+        new PermissionRuleEngine(
+            List.of(
+                PermissionRule.of(
+                    "Bash",
+                    Map.of("type", "regex", "value", "^git status$"),
+                    "deny",
+                    RuleSource.PROJECT),
+                PermissionRule.of(
+                    "Bash",
+                    Map.of("type", "not", "inner", Map.of("type", "exact", "value", "git status")),
+                    "allow",
+                    RuleSource.USER)));
+
+    assertEquals(
+        RuleDecision.DENY,
+        engine
+            .match(new ToolCall("call-structured-1", "Bash", Map.of("command", "git status")))
+            .orElseThrow()
+            .rule()
+            .decision());
+    assertEquals(
+        RuleDecision.ALLOW,
+        engine
+            .match(new ToolCall("call-structured-2", "Bash", Map.of("command", "git diff")))
+            .orElseThrow()
+            .rule()
+            .decision());
+  }
+
+  @Test
+  void preservesOldLeadingOperatorCharactersAsGlobLiterals() {
+    var engine =
+        new PermissionRuleEngine(
+            List.of(
+                PermissionRule.of("Bash(=git *)", "allow", RuleSource.PROJECT),
+                PermissionRule.of("Bash(!git *)", "deny", RuleSource.PROJECT),
+                PermissionRule.of("Bash(~git *)", "allow", RuleSource.PROJECT)));
+
+    assertEquals(
+        RuleDecision.ALLOW,
+        engine
+            .match(new ToolCall("call-prefix-1", "Bash", Map.of("command", "=git status")))
+            .orElseThrow()
+            .rule()
+            .decision());
+    assertEquals(
+        RuleDecision.DENY,
+        engine
+            .match(new ToolCall("call-prefix-2", "Bash", Map.of("command", "!git status")))
+            .orElseThrow()
+            .rule()
+            .decision());
+    assertEquals(
+        RuleDecision.ALLOW,
+        engine
+            .match(new ToolCall("call-prefix-3", "Bash", Map.of("command", "~git status")))
+            .orElseThrow()
+            .rule()
+            .decision());
+  }
+
+  @Test
   void preservesTheMoreLocalOrderProvidedByTheLoader() {
     var engine =
         new PermissionRuleEngine(

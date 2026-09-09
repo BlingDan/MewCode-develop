@@ -1,11 +1,18 @@
 package com.mewcode.tool;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.mewcode.agent.AgentMode;
 import com.mewcode.agent.CancellationToken;
 import com.mewcode.agent.ToolPolicy;
+import com.mewcode.config.HookConfigLoader;
+import com.mewcode.hook.HookAction;
+import com.mewcode.hook.HookEngine;
+import com.mewcode.hook.HookEvent;
+import com.mewcode.hook.HookRule;
+import com.mewcode.hook.HookSessionState;
 import com.mewcode.permission.BashSandbox;
 import com.mewcode.permission.BashSandboxRequest;
 import com.mewcode.permission.PathAuthorizationStore;
@@ -24,6 +31,8 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -134,6 +143,48 @@ class PermissionToolExecutorTest {
     }
   }
 
+  @Test
+  void preToolHookRejectsBeforePermissionAndToolExecution() {
+    var executions = new AtomicInteger();
+    var registry = new ToolRegistry();
+    registry.register(new CountingTool(executions));
+    var broker = new PermissionBroker();
+    broker.setPublisher(
+        request -> {
+          throw new AssertionError("Hook 拒绝后不应进入权限确认");
+        });
+    var context = permissionContext(PermissionMode.DEFAULT, broker);
+    var rule =
+        new HookRule(
+            "deny-tool",
+            HookEvent.PRE_TOOL_USE,
+            Optional.empty(),
+            new HookAction.Shell("printf 'blocked by hook' >&2; exit 2"),
+            false,
+            false,
+            Duration.ofSeconds(1),
+            projectRoot.resolve("hooks.yaml"));
+    var state = new HookSessionState();
+    try (var hooks =
+            new HookEngine(
+                new HookConfigLoader.LoadedHooks(List.of(rule), List.of()),
+                new com.mewcode.tool.support.CommandRunner(new RealSandbox()),
+                ignored -> {});
+        var executor =
+            new ToolExecutor(
+                registry,
+                new ToolExecutionContext(projectRoot, Duration.ofSeconds(2), new FileStateCache()),
+                new PermissionGate())) {
+      executor.configureHooks(hooks, state);
+      ToolInvocationResult result =
+          executor.executeSingle(new ToolCall("hook-1", "Count", Map.of()), context);
+      assertTrue(result.result().isError());
+      assertTrue(result.result().content().contains("blocked by hook"));
+      assertEquals("hook_rejected", result.result().metadata().get("status"));
+      assertEquals(0, executions.get());
+    }
+  }
+
   private PermissionContext permissionContext(PermissionMode mode, PermissionBroker broker) {
     return new PermissionContext(
         projectRoot,
@@ -154,6 +205,73 @@ class PermissionToolExecutorTest {
     @Override
     public SandboxedProcess prepare(BashSandboxRequest request) {
       return new SandboxedProcess(List.of("fake", request.command()), request.projectRoot());
+    }
+  }
+
+  private static final class RealSandbox implements BashSandbox {
+    @Override
+    public boolean isAvailable() {
+      return true;
+    }
+
+    @Override
+    public SandboxedProcess prepare(BashSandboxRequest request) {
+      return new SandboxedProcess(
+          List.of("/bin/sh", "-c", request.command()), request.projectRoot());
+    }
+  }
+
+  private static final class CountingTool implements Tool {
+    private final AtomicInteger executions;
+
+    private CountingTool(AtomicInteger executions) {
+      this.executions = executions;
+    }
+
+    @Override
+    public String name() {
+      return "Count";
+    }
+
+    @Override
+    public String description() {
+      return "count";
+    }
+
+    @Override
+    public ToolCategory category() {
+      return ToolCategory.FILE;
+    }
+
+    @Override
+    public Map<String, Object> inputSchema() {
+      return Map.of("type", "object");
+    }
+
+    @Override
+    public ToolResult execute(ToolExecutionContext context, Map<String, Object> input) {
+      executions.incrementAndGet();
+      return ToolResult.success("ran");
+    }
+
+    @Override
+    public boolean isReadOnly() {
+      return false;
+    }
+
+    @Override
+    public boolean isDestructive() {
+      return false;
+    }
+
+    @Override
+    public boolean isConcurrencySafe(Map<String, Object> input) {
+      return false;
+    }
+
+    @Override
+    public String validateInput(Map<String, Object> input) {
+      return null;
     }
   }
 }

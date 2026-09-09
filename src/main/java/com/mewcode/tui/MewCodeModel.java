@@ -11,9 +11,15 @@ import com.mewcode.agent.PromptRequestFactory;
 import com.mewcode.command.CommandContext;
 import com.mewcode.command.CommandRegistry;
 import com.mewcode.compact.ContextManager;
+import com.mewcode.config.HookConfigLoader;
 import com.mewcode.config.McpServerConfig;
 import com.mewcode.config.ProviderConfig;
 import com.mewcode.conversation.ConversationManager;
+import com.mewcode.hook.HookEngine;
+import com.mewcode.hook.HookEvent;
+import com.mewcode.hook.HookInvocation;
+import com.mewcode.hook.HookRejection;
+import com.mewcode.hook.HookSessionState;
 import com.mewcode.instructions.InstructionLoadResult;
 import com.mewcode.instructions.InstructionLoader;
 import com.mewcode.llm.LlmClient;
@@ -47,6 +53,7 @@ import com.mewcode.tool.ToolExecutor;
 import com.mewcode.tool.ToolRegistry;
 import com.mewcode.tool.ToolResult;
 import com.mewcode.tool.impl.LoadSkillTool;
+import com.mewcode.tool.support.CommandRunner;
 import com.mewcode.tui.tea.Command;
 import com.mewcode.tui.tea.KeyPressMessage;
 import com.mewcode.tui.tea.Message;
@@ -58,7 +65,10 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
 
@@ -91,6 +101,8 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   private final ConversationManager conversation = new ConversationManager();
   private final SessionManager sessionManager;
   private final MemoryManager memoryManager;
+  private final HookConfigLoader.LoadedHooks loadedHooks;
+  private final HookEngine hookEngine;
   private final List<ChatMessage> chatMessages = new ArrayList<>();
   private final StringBuilder inputBuffer = new StringBuilder();
   private final StringBuilder streamBuffer = new StringBuilder();
@@ -106,6 +118,9 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   private volatile McpManager mcpManager;
   private ContextManager contextManager;
   private ProviderRouter providerRouter;
+  private HookSessionState hookState;
+  private String hookSessionId;
+  private boolean sessionStarted;
   private final PermissionGate permissionGate = new PermissionGate();
   private SkillRun activeSkillRun;
   private int providerCursor;
@@ -135,12 +150,16 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   private Command pendingUiCommand;
   private String confirmationText;
   private Runnable confirmationAction;
+  private PromptCheck pendingPromptCheck;
+  private volatile PromptCheckResult completedPromptCheck;
   private List<com.mewcode.command.Command> completionCandidates = List.of();
   private int completionCursor;
 
   public record StreamPollMessage() implements Message {}
 
   public record McpInitializationPollMessage() implements Message {}
+
+  public record PromptCheckPollMessage() implements Message {}
 
   public MewCodeModel(List<ProviderConfig> providers) {
     this(providers, currentProjectRoot(), LlmClients::create);
@@ -282,6 +301,13 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     this.sessionManager =
         new SessionManager(this.projectRoot, this.userHome, conversation, this::recordDiagnostic);
     this.memoryManager = new MemoryManager(this.projectRoot, this.userHome, this::recordDiagnostic);
+    this.loadedHooks =
+        HookConfigLoader.load(this.projectRoot, this.userHome, this::recordDiagnostic);
+    this.hookEngine =
+        new HookEngine(loadedHooks, new CommandRunner(this.bashSandbox), this::recordDiagnostic);
+    this.hookState = new HookSessionState();
+    this.hookSessionId = sessionManager.currentSessionId();
+    dispatchHook(HookEvent.STARTUP, Map.of("phase", "initializing"), hookState);
     for (String diagnostic : instructions.diagnostics()) recordDiagnostic(diagnostic);
     Thread.startVirtualThread(
         () -> {
@@ -313,10 +339,12 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   public UpdateResult<MewCodeModel> update(Message message) {
     if (message instanceof KeyPressMessage key && "ctrl+c".equals(key.key())) {
       if (streaming) return cancelStream();
+      if (pendingPromptCheck != null) return cancelPromptCheck();
       return UpdateResult.from(this, QuitMessage::new);
     }
     if (message instanceof KeyPressMessage key && "escape".equals(key.key())) {
       if (streaming) return cancelStream();
+      if (pendingPromptCheck != null) return cancelPromptCheck();
       completionCandidates = List.of();
       confirmationText = null;
       confirmationAction = null;
@@ -340,6 +368,10 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
 
     if (message instanceof StreamPollMessage) {
       return pollStream();
+    }
+
+    if (message instanceof PromptCheckPollMessage) {
+      return pollPromptCheck();
     }
 
     if (message instanceof McpInitializationPollMessage) {
@@ -425,6 +457,12 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
               permissionRuntime,
               pathAuthorizationStore,
               bashSandbox);
+      coordinator.setHookSessionId(hookSessionId);
+      coordinator.configureHooks(hookEngine, hookState);
+      if (!sessionStarted) {
+        dispatchHook(HookEvent.SESSION_START, Map.of("phase", "ready"), hookState);
+        sessionStarted = true;
+      }
       coordinator.setPromptAdditionsSupplier(
           () ->
               new PromptAdditions(
@@ -528,6 +566,14 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     if (closed) return;
     closed = true;
     if (activeRun != null) activeRun.cancel();
+    if (sessionStarted) {
+      dispatchHook(HookEvent.SESSION_END, Map.of("reason", "shutdown"), hookState);
+    }
+    hookEngine.cancelSession(hookState);
+    HookSessionState shutdownState = new HookSessionState();
+    dispatchHook(HookEvent.SHUTDOWN, Map.of("phase", "closing"), shutdownState);
+    shutdownState.close();
+    hookEngine.close();
     closeContextManager();
     closeMcpManager();
     closeToolExecutor();
@@ -540,6 +586,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   }
 
   private UpdateResult<MewCodeModel> handleChatKey(KeyPressMessage message) {
+    if (pendingPromptCheck != null) return UpdateResult.from(this);
     if (streaming) {
       return pendingPermission == null ? UpdateResult.from(this) : handlePermissionKey(message);
     }
@@ -674,11 +721,84 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   private UpdateResult<MewCodeModel> submit() {
     String text = inputBuffer.toString();
     if (text.isBlank()) return UpdateResult.from(this);
+
+    if (text.charAt(0) == '/') {
+      inputBuffer.setLength(0);
+      inputCursor = 0;
+      return dispatchCommand(text);
+    }
+    return startPromptCheck(text);
+  }
+
+  private UpdateResult<MewCodeModel> startPromptCheck(String text) {
+    if (pendingPromptCheck != null) return UpdateResult.from(this);
+    if (loadedHooks.rules().stream()
+        .noneMatch(rule -> rule.event() == HookEvent.USER_PROMPT_SUBMIT)) {
+      inputBuffer.setLength(0);
+      inputCursor = 0;
+      return startAgentRequest(text);
+    }
+    String checkId = UUID.randomUUID().toString();
+    String sessionId = hookSessionId;
+    HookSessionState state = hookState;
+    var token = new com.mewcode.agent.CancellationToken();
+    pendingPromptCheck = new PromptCheck(checkId, sessionId, text, token);
+    completedPromptCheck = null;
+    Thread.startVirtualThread(
+        () -> {
+          Optional<HookRejection> rejection = Optional.empty();
+          try {
+            var payload = hookPayload(agentMode);
+            payload.put("prompt", text);
+            payload.put("raw_input", text);
+            rejection =
+                hookEngine.dispatch(
+                    new HookInvocation(HookEvent.USER_PROMPT_SUBMIT, payload, state, token));
+          } catch (RuntimeException error) {
+            recordDiagnostic("UserPromptSubmit Hook 执行失败。");
+          }
+          completedPromptCheck =
+              new PromptCheckResult(
+                  checkId, sessionId, text, rejection.orElse(null), token.isCancelled());
+        });
+    return UpdateResult.from(
+        this, Command.tick(POLL_INTERVAL, ignored -> new PromptCheckPollMessage()));
+  }
+
+  private UpdateResult<MewCodeModel> pollPromptCheck() {
+    PromptCheckResult result = completedPromptCheck;
+    if (result == null) {
+      return UpdateResult.from(
+          this, Command.tick(POLL_INTERVAL, ignored -> new PromptCheckPollMessage()));
+    }
+    completedPromptCheck = null;
+    PromptCheck pending = pendingPromptCheck;
+    if (pending == null
+        || !pending.id().equals(result.id())
+        || !pending.sessionId().equals(result.sessionId())
+        || !pending.sessionId().equals(hookSessionId)) {
+      return UpdateResult.from(this);
+    }
+    pendingPromptCheck = null;
+    if (result.cancelled()) return UpdateResult.from(this);
+    if (result.rejection() != null) {
+      String message =
+          "Hook [" + result.rejection().hookName() + "] 拒绝用户输入：" + result.rejection().reason();
+      backgroundDiagnostic = message;
+      return UpdateResult.from(this, Command.println(Styles.ERROR.render(message)));
+    }
     inputBuffer.setLength(0);
     inputCursor = 0;
+    return startAgentRequest(result.text());
+  }
 
-    if (text.charAt(0) == '/') return dispatchCommand(text);
-    return startAgentRequest(text);
+  private UpdateResult<MewCodeModel> cancelPromptCheck() {
+    PromptCheck pending = pendingPromptCheck;
+    if (pending == null) return UpdateResult.from(this);
+    pending.token().cancel();
+    pendingPromptCheck = null;
+    completedPromptCheck = null;
+    return UpdateResult.from(this, Command.println(Styles.DIM.render("已取消输入检查")));
   }
 
   private UpdateResult<MewCodeModel> dispatchCommand(String text) {
@@ -852,12 +972,15 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
             projectRoot,
             providerRouter.main().client(),
             providerRouter.main().config().getContextWindowTokens());
+    var forkState = new HookSessionState();
+    var forkToolExecutor =
+        new ToolExecutor(toolRegistry, projectRoot, new FileStateCache(), permissionGate);
     try {
       var child =
           new AgentTurnCoordinator(
               providerRouter.main().client(),
               toolRegistry,
-              toolExecutor,
+              forkToolExecutor,
               temporary,
               providerRouter.main().protocol(),
               loopConfig,
@@ -873,12 +996,16 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
           this::refreshSkills,
           providerRouter,
           ignored -> ToolResult.error("fork Skill 不支持嵌套 fork。"));
+      child.setHookSessionId(hookSessionId);
+      child.configureHooks(hookEngine, forkState);
       SkillRun skills = new SkillRun();
       skills.activate(request.skill(), request.arguments());
       return SkillExecutor.runFork(request, child, temporary, skills);
     } catch (RuntimeException error) {
       return ToolResult.error("fork Skill 执行失败。");
     } finally {
+      hookEngine.cancelSession(forkState);
+      forkToolExecutor.close();
       temporaryContext.close();
     }
   }
@@ -919,6 +1046,28 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     return UpdateResult.from(this, Command.tick(POLL_INTERVAL, ignored -> new StreamPollMessage()));
   }
 
+  private void dispatchHook(HookEvent event, Map<String, Object> fields, HookSessionState state) {
+    if (hookEngine == null || state == null || state.isClosed()) return;
+    var payload = hookPayload(agentMode);
+    if (fields != null) payload.putAll(fields);
+    hookEngine.dispatch(
+        new HookInvocation(event, payload, state, new com.mewcode.agent.CancellationToken()));
+  }
+
+  private void bindHookSession() {
+    if (coordinator == null) return;
+    coordinator.setHookSessionId(hookSessionId);
+    coordinator.configureHooks(hookEngine, hookState);
+  }
+
+  private java.util.LinkedHashMap<String, Object> hookPayload(AgentMode mode) {
+    var payload = new java.util.LinkedHashMap<String, Object>();
+    payload.put("cwd", projectRoot.toString());
+    if (hookSessionId != null) payload.put("session_id", hookSessionId);
+    payload.put("mode", (mode == null ? agentMode : mode).name());
+    return payload;
+  }
+
   private CommandContext commandContext(String args) {
     return new CommandContext(
         args,
@@ -938,7 +1087,29 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
         this::permissionLines,
         this::setPermissionMode,
         this::addPermissionRule,
-        permissionRuntime::reset);
+        permissionRuntime::reset,
+        this::hookLines);
+  }
+
+  private String hookLines() {
+    if (loadedHooks.rules().isEmpty()) return "未加载 Hook。";
+    return loadedHooks.rules().stream()
+        .map(
+            rule ->
+                "[%s] %s (%s)%s%s source=%s"
+                    .formatted(
+                        rule.event().configName(),
+                        rule.name(),
+                        actionName(rule),
+                        rule.onlyOnce() ? " [once]" : "",
+                        rule.async() ? " [async]" : "",
+                        rule.source()))
+        .reduce((left, right) -> left + "\n" + right)
+        .orElse("未加载 Hook。");
+  }
+
+  private static String actionName(com.mewcode.hook.HookRule rule) {
+    return rule.action().getClass().getSimpleName().toLowerCase(java.util.Locale.ROOT);
   }
 
   private List<String> sessionLines() {
@@ -967,7 +1138,25 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   }
 
   private String resumeSession(String id) {
-    ResumeResult result = sessionManager.resume(id);
+    SessionManager.PreparedSession prepared = sessionManager.prepareResume(id);
+    if (activeRun != null) activeRun.cancel();
+    HookSessionState previousState = hookState;
+    if (sessionStarted) {
+      dispatchHook(HookEvent.SESSION_END, Map.of("reason", "resume"), previousState);
+    }
+    hookEngine.cancelSession(previousState);
+    try {
+      sessionManager.commit(prepared);
+    } catch (RuntimeException error) {
+      prepared.close();
+      throw error;
+    }
+    hookState = new HookSessionState();
+    hookSessionId = sessionManager.currentSessionId();
+    sessionStarted = true;
+    bindHookSession();
+    ResumeResult result = prepared.resumeResult().orElseThrow();
+    dispatchHook(HookEvent.SESSION_RESUME, Map.of("reason", "resume"), hookState);
     if (contextManager != null) contextManager.resetForSession(result.sessionDir());
     return "已恢复 session " + result.sessionId() + (result.stale() ? "（已插入过期提醒）" : "");
   }
@@ -1111,8 +1300,26 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   @Override
   public void startNewConversation() {
     if (activeSkillRun != null) activeSkillRun.clear();
-    var session = sessionManager.startNewSession();
-    if (contextManager != null) contextManager.resetForSession(session.sessionDirectory());
+    SessionManager.PreparedSession prepared = sessionManager.prepareNewSession();
+    if (activeRun != null) activeRun.cancel();
+    HookSessionState previousState = hookState;
+    if (sessionStarted) {
+      dispatchHook(HookEvent.SESSION_END, Map.of("reason", "clear"), previousState);
+    }
+    hookEngine.cancelSession(previousState);
+    try {
+      sessionManager.commit(prepared);
+    } catch (RuntimeException error) {
+      prepared.close();
+      throw error;
+    }
+    hookState = new HookSessionState();
+    hookSessionId = sessionManager.currentSessionId();
+    sessionStarted = true;
+    bindHookSession();
+    dispatchHook(HookEvent.SESSION_START, Map.of("reason", "clear"), hookState);
+    if (contextManager != null)
+      contextManager.resetForSession(sessionManager.currentSessionDirectory());
     chatMessages.clear();
     usageLabel = "Token 用量：unknown";
     pendingUiCommand = Command.clearScreen();
@@ -1356,6 +1563,9 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     } else if (initializationError != null) {
       view.append('\n').append(Styles.ERROR.render("✖ " + initializationError)).append('\n');
     }
+    if (pendingPromptCheck != null) {
+      view.append('\n').append(Styles.DIM.render("  正在检查输入…")).append('\n');
+    }
     if (!streaming && backgroundDiagnostic != null) {
       view.append('\n')
           .append(Styles.ERROR.render("✖ " + safeTerminalText(backgroundDiagnostic)))
@@ -1572,4 +1782,10 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     }
     return safe.toString().replace("\033", "");
   }
+
+  private record PromptCheck(
+      String id, String sessionId, String text, com.mewcode.agent.CancellationToken token) {}
+
+  private record PromptCheckResult(
+      String id, String sessionId, String text, HookRejection rejection, boolean cancelled) {}
 }

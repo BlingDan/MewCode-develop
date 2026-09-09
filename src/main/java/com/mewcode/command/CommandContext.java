@@ -25,7 +25,50 @@ public record CommandContext(
     Supplier<List<String>> permissionRules,
     Function<String, String> permissionMode,
     BiFunction<String, String, String> permissionAdd,
-    Runnable permissionReset) {
+    Runnable permissionReset,
+    Supplier<String> hooks) {
+
+  /** 兼容未接入 Hook 列表前的命令调用方。 */
+  public CommandContext(
+      String args,
+      String workDir,
+      String model,
+      UIController ui,
+      Supplier<String> status,
+      Consumer<String> compact,
+      Supplier<String> sessionInfo,
+      Supplier<List<String>> sessionList,
+      Function<String, String> sessionResume,
+      Supplier<String> memorySummary,
+      Supplier<List<String>> memoryList,
+      BiFunction<String, String, String> memoryAdd,
+      Runnable memoryClear,
+      Supplier<String> permissionSummary,
+      Supplier<List<String>> permissionRules,
+      Function<String, String> permissionMode,
+      BiFunction<String, String, String> permissionAdd,
+      Runnable permissionReset) {
+    this(
+        args,
+        workDir,
+        model,
+        ui,
+        status,
+        compact,
+        sessionInfo,
+        sessionList,
+        sessionResume,
+        memorySummary,
+        memoryList,
+        memoryAdd,
+        memoryClear,
+        permissionSummary,
+        permissionRules,
+        permissionMode,
+        permissionAdd,
+        permissionReset,
+        () -> "未加载 Hook。");
+  }
 
   public interface UIController {
     void addSystemMessage(String text);

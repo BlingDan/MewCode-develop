@@ -1,5 +1,6 @@
 package com.mewcode.tool.support;
 
+import com.mewcode.agent.CancellationToken;
 import com.mewcode.permission.BashSandbox;
 import com.mewcode.permission.BashSandboxFactory;
 import com.mewcode.permission.BashSandboxRequest;
@@ -125,6 +126,84 @@ public final class CommandRunner {
       Thread.currentThread().interrupt();
       throw new IOException("脚本执行被中断", error);
     }
+    joinReader(outReader);
+    joinReader(errorReader);
+    int exitCode = process.isAlive() ? -1 : process.exitValue();
+    return new ScriptResult(
+        stdout.text(),
+        stderr.text(),
+        exitCode,
+        timedOut,
+        cancelled,
+        stdout.truncated() || stderr.truncated());
+  }
+
+  /** 在项目目录的 OS 沙箱中执行 Hook，stdin、stdout、stderr 保持独立。 */
+  public ScriptResult runHook(
+      String command,
+      Path workingDirectory,
+      String input,
+      java.time.Duration timeout,
+      CancellationToken cancellation)
+      throws IOException {
+    if (command == null || command.isBlank())
+      throw new IllegalArgumentException("command must not be blank");
+    if (workingDirectory == null || !workingDirectory.isAbsolute()) {
+      throw new IllegalArgumentException("workingDirectory must be absolute");
+    }
+    if (timeout == null || timeout.isZero() || timeout.isNegative()) {
+      throw new IllegalArgumentException("timeout must be positive");
+    }
+    if (cancellation == null) throw new IllegalArgumentException("cancellation must not be null");
+    if (cancellation.isCancelled()) return new ScriptResult("", "", -1, false, true, false);
+
+    Path root = workingDirectory.toAbsolutePath().normalize();
+    SandboxedProcess prepared =
+        sandbox.prepare(new BashSandboxRequest(command, root, List.of(root)));
+    Process process =
+        new ProcessBuilder(prepared.argv()).directory(prepared.workingDirectory().toFile()).start();
+    var stdout = new OutputCollector(MAX_OUTPUT_CHARS);
+    var stderr = new OutputCollector(MAX_OUTPUT_CHARS);
+    Thread outReader =
+        Thread.startVirtualThread(() -> readOutput(process.getInputStream(), stdout));
+    Thread errorReader =
+        Thread.startVirtualThread(() -> readOutput(process.getErrorStream(), stderr));
+    Thread inputWriter =
+        Thread.startVirtualThread(
+            () -> {
+              try (OutputStream stream = process.getOutputStream()) {
+                stream.write(input == null ? new byte[0] : input.getBytes(StandardCharsets.UTF_8));
+                stream.write('\n');
+              } catch (IOException ignored) {
+                // 超时、取消或进程提前退出时关闭 stdin 属于正常清理路径。
+              }
+            });
+
+    long deadline = System.nanoTime() + timeout.toNanos();
+    boolean timedOut = false;
+    boolean cancelled = false;
+    try {
+      while (process.isAlive()) {
+        if (cancellation.isCancelled()) {
+          cancelled = true;
+          process.destroyForcibly();
+          break;
+        }
+        long remaining = deadline - System.nanoTime();
+        if (remaining <= 0) {
+          timedOut = true;
+          process.destroyForcibly();
+          break;
+        }
+        process.waitFor(
+            Math.min(TimeUnit.NANOSECONDS.toMillis(remaining), 50), TimeUnit.MILLISECONDS);
+      }
+    } catch (InterruptedException error) {
+      process.destroyForcibly();
+      Thread.currentThread().interrupt();
+      throw new IOException("Hook 执行被中断", error);
+    }
+    joinReader(inputWriter);
     joinReader(outReader);
     joinReader(errorReader);
     int exitCode = process.isAlive() ? -1 : process.exitValue();

@@ -50,4 +50,55 @@ class PermissionConfigLoaderTest {
         ConfigLoader.ConfigException.class,
         () -> PermissionConfigLoader.load(projectRoot, new PermissionConfig()));
   }
+
+  @Test
+  void loadsStructuredMatcherRules() throws Exception {
+    Files.createDirectories(projectRoot.resolve(".mewcode"));
+    Files.writeString(
+        projectRoot.resolve(".mewcode/permissions.yaml"),
+        "rules:\n"
+            + "  - tool: Bash\n"
+            + "    match:\n"
+            + "      type: regex\n"
+            + "      value: '^git (status|diff)$'\n"
+            + "    decision: allow\n");
+
+    var loaded = PermissionConfigLoader.load(projectRoot, new PermissionConfig());
+
+    assertEquals(
+        com.mewcode.permission.RuleDecision.ALLOW,
+        loaded
+            .ruleEngine()
+            .match(
+                new com.mewcode.tool.ToolCall(
+                    "call-structured", "Bash", java.util.Map.of("command", "git diff")))
+            .orElseThrow()
+            .rule()
+            .decision());
+  }
+
+  @Test
+  void rejectsMixedAndInvalidStructuredRules() throws Exception {
+    Files.createDirectories(projectRoot.resolve(".mewcode"));
+    Files.writeString(
+        projectRoot.resolve(".mewcode/permissions.yaml"),
+        "rules:\n"
+            + "  - pattern: 'Bash(git *)'\n"
+            + "    tool: Bash\n"
+            + "    match: {type: exact, value: git status}\n"
+            + "    decision: allow\n");
+    assertThrows(
+        ConfigLoader.ConfigException.class,
+        () -> PermissionConfigLoader.load(projectRoot, new PermissionConfig()));
+
+    Files.writeString(
+        projectRoot.resolve(".mewcode/permissions.yaml"),
+        "rules:\n"
+            + "  - tool: Bash\n"
+            + "    match: {type: regex, value: '['}\n"
+            + "    decision: allow\n");
+    assertThrows(
+        ConfigLoader.ConfigException.class,
+        () -> PermissionConfigLoader.load(projectRoot, new PermissionConfig()));
+  }
 }

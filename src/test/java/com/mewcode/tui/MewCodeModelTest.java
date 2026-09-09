@@ -825,6 +825,67 @@ class MewCodeModelTest {
         client.lastMessages.get());
   }
 
+  @Test
+  void userPromptHookCanRejectBeforeHistoryAndProvider() throws Exception {
+    Files.createDirectories(projectRoot.resolve(".mewcode"));
+    Files.writeString(
+        projectRoot.resolve(".mewcode/hooks.yaml"),
+        """
+        hooks:
+          - name: deny-input
+            event: UserPromptSubmit
+            action:
+              type: shell
+              command: "printf 'input blocked' >&2; exit 2"
+        """);
+    var client = new QueueClient(response("should not run"));
+    var model = model(List.of(provider("one", "model-one")), client);
+    model.update(new WindowSizeMessage(100, 30));
+    type(model, "HOOK_INPUT_DENY 请回复你好");
+    model.update(key("enter"));
+
+    for (int attempt = 0; attempt < 100; attempt++) {
+      model.update(new MewCodeModel.PromptCheckPollMessage());
+      if (model.view().contains("input blocked")) break;
+      Thread.sleep(10);
+    }
+
+    assertEquals(0, client.calls.get());
+    assertTrue(model.view().contains("HOOK_INPUT_DENY"), model.view());
+    assertTrue(model.view().contains("input blocked"), model.view());
+    model.close();
+  }
+
+  @Test
+  void lifecycleHooksRunOnceInOrderAndCloseIsIdempotent() throws Exception {
+    Files.createDirectories(projectRoot.resolve(".mewcode"));
+    Files.writeString(
+        projectRoot.resolve(".mewcode/hooks.yaml"),
+        """
+        hooks:
+          - name: startup
+            event: startup
+            action: {type: shell, command: "printf startup, >> lifecycle.log"}
+          - name: session-start
+            event: SessionStart
+            action: {type: shell, command: "printf session-start, >> lifecycle.log"}
+          - name: session-end
+            event: SessionEnd
+            action: {type: shell, command: "printf session-end, >> lifecycle.log"}
+          - name: shutdown
+            event: shutdown
+            action: {type: shell, command: "printf shutdown, >> lifecycle.log"}
+        """);
+    var model = model(List.of(provider("one", "model-one")), new QueueClient());
+    model.update(new WindowSizeMessage(80, 24));
+    model.close();
+    model.close();
+
+    assertEquals(
+        "startup,session-start,session-end,shutdown,",
+        Files.readString(projectRoot.resolve("lifecycle.log")));
+  }
+
   private MewCodeModel model(List<ProviderConfig> providers, LlmClient client) {
     return new MewCodeModel(
         providers, projectRoot, (provider, prompt) -> client, projectRoot.resolve("test-home"));

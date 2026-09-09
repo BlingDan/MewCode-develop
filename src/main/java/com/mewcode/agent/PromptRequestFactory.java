@@ -73,12 +73,11 @@ public final class PromptRequestFactory {
               + dynamic.memoryIndex());
     }
     if (!dynamic.activeSkills().isBlank()) segments.add(dynamic.activeSkills());
-    return new PromptRequest(
-        segments,
-        tools,
-        history,
+    var reminder =
         mergeReminders(
-            SystemReminderFactory.create(context, deferredToolNames), dynamic.resumeReminder()));
+            SystemReminderFactory.create(context, deferredToolNames), dynamic.resumeReminder());
+    reminder = mergeReminders(reminder, hookReminder(dynamic.hookReminders()));
+    return new PromptRequest(segments, tools, history, reminder);
   }
 
   /** 创建上下文预检所需的 system、tools 和 reminder 快照，不携带 history。 */
@@ -118,6 +117,16 @@ public final class PromptRequestFactory {
     blocks.addAll(base.get().content());
     blocks.add(new TextBlock("\n"));
     blocks.addAll(extra.get().content());
+    return java.util.Optional.of(new Message("user", blocks));
+  }
+
+  private static java.util.Optional<Message> hookReminder(List<String> texts) {
+    if (texts == null || texts.isEmpty()) return java.util.Optional.empty();
+    var blocks = new java.util.ArrayList<ContentBlock>();
+    for (int index = 0; index < texts.size(); index++) {
+      if (index > 0) blocks.add(new TextBlock("\n"));
+      blocks.add(new TextBlock(texts.get(index)));
+    }
     return java.util.Optional.of(new Message("user", blocks));
   }
 }

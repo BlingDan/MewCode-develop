@@ -7,7 +7,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.regex.Pattern;
 
 /** 按会话、本地、项目、用户顺序执行的规则引擎。 */
 public final class PermissionRuleEngine {
@@ -42,7 +41,7 @@ public final class PermissionRuleEngine {
     String subject = target(call, projectRoot);
     return rules.stream()
         .filter(rule -> rule.toolName().equals(call.toolName()))
-        .filter(rule -> globMatches(rule.targetPattern(), subject))
+        .filter(rule -> rule.matcher().matches(subject))
         .map(rule -> new RuleMatch(rule, subject))
         .findFirst();
   }
@@ -94,24 +93,7 @@ public final class PermissionRuleEngine {
   }
 
   static boolean globMatches(String glob, String value) {
-    if (glob.indexOf('*') < 0 && glob.indexOf('?') < 0) return glob.equals(value);
-    return Pattern.compile(globToRegex(glob), Pattern.DOTALL).matcher(value).matches();
-  }
-
-  private static String globToRegex(String glob) {
-    var regex = new StringBuilder("^");
-    for (int i = 0; i < glob.length(); i++) {
-      char character = glob.charAt(i);
-      if (character == '*') {
-        regex.append(".*");
-      } else if (character == '?') {
-        regex.append('.');
-      } else {
-        if ("\\.^$|()[]{}+".indexOf(character) >= 0) regex.append('\\');
-        regex.append(character);
-      }
-    }
-    return regex.append('$').toString();
+    return RuleMatcher.glob(glob).matches(value);
   }
 
   private static String stringValue(Object value) {

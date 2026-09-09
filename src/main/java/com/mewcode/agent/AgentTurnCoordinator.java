@@ -8,6 +8,11 @@ import com.mewcode.compact.ContextTrigger;
 import com.mewcode.conversation.ConversationManager;
 import com.mewcode.conversation.Message;
 import com.mewcode.conversation.ToolResultBlock;
+import com.mewcode.hook.HookEngine;
+import com.mewcode.hook.HookEvent;
+import com.mewcode.hook.HookInvocation;
+import com.mewcode.hook.HookRejection;
+import com.mewcode.hook.HookSessionState;
 import com.mewcode.llm.CancellableLlmStream;
 import com.mewcode.llm.LlmClient;
 import com.mewcode.llm.PromptRequest;
@@ -37,6 +42,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.function.Consumer;
@@ -74,6 +80,9 @@ public final class AgentTurnCoordinator {
   private volatile Supplier<SkillCatalog.RefreshResult> skillRefresher;
   private volatile ProviderRouter providerRouter;
   private volatile Function<SkillExecutor.ForkRequest, ToolResult> forkRunner;
+  private volatile HookEngine hookEngine;
+  private volatile HookSessionState hookState;
+  private volatile String hookSessionId;
 
   public AgentTurnCoordinator(
       LlmClient client,
@@ -351,7 +360,8 @@ public final class AgentTurnCoordinator {
                   startingMessageCount,
                   userText,
                   permissionSnapshot,
-                  runSkills));
+                  runSkills,
+                  UUID.randomUUID().toString()));
     } catch (Throwable error) {
       finish(run, 0, "Agent Loop 启动失败：" + safeMessage(error), AgentEvent.ErrorCategory.LOOP);
     }
@@ -405,6 +415,7 @@ public final class AgentTurnCoordinator {
       run.events().publish(new AgentEvent.CompactionStarted(ContextTrigger.MANUAL));
       var result = contextManager.forceCompact(conversation, request, ContextTrigger.MANUAL, focus);
       run.events().publish(new AgentEvent.CompactionComplete(result));
+      dispatchCompact(mode, ContextTrigger.MANUAL, result, run);
       finish(run, 0, null, null);
     } catch (ContextException error) {
       if (run.cancellationToken().isCancelled()) {
@@ -461,6 +472,20 @@ public final class AgentTurnCoordinator {
     this.forkRunner = forkRunner;
   }
 
+  /** 绑定当前会话的 Hook 引擎和内存状态；未绑定时保持旧行为。 */
+  public void configureHooks(HookEngine engine, HookSessionState state) {
+    this.hookEngine = Objects.requireNonNull(engine, "engine");
+    this.hookState = Objects.requireNonNull(state, "state");
+    executor.configureHooks(engine, state);
+    if (hookSessionId != null) executor.setHookSessionId(hookSessionId);
+  }
+
+  /** 更新事件上下文中的会话标识，不会重置 Hook 状态。 */
+  public void setHookSessionId(String sessionId) {
+    this.hookSessionId = sessionId == null || sessionId.isBlank() ? null : sessionId;
+    executor.setHookSessionId(this.hookSessionId);
+  }
+
   /**
    * 执行 ReAct 主循环。
    *
@@ -473,7 +498,8 @@ public final class AgentTurnCoordinator {
       int startingMessageCount,
       String userText,
       PermissionRuntime.Snapshot permissionSnapshot,
-      SkillRun skills) {
+      SkillRun skills,
+      String requestId) {
     var usage = new TokenUsageAccumulator();
     var collector = new TurnStreamCollector(usage);
     boolean memoryOnlyRequest = isMemoryOnlyRequest(userText);
@@ -485,6 +511,10 @@ public final class AgentTurnCoordinator {
     run.addCancellationHook(interruptThread);
 
     try {
+      dispatchHook(
+          HookEvent.TURN_START,
+          Map.of("prompt", userText, "request_id", requestId, "mode", mode.name()),
+          run);
       while (!run.cancellationToken().isCancelled()
           && completedRounds < config.getMaxIterations()) {
         int round = completedRounds + 1;
@@ -498,8 +528,9 @@ public final class AgentTurnCoordinator {
                 : providerRouter.select(skills.preferredProvider().orElse(null));
         PromptAdditions additions = skillAdditions(promptAdditionsSupplier.get(), skills);
         Attempt attempt =
-            openAttempt(run, mode, round, memoryOnlyRequest, policy, route, additions);
-        CollectedTurn turn = collector.collect(run, attempt.stream(), round * 2 - 1);
+            openAttempt(
+                run, mode, round, memoryOnlyRequest, policy, route, additions, requestId, 1);
+        CollectedTurn turn = collectAttempt(collector, run, attempt, round * 2 - 1);
         recordUsage(turn, attempt);
 
         if (!turn.complete()
@@ -511,8 +542,10 @@ public final class AgentTurnCoordinator {
               .publish(
                   new AgentEvent.ProviderFallback(
                       route.config().getName(), main.config().getName()));
-          attempt = openAttempt(run, mode, round, memoryOnlyRequest, policy, main, additions);
-          turn = collector.collect(run, attempt.stream(), round * 2);
+          attempt =
+              openAttempt(
+                  run, mode, round, memoryOnlyRequest, policy, main, additions, requestId, 2);
+          turn = collectAttempt(collector, run, attempt, round * 2);
           recordUsage(turn, attempt);
         }
         PromptRequest sentRequest = attempt.request();
@@ -533,6 +566,7 @@ public final class AgentTurnCoordinator {
                 contextManager.forceCompact(
                     conversation, sentContextRequest, ContextTrigger.EMERGENCY);
             run.events().publish(new AgentEvent.CompactionComplete(result));
+            dispatchCompact(mode, ContextTrigger.EMERGENCY, result, run);
             continue;
           }
           finish(
@@ -557,6 +591,8 @@ public final class AgentTurnCoordinator {
         }
         if (turn.calls().isEmpty()) {
           conversation.addAssistantMessage(turn.blocks());
+          dispatchHook(
+              HookEvent.STOP, Map.of("request_id", requestId, "iterations", completedRounds), run);
           notifyCompletedTurn(startingMessageCount, userText);
           finish(run, completedRounds, null, null);
           return;
@@ -571,12 +607,29 @@ public final class AgentTurnCoordinator {
             executableCalls.stream().anyMatch(call -> LoadSkillTool.NAME.equals(call.toolName()));
         List<ToolInvocationResult> executed;
         if (loadsSkill) {
-          executed = executeSkillLoads(executableCalls, mode, run, skills);
+          executed = executeSkillLoads(executableCalls, mode, run, skills, requestId);
         } else {
           executed =
               permissionGate == null
-                  ? executor.executeBatch(executableCalls, policy, run.cancellationToken())
-                  : executor.executeBatch(executableCalls, policy, permissions);
+                  ? executor.executeBatch(
+                      executableCalls, policy, run.cancellationToken(), requestId, mode)
+                  : executor.executeBatch(executableCalls, policy, permissions, requestId, mode);
+        }
+        for (Map.Entry<String, String> parseError : parseErrors.entrySet()) {
+          turn.calls().stream()
+              .filter(call -> call.toolUseId().equals(parseError.getKey()))
+              .findFirst()
+              .ifPresent(
+                  call ->
+                      executor.publishPostToolUse(
+                          call,
+                          new ToolInvocationResult(
+                              call.toolUseId(),
+                              ToolResult.error(parseError.getValue())
+                                  .withMetadata(Map.of("status", "parse_error"))),
+                          requestId,
+                          mode,
+                          run.cancellationToken()));
         }
         List<ToolResultBlock> resultBlocks =
             ToolResultAssembler.assemble(turn.calls(), executed, turn.parseErrors());
@@ -665,22 +718,42 @@ public final class AgentTurnCoordinator {
       boolean memoryOnlyRequest,
       ToolPolicy policy,
       ProviderRouter.Route route,
-      PromptAdditions additions) {
+      PromptAdditions additions,
+      String requestId,
+      int attemptNumber) {
     List<String> deferredToolNames = memoryOnlyRequest ? List.of() : registry.deferredToolNames();
     List<Map<String, Object>> schemas =
         registry.toAPIFormateForModel(
             route.protocol(), tool -> memoryOnlyRequest ? tool.isSystem() : policy.isAllowed(tool));
+    PromptAdditions baseAdditions = additions == null ? PromptAdditions.empty() : additions;
+    PromptAdditions dynamic = baseAdditions;
+    HookSessionState.ReminderBatch reminderBatch = null;
+    if (hookEngine != null && hookState != null) {
+      dispatchHook(
+          HookEvent.MESSAGE_START,
+          messageStartPayload(mode, requestId, round, attemptNumber, route),
+          run);
+      reminderBatch = hookState.snapshotPrompts();
+      dynamic = withHookReminders(baseAdditions, reminderBatch.texts());
+    }
     if (promptRequestFactory == null) {
       String systemPrompt = systemPromptProvider.apply(mode);
-      CancellableLlmStream stream =
-          systemPrompt == null
-              ? route.client().openStream(conversation, schemas)
-              : route.client().openStream(conversation, schemas, systemPrompt);
-      return new Attempt(stream, null, null);
+      try {
+        CancellableLlmStream stream =
+            systemPrompt == null
+                ? route.client().openStream(conversation, schemas)
+                : route.client().openStream(conversation, schemas, systemPrompt);
+        return new Attempt(stream, null, null, requestId, round, attemptNumber, route, mode);
+      } catch (RuntimeException error) {
+        dispatchMessageEndFailure(mode, requestId, round, attemptNumber, run, error);
+        throw error;
+      } finally {
+        if (reminderBatch != null) hookState.consumePrompts(reminderBatch);
+      }
     }
     ContextRequest contextRequest =
         promptRequestFactory.createContextRequest(
-            mode, round, round == 1, schemas, deferredToolNames, additions);
+            mode, round, round == 1, schemas, deferredToolNames, dynamic);
     if (contextManager != null) {
       ContextPreparation preparation =
           contextManager.prepareForRequest(
@@ -688,8 +761,16 @@ public final class AgentTurnCoordinator {
               contextRequest,
               trigger -> run.events().publish(new AgentEvent.CompactionStarted(trigger)));
       if (preparation.compacted()) {
-        run.events()
-            .publish(new AgentEvent.CompactionComplete(preparation.compactResult().orElseThrow()));
+        com.mewcode.compact.CompactResult compactResult = preparation.compactResult().orElseThrow();
+        run.events().publish(new AgentEvent.CompactionComplete(compactResult));
+        dispatchCompact(mode, ContextTrigger.AUTO, compactResult, run);
+        if (hookState != null) {
+          reminderBatch = hookState.snapshotPrompts();
+          dynamic = withHookReminders(baseAdditions, reminderBatch.texts());
+          contextRequest =
+              promptRequestFactory.createContextRequest(
+                  mode, round, round == 1, schemas, deferredToolNames, dynamic);
+        }
       }
     }
     PromptRequest request =
@@ -700,10 +781,25 @@ public final class AgentTurnCoordinator {
             conversation.getMessages(),
             schemas,
             deferredToolNames,
-            additions);
+            dynamic);
     ContextRequest sent =
         new ContextRequest(request.systemSegments(), request.tools(), request.reminder());
-    return new Attempt(route.client().openStream(request), request, sent);
+    try {
+      return new Attempt(
+          route.client().openStream(request),
+          request,
+          sent,
+          requestId,
+          round,
+          attemptNumber,
+          route,
+          mode);
+    } catch (RuntimeException error) {
+      dispatchMessageEndFailure(mode, requestId, round, attemptNumber, run, error);
+      throw error;
+    } finally {
+      if (reminderBatch != null) hookState.consumePrompts(reminderBatch);
+    }
   }
 
   private void recordUsage(CollectedTurn turn, Attempt attempt) {
@@ -720,21 +816,181 @@ public final class AgentTurnCoordinator {
     PromptAdditions value = base == null ? PromptAdditions.empty() : base;
     String summary = skillCatalog == null ? value.skillCatalog() : skillCatalog.promptSummary();
     String active = skills.promptBlock().isBlank() ? value.activeSkills() : skills.promptBlock();
-    return new PromptAdditions(value.memoryIndex(), value.resumeReminder(), summary, active);
+    return new PromptAdditions(
+        value.memoryIndex(), value.resumeReminder(), summary, active, value.hookReminders());
+  }
+
+  private PromptAdditions withHookReminders(PromptAdditions base, List<String> reminders) {
+    PromptAdditions value = base == null ? PromptAdditions.empty() : base;
+    var combined = new java.util.ArrayList<>(value.hookReminders());
+    if (reminders != null) combined.addAll(reminders);
+    return new PromptAdditions(
+        value.memoryIndex(),
+        value.resumeReminder(),
+        value.skillCatalog(),
+        value.activeSkills(),
+        combined);
+  }
+
+  private Map<String, Object> messageStartPayload(
+      AgentMode mode, String requestId, int round, int attemptNumber, ProviderRouter.Route route) {
+    var payload = baseHookPayload(mode);
+    payload.put("request_id", requestId);
+    payload.put("iteration", round);
+    payload.put("attempt", attemptNumber);
+    if (route.config() != null) {
+      payload.put("provider", route.config().getName());
+      payload.put("model", route.config().getModel());
+    }
+    payload.put("prompt", latestUserPrompt());
+    return payload;
+  }
+
+  private void dispatchMessageEnd(Attempt attempt, CollectedTurn turn, AgentRun run) {
+    var payload = baseHookPayload(attempt.mode());
+    payload.put("request_id", attempt.requestId());
+    payload.put("iteration", attempt.iteration());
+    payload.put("attempt", attempt.attemptNumber());
+    payload.put(
+        "status",
+        turn.complete()
+            ? "success"
+            : run.cancellationToken().isCancelled() ? "cancelled" : "error");
+    payload.put("response", turn.text());
+    payload.put(
+        "tool_calls",
+        turn.calls().stream()
+            .map(
+                call ->
+                    Map.of(
+                        "tool_use_id", call.toolUseId(),
+                        "tool_name", call.toolName(),
+                        "tool_input", call.arguments()))
+            .toList());
+    if (turn.error() != null && !turn.error().isBlank()) payload.put("error", turn.error());
+    dispatchHook(HookEvent.MESSAGE_END, payload, run);
+  }
+
+  private void dispatchMessageEndFailure(
+      AgentMode mode,
+      String requestId,
+      int iteration,
+      int attemptNumber,
+      AgentRun run,
+      Throwable error) {
+    var payload = baseHookPayload(mode);
+    payload.put("request_id", requestId);
+    payload.put("iteration", iteration);
+    payload.put("attempt", attemptNumber);
+    payload.put("status", run.cancellationToken().isCancelled() ? "cancelled" : "error");
+    payload.put("response", "");
+    payload.put("error", safeMessage(error));
+    dispatchHook(HookEvent.MESSAGE_END, payload, run, mode);
+  }
+
+  private CollectedTurn collectAttempt(
+      TurnStreamCollector collector, AgentRun run, Attempt attempt, int usageRound)
+      throws InterruptedException {
+    try {
+      CollectedTurn turn = collector.collect(run, attempt.stream(), usageRound);
+      dispatchMessageEnd(attempt, turn, run);
+      return turn;
+    } catch (InterruptedException error) {
+      dispatchMessageEndFailure(
+          attempt.mode(),
+          attempt.requestId(),
+          attempt.iteration(),
+          attempt.attemptNumber(),
+          run,
+          error);
+      throw error;
+    } catch (RuntimeException error) {
+      dispatchMessageEndFailure(
+          attempt.mode(),
+          attempt.requestId(),
+          attempt.iteration(),
+          attempt.attemptNumber(),
+          run,
+          error);
+      throw error;
+    }
+  }
+
+  private void dispatchCompact(
+      AgentMode mode,
+      ContextTrigger trigger,
+      com.mewcode.compact.CompactResult result,
+      AgentRun run) {
+    dispatchHook(
+        HookEvent.COMPACT,
+        Map.of(
+            "trigger", trigger.name().toLowerCase(Locale.ROOT),
+            "before_tokens", result.beforeTokens(),
+            "after_tokens", result.afterTokens()),
+        run,
+        mode);
+  }
+
+  private void dispatchHook(HookEvent event, Map<String, Object> fields, AgentRun run) {
+    dispatchHook(event, fields, run, AgentMode.EXECUTE);
+  }
+
+  private void dispatchHook(
+      HookEvent event, Map<String, Object> fields, AgentRun run, AgentMode mode) {
+    if (hookEngine == null || hookState == null) return;
+    var payload = baseHookPayload(mode);
+    if (fields != null) payload.putAll(fields);
+    hookEngine.dispatch(new HookInvocation(event, payload, hookState, run.cancellationToken()));
+  }
+
+  private java.util.LinkedHashMap<String, Object> baseHookPayload(AgentMode mode) {
+    var payload = new java.util.LinkedHashMap<String, Object>();
+    payload.put("cwd", executor.projectRoot().toString());
+    if (hookSessionId != null) payload.put("session_id", hookSessionId);
+    payload.put("mode", mode.name());
+    return payload;
+  }
+
+  private String latestUserPrompt() {
+    var messages = conversation.getMessages();
+    for (int index = messages.size() - 1; index >= 0; index--) {
+      if ("user".equals(messages.get(index).role())) return messages.get(index).textContent();
+    }
+    return "";
   }
 
   private List<ToolInvocationResult> executeSkillLoads(
-      List<ToolCall> calls, AgentMode mode, AgentRun parentRun, SkillRun skills) {
+      List<ToolCall> calls, AgentMode mode, AgentRun parentRun, SkillRun skills, String requestId) {
     var results = new java.util.ArrayList<ToolInvocationResult>();
     for (ToolCall call : calls) {
-      if (!LoadSkillTool.NAME.equals(call.toolName())) {
-        results.add(
-            new ToolInvocationResult(
-                call.toolUseId(), ToolResult.error("Skill 已更新，请在下一轮根据新的可用工具重新选择。")));
-        continue;
+      HookRejection rejection =
+          executor.prepareHook(call, requestId, mode, parentRun.cancellationToken()).orElse(null);
+      ToolResult result;
+      if (rejection != null) {
+        result =
+            ToolResult.error("Hook [" + rejection.hookName() + "] 拒绝工具调用：" + rejection.reason())
+                .withMetadata(
+                    Map.<String, Object>of(
+                        "status", "hook_rejected",
+                        "hook_name", rejection.hookName(),
+                        "hook_reason", rejection.reason()));
+      } else if (!LoadSkillTool.NAME.equals(call.toolName())) {
+        result = ToolResult.error("Skill 已更新，请在下一轮根据新的可用工具重新选择工具。");
+      } else {
+        result = loadSkill(call, mode, parentRun, skills);
       }
-      results.add(
-          new ToolInvocationResult(call.toolUseId(), loadSkill(call, mode, parentRun, skills)));
+      ToolInvocationResult invocationResult =
+          new ToolInvocationResult(
+              call.toolUseId(),
+              result.withMetadata(
+                  Map.<String, Object>of(
+                      "status",
+                      result
+                          .metadata()
+                          .getOrDefault("status", result.isError() ? "error" : "success"))));
+      executor.publishPostToolUse(
+          call, invocationResult, requestId, mode, parentRun.cancellationToken());
+      results.add(invocationResult);
     }
     return List.copyOf(results);
   }
@@ -769,7 +1025,14 @@ public final class AgentTurnCoordinator {
   }
 
   private record Attempt(
-      CancellableLlmStream stream, PromptRequest request, ContextRequest contextRequest) {}
+      CancellableLlmStream stream,
+      PromptRequest request,
+      ContextRequest contextRequest,
+      String requestId,
+      int iteration,
+      int attemptNumber,
+      ProviderRouter.Route route,
+      AgentMode mode) {}
 
   private static boolean isMemoryOnlyRequest(String userText) {
     String text = userText == null ? "" : userText.toLowerCase(Locale.ROOT);
@@ -911,9 +1174,13 @@ public final class AgentTurnCoordinator {
   }
 
   /** 统一发布错误、循环结束并关闭事件流；调用可重复但事件收口由 AgentRun 保证。 */
-  private static void finish(
+  private void finish(
       AgentRun run, int totalRounds, String errorMessage, AgentEvent.ErrorCategory category) {
     if (errorMessage != null && category != null) {
+      dispatchHook(
+          HookEvent.ERROR,
+          Map.of("error", errorMessage, "category", category.name().toLowerCase(Locale.ROOT)),
+          run);
       run.events().publish(new AgentEvent.Error(errorMessage, category));
     }
     run.events().publish(new AgentEvent.LoopComplete(totalRounds));

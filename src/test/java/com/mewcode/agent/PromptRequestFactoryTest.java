@@ -85,4 +85,21 @@ class PromptRequestFactoryTest {
     assertTrue(
         request.systemSegments().indexOf("# 可用 Skills\n- review: review changes") < memoryIndex);
   }
+
+  @Test
+  void appendsHookRemindersAfterExistingReminderWithoutChangingHistory() {
+    var factory = new PromptRequestFactory(PromptBuilder.buildBundle(Path.of("project")));
+    var history = List.of(new Message("user", "keep history"));
+    var additions =
+        new PromptAdditions(
+            "", java.util.Optional.empty(), "", "", List.of("HOOK_FIRST", "HOOK_SECOND"));
+
+    PromptRequest request =
+        factory.create(AgentMode.EXECUTE, 1, false, history, List.of(), List.of(), additions);
+    String reminder = request.reminder().orElseThrow().textContent();
+
+    assertTrue(reminder.indexOf("HOOK_FIRST") > reminder.indexOf("Current mode"));
+    assertTrue(reminder.indexOf("HOOK_FIRST") < reminder.indexOf("HOOK_SECOND"));
+    assertEquals(history, request.history());
+  }
 }

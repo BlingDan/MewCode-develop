@@ -14,12 +14,12 @@ MewCode 是一个使用 Java 构建的终端 AI 编程助手，面向希望在�
 
 ## Roadmap / TODO
 
-以下能力属于后续规划，当前尚未实现：
+    以下能力属于后续规划，当前尚未实现：
 
 - [x] 记忆系统——跨会话的 Agent 记忆
 - [x] Slash Command——内置命令框架
-- [ ] Skill 系统——可复用的技能包
-- [ ] Hook 系统——生命周期钩子与自动化
+- [x] Skill 系统——可复用的技能包
+- [x] Hook 系统——生命周期钩子与自动化
 - [ ] SubAgent——子 Agent 与任务分发
 - [ ] Worktree——Git Worktree 并行开发
 - [ ] Agent Teams——从一次性子任务到长期协作
@@ -72,6 +72,8 @@ MewCode 是一个使用 Java 构建的终端 AI 编程助手，面向希望在�
 ## 配置
 
 启动前需要在当前项目目录创建 `.mewcode/config.yaml`，至少配置一个 LLM Provider。该文件还可配置 Agent Loop、权限模式和项目级 MCP Server；真实 API Key 不要提交到版本库。
+
+Hook 配置可参考 `.mewcode/hooks.yaml.example`，按需复制为 `.mewcode/hooks.yaml` 后重启生效。也可以使用用户级 `~/.mewcode/hooks.yaml`；项目级规则会先于用户级规则加载。启动后输入 `/hooks` 可查看已加载规则。
 
 ## 运行
 

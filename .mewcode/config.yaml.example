@@ -24,7 +24,7 @@ providers:
     context_window_tokens: 128000
 
 permissions:
-  mode: default
+  mode: acceptEdits
 
 # MCP Server：通过 command/args/env 配置 stdio，或通过 url/headers 配置 Streamable HTTP。
 # API key 等敏感值直接填写在配置文件中；stdio 仍需使用 Server 要求的环境变量名。

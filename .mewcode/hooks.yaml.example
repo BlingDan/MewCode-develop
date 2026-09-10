@@ -1,0 +1,39 @@
+# Hook 示例配置。
+# 复制为 .mewcode/hooks.yaml 后，重启 MewCode 才会加载。
+# 用户级配置也可以放在 ~/.mewcode/hooks.yaml。
+
+hooks:
+  # 启动时向下一次模型请求加入一次提醒。
+  - name: startup-reminder
+    event: startup
+    only_once: true
+    action:
+      type: prompt
+      text: "执行前确认目标文件、最小改动和测试命令。"
+
+  # 在工具权限检查和实际执行前拦截简单的 git push。
+  # PreToolUse 只能使用同步 Hook；shell 以退出码 2 表示主动拒绝。
+  - name: block-git-push
+    event: PreToolUse
+    if:
+      all_of:
+        - field: tool_name
+          match: {type: exact, value: Bash}
+        - field: tool_input.command
+          match: {type: regex, value: '^git\s+push\b'}
+    action:
+      type: shell
+      command: |
+        printf '%s\n' '禁止直接 git push，请先完成检查。' >&2
+        exit 2
+    timeout: 5s
+
+  # 异步保存工具事件；事件 JSON 会从 stdin 传入。
+  # PostToolUse 的结果字段在当前实现中叫 result。
+  - name: record-tool-events
+    event: PostToolUse
+    async: true
+    action:
+      type: shell
+      command: "mkdir -p .mewcode && cat >> .mewcode/hook-events.jsonl"
+    timeout: 5s

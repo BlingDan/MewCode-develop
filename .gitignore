@@ -56,6 +56,8 @@ jacoco.exec
 .mewcode/permissions.local.yaml
 .mewcode/memory/
 .mewcode/sessions/
+.mewcode/hooks.yaml
+.mewcode/hook-events.jsonl
 .env
 .env.*
 !.env.example

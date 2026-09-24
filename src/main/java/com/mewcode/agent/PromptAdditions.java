@@ -11,7 +11,8 @@ public record PromptAdditions(
     Optional<Message> resumeReminder,
     String skillCatalog,
     String activeSkills,
-    List<String> hookReminders) {
+    List<String> hookReminders,
+    String agentCatalog) {
 
   public PromptAdditions {
     memoryIndex = Objects.requireNonNullElse(memoryIndex, "");
@@ -25,6 +26,7 @@ public record PromptAdditions(
                 .filter(Objects::nonNull)
                 .filter(text -> !text.isBlank())
                 .toList();
+    agentCatalog = Objects.requireNonNullElse(agentCatalog, "");
   }
 
   public PromptAdditions(
@@ -32,7 +34,16 @@ public record PromptAdditions(
       Optional<Message> resumeReminder,
       String skillCatalog,
       String activeSkills) {
-    this(memoryIndex, resumeReminder, skillCatalog, activeSkills, List.of());
+    this(memoryIndex, resumeReminder, skillCatalog, activeSkills, List.of(), "");
+  }
+
+  public PromptAdditions(
+      String memoryIndex,
+      Optional<Message> resumeReminder,
+      String skillCatalog,
+      String activeSkills,
+      List<String> hookReminders) {
+    this(memoryIndex, resumeReminder, skillCatalog, activeSkills, hookReminders, "");
   }
 
   public PromptAdditions(String memoryIndex, Optional<Message> resumeReminder) {
@@ -40,6 +51,6 @@ public record PromptAdditions(
   }
 
   public static PromptAdditions empty() {
-    return new PromptAdditions("", Optional.empty(), "", "", List.of());
+    return new PromptAdditions("", Optional.empty(), "", "", List.of(), "");
   }
 }

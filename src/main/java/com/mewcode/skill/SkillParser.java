@@ -2,6 +2,8 @@ package com.mewcode.skill;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mewcode.definition.MarkdownFrontmatter;
+import com.mewcode.definition.MarkdownFrontmatter.MarkdownDocument;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -12,9 +14,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import org.yaml.snakeyaml.LoaderOptions;
-import org.yaml.snakeyaml.Yaml;
-import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 /** 解析带 YAML frontmatter 的 Skill Markdown 及其可选脚本工具声明。 */
 public final class SkillParser {
@@ -32,9 +31,8 @@ public final class SkillParser {
   public static SkillDefinition parse(Path entry, SkillDefinition.Source source) {
     Path absolute = entry.toAbsolutePath().normalize();
     try {
-      String text = Files.readString(absolute, StandardCharsets.UTF_8).replace("\r\n", "\n");
-      Frontmatter split = split(text);
-      Map<String, Object> yaml = yaml(split.yaml());
+      MarkdownDocument split = MarkdownFrontmatter.read(absolute);
+      Map<String, Object> yaml = split.frontmatter();
       rejectUnknownFields(yaml);
       SkillDefinition.Meta meta = bindMeta(yaml);
       Path directory = absolute.getParent();
@@ -52,8 +50,8 @@ public final class SkillParser {
   static SkillDefinition parseBuiltin(String resourceName, String text) {
     Path marker = Path.of("/classpath/skills/builtin", resourceName).toAbsolutePath();
     try {
-      Frontmatter split = split(text.replace("\r\n", "\n"));
-      Map<String, Object> yaml = yaml(split.yaml());
+      MarkdownDocument split = MarkdownFrontmatter.parse(text);
+      Map<String, Object> yaml = split.frontmatter();
       rejectUnknownFields(yaml);
       return new SkillDefinition(
           bindMeta(yaml),
@@ -67,25 +65,6 @@ public final class SkillParser {
     } catch (Exception error) {
       throw new ParseException(marker + "：" + safeReason(error), error);
     }
-  }
-
-  private static Frontmatter split(String text) {
-    if (!text.startsWith("---\n")) throw new ParseException("缺少文件开头的 YAML frontmatter");
-    int end = text.indexOf("\n---\n", 4);
-    if (end < 0) throw new ParseException("YAML frontmatter 缺少结束分隔符");
-    String body = text.substring(end + 5);
-    if (body.isBlank()) throw new ParseException("Skill 正文不能为空");
-    return new Frontmatter(text.substring(4, end), body);
-  }
-
-  @SuppressWarnings("unchecked")
-  private static Map<String, Object> yaml(String source) {
-    LoaderOptions options = new LoaderOptions();
-    options.setMaxAliasesForCollections(20);
-    options.setNestingDepthLimit(20);
-    Object loaded = new Yaml(new SafeConstructor(options)).load(source);
-    if (!(loaded instanceof Map<?, ?> map)) throw new ParseException("frontmatter 必须是对象");
-    return (Map<String, Object>) map;
   }
 
   private static void rejectUnknownFields(Map<String, Object> yaml) {
@@ -265,6 +244,8 @@ public final class SkillParser {
 
   private static String safeReason(Throwable error) {
     if (error instanceof ParseException && error.getMessage() != null) return error.getMessage();
+    if (error instanceof MarkdownFrontmatter.ParseException && error.getMessage() != null)
+      return error.getMessage();
     if (error instanceof org.yaml.snakeyaml.error.YAMLException) return "YAML 格式无效";
     if (error instanceof com.fasterxml.jackson.core.JsonProcessingException) {
       return "tool.json 格式无效";
@@ -272,8 +253,6 @@ public final class SkillParser {
     if (error instanceof IOException) return "Skill 文件读取失败";
     return error.getClass().getSimpleName();
   }
-
-  private record Frontmatter(String yaml, String body) {}
 
   public static final class ParseException extends RuntimeException {
     public ParseException(String message) {

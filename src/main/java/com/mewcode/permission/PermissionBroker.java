@@ -13,6 +13,7 @@ public final class PermissionBroker implements AutoCloseable {
   private final Map<String, CompletableFuture<PermissionResponse>> pending =
       new ConcurrentHashMap<>();
   private volatile Consumer<PermissionRequest> publisher = ignored -> {};
+  private volatile boolean closed;
 
   public void setPublisher(Consumer<PermissionRequest> publisher) {
     this.publisher = Objects.requireNonNull(publisher, "publisher");
@@ -22,13 +23,14 @@ public final class PermissionBroker implements AutoCloseable {
   public PermissionResponse await(PermissionRequest request, CancellationToken token) {
     Objects.requireNonNull(request, "request");
     Objects.requireNonNull(token, "token");
-    if (token.isCancelled()) return PermissionResponse.DENY;
+    if (closed || token.isCancelled()) return PermissionResponse.DENY;
     var future = new CompletableFuture<PermissionResponse>();
     if (pending.putIfAbsent(request.requestId(), future) != null) {
       return PermissionResponse.DENY;
     }
     try {
       publisher.accept(request);
+      if (closed) return PermissionResponse.DENY;
       while (!token.isCancelled()) {
         try {
           return future.get(50, TimeUnit.MILLISECONDS);
@@ -51,7 +53,7 @@ public final class PermissionBroker implements AutoCloseable {
 
   /** 由 TUI 根据请求 ID 唤醒对应的工具等待线程。 */
   public boolean resolve(String requestId, PermissionResponse response) {
-    if (requestId == null || response == null) return false;
+    if (closed || requestId == null || response == null) return false;
     CompletableFuture<PermissionResponse> future = pending.remove(requestId);
     return future != null && future.complete(response);
   }
@@ -62,6 +64,7 @@ public final class PermissionBroker implements AutoCloseable {
 
   @Override
   public void close() {
+    closed = true;
     pending.forEach((requestId, future) -> future.complete(PermissionResponse.DENY));
     pending.clear();
   }

@@ -29,14 +29,17 @@ import com.mewcode.skill.SkillCatalog;
 import com.mewcode.skill.SkillDefinition;
 import com.mewcode.skill.SkillExecutor;
 import com.mewcode.skill.SkillRun;
+import com.mewcode.subagent.SubAgentRuntime;
 import com.mewcode.tool.ToolApiProtocol;
 import com.mewcode.tool.ToolCall;
 import com.mewcode.tool.ToolExecutor;
 import com.mewcode.tool.ToolInvocationResult;
 import com.mewcode.tool.ToolRegistry;
 import com.mewcode.tool.ToolResult;
+import com.mewcode.tool.impl.AgentTool;
 import com.mewcode.tool.impl.LoadSkillTool;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -75,6 +78,7 @@ public final class AgentTurnCoordinator {
   private final PathAuthorizationStore pathAuthorizationStore;
   private final BashSandbox bashSandbox;
   private volatile Supplier<PromptAdditions> promptAdditionsSupplier = PromptAdditions::empty;
+  private volatile Supplier<ToolPolicy> toolPolicySupplier;
   private volatile Consumer<List<Message>> completionListener = ignored -> {};
   private volatile SkillCatalog skillCatalog;
   private volatile Supplier<SkillCatalog.RefreshResult> skillRefresher;
@@ -83,6 +87,7 @@ public final class AgentTurnCoordinator {
   private volatile HookEngine hookEngine;
   private volatile HookSessionState hookState;
   private volatile String hookSessionId;
+  private volatile SubAgentRuntime subAgentRuntime;
 
   public AgentTurnCoordinator(
       LlmClient client,
@@ -455,6 +460,16 @@ public final class AgentTurnCoordinator {
     promptAdditionsSupplier = Objects.requireNonNull(supplier, "supplier");
   }
 
+  /** 设置子运行时使用的绝对工具策略；未设置时沿用本轮模式和 Skill 策略。 */
+  public void setToolPolicySupplier(Supplier<ToolPolicy> supplier) {
+    toolPolicySupplier = Objects.requireNonNull(supplier, "supplier");
+  }
+
+  /** 绑定 SubAgent 工具的实际运行器；未绑定时 Agent 调用会返回可见错误。 */
+  public void setSubAgentRuntime(SubAgentRuntime runtime) {
+    subAgentRuntime = Objects.requireNonNull(runtime, "runtime");
+  }
+
   /** 设置自然完成一轮后的异步通知；通知失败不会改变 Agent Loop 结果。 */
   public void setCompletionListener(Consumer<List<Message>> listener) {
     completionListener = Objects.requireNonNull(listener, "listener");
@@ -518,9 +533,11 @@ public final class AgentTurnCoordinator {
       while (!run.cancellationToken().isCancelled()
           && completedRounds < config.getMaxIterations()) {
         int round = completedRounds + 1;
-        var policy =
-            ToolPolicy.forModeAndTools(
-                mode, skills.allowedTools(), !skills.activeSkills().isEmpty());
+        ToolPolicy policy =
+            toolPolicySupplier == null
+                ? ToolPolicy.forModeAndTools(
+                    mode, skills.allowedTools(), !skills.activeSkills().isEmpty())
+                : Objects.requireNonNull(toolPolicySupplier.get(), "toolPolicySupplier result");
         PermissionContext permissions = createPermissionContext(run, mode, permissionSnapshot);
         ProviderRouter.Route route =
             providerRouter == null
@@ -603,17 +620,31 @@ public final class AgentTurnCoordinator {
             turn.calls().stream()
                 .filter(call -> !parseErrors.containsKey(call.toolUseId()))
                 .toList();
+        List<ToolCall> agentCalls =
+            executableCalls.stream()
+                .filter(call -> AgentTool.NAME.equals(call.toolName()))
+                .filter(call -> registry.get(call.toolName()).filter(policy::isAllowed).isPresent())
+                .toList();
+        List<ToolCall> ordinaryCalls =
+            executableCalls.stream().filter(call -> !agentCalls.contains(call)).toList();
         boolean loadsSkill =
-            executableCalls.stream().anyMatch(call -> LoadSkillTool.NAME.equals(call.toolName()));
+            ordinaryCalls.stream().anyMatch(call -> LoadSkillTool.NAME.equals(call.toolName()));
         List<ToolInvocationResult> executed;
         if (loadsSkill) {
-          executed = executeSkillLoads(executableCalls, mode, run, skills, requestId);
+          executed = executeSkillLoads(ordinaryCalls, policy, mode, run, skills, requestId);
         } else {
           executed =
               permissionGate == null
                   ? executor.executeBatch(
-                      executableCalls, policy, run.cancellationToken(), requestId, mode)
-                  : executor.executeBatch(executableCalls, policy, permissions, requestId, mode);
+                      ordinaryCalls, policy, run.cancellationToken(), requestId, mode)
+                  : executor.executeBatch(ordinaryCalls, policy, permissions, requestId, mode);
+        }
+        if (!agentCalls.isEmpty()) {
+          var withAgents = new ArrayList<ToolInvocationResult>(executed);
+          withAgents.addAll(
+              executeSubAgents(
+                  agentCalls, sentRequest, turn.blocks(), policy, route, mode, run, requestId));
+          executed = List.copyOf(withAgents);
         }
         for (Map.Entry<String, String> parseError : parseErrors.entrySet()) {
           turn.calls().stream()
@@ -817,7 +848,12 @@ public final class AgentTurnCoordinator {
     String summary = skillCatalog == null ? value.skillCatalog() : skillCatalog.promptSummary();
     String active = skills.promptBlock().isBlank() ? value.activeSkills() : skills.promptBlock();
     return new PromptAdditions(
-        value.memoryIndex(), value.resumeReminder(), summary, active, value.hookReminders());
+        value.memoryIndex(),
+        value.resumeReminder(),
+        summary,
+        active,
+        value.hookReminders(),
+        value.agentCatalog());
   }
 
   private PromptAdditions withHookReminders(PromptAdditions base, List<String> reminders) {
@@ -829,7 +865,8 @@ public final class AgentTurnCoordinator {
         value.resumeReminder(),
         value.skillCatalog(),
         value.activeSkills(),
-        combined);
+        combined,
+        value.agentCatalog());
   }
 
   private Map<String, Object> messageStartPayload(
@@ -960,7 +997,12 @@ public final class AgentTurnCoordinator {
   }
 
   private List<ToolInvocationResult> executeSkillLoads(
-      List<ToolCall> calls, AgentMode mode, AgentRun parentRun, SkillRun skills, String requestId) {
+      List<ToolCall> calls,
+      ToolPolicy policy,
+      AgentMode mode,
+      AgentRun parentRun,
+      SkillRun skills,
+      String requestId) {
     var results = new java.util.ArrayList<ToolInvocationResult>();
     for (ToolCall call : calls) {
       HookRejection rejection =
@@ -974,10 +1016,74 @@ public final class AgentTurnCoordinator {
                         "status", "hook_rejected",
                         "hook_name", rejection.hookName(),
                         "hook_reason", rejection.reason()));
+      } else if (!registry.get(call.toolName()).filter(policy::isAllowed).isPresent()) {
+        result = ToolResult.error("当前策略不允许调用工具：" + call.toolName() + "。");
       } else if (!LoadSkillTool.NAME.equals(call.toolName())) {
         result = ToolResult.error("Skill 已更新，请在下一轮根据新的可用工具重新选择工具。");
       } else {
         result = loadSkill(call, mode, parentRun, skills);
+      }
+      ToolInvocationResult invocationResult =
+          new ToolInvocationResult(
+              call.toolUseId(),
+              result.withMetadata(
+                  Map.<String, Object>of(
+                      "status",
+                      result
+                          .metadata()
+                          .getOrDefault("status", result.isError() ? "error" : "success"))));
+      executor.publishPostToolUse(
+          call, invocationResult, requestId, mode, parentRun.cancellationToken());
+      results.add(invocationResult);
+    }
+    return List.copyOf(results);
+  }
+
+  private List<ToolInvocationResult> executeSubAgents(
+      List<ToolCall> calls,
+      PromptRequest sentRequest,
+      List<com.mewcode.conversation.ContentBlock> assistantBlocks,
+      ToolPolicy policy,
+      ProviderRouter.Route route,
+      AgentMode mode,
+      AgentRun parentRun,
+      String requestId) {
+    var results = new ArrayList<ToolInvocationResult>(calls.size());
+    for (ToolCall call : calls) {
+      HookRejection rejection =
+          executor.prepareHook(call, requestId, mode, parentRun.cancellationToken()).orElse(null);
+      ToolResult result;
+      if (rejection != null) {
+        result =
+            ToolResult.error("Hook [" + rejection.hookName() + "] 拒绝工具调用：" + rejection.reason())
+                .withMetadata(
+                    Map.<String, Object>of(
+                        "status", "hook_rejected",
+                        "hook_name", rejection.hookName(),
+                        "hook_reason", rejection.reason()));
+      } else if (subAgentRuntime == null) {
+        result = ToolResult.error("SubAgent 运行器未初始化。").withMetadata(Map.of("status", "error"));
+      } else if (sentRequest == null || route == null) {
+        result =
+            ToolResult.error("SubAgent 缺少父 Agent 的请求上下文。").withMetadata(Map.of("status", "error"));
+      } else {
+        try {
+          result =
+              subAgentRuntime.execute(
+                  SubAgentRuntime.SubAgentInvocation.from(call.toolUseId(), call.arguments()),
+                  new SubAgentRuntime.ParentAgentSnapshot(
+                      sentRequest,
+                      assistantBlocks,
+                      policy,
+                      route,
+                      mode,
+                      parentRun,
+                      hookSessionId == null ? requestId : hookSessionId));
+        } catch (RuntimeException error) {
+          result =
+              ToolResult.error("SubAgent 执行失败：" + safeMessage(error))
+                  .withMetadata(Map.of("status", "error"));
+        }
       }
       ToolInvocationResult invocationResult =
           new ToolInvocationResult(

@@ -65,12 +65,24 @@ public final class ConfigLoader {
     }
     try {
       config.getAgent().getLoop().validate();
+      if (config.getAgent().getSubagent() == null) {
+        throw new IllegalArgumentException("subagent must be an object");
+      }
+      config.getAgent().getSubagent().validate();
     } catch (IllegalArgumentException error) {
       String field =
           error.getMessage() != null && error.getMessage().startsWith("maxIterations")
               ? "max_iterations"
-              : "unknown_tool_round_limit";
-      throw new ConfigException("agent.loop." + field + " must be positive");
+              : error.getMessage() != null && error.getMessage().startsWith("unknownToolRoundLimit")
+                  ? "unknown_tool_round_limit"
+                  : "subagent.auto_background_ms";
+      if ("subagent".equals(error.getMessage())) {
+        throw new ConfigException("agent.subagent must be an object");
+      }
+      throw new ConfigException(
+          "agent."
+              + (field.startsWith("subagent") ? field : "loop." + field)
+              + " must be positive");
     }
 
     try {

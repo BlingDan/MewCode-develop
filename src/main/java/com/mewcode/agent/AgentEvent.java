@@ -25,7 +25,8 @@ public sealed interface AgentEvent
         AgentEvent.CompactionComplete,
         AgentEvent.ProviderFallback,
         AgentEvent.Error,
-        AgentEvent.PermissionRequested {
+        AgentEvent.PermissionRequested,
+        AgentEvent.SubAgentBackgrounded {
 
   /** 模型文本增量，UI 可直接追加到当前流式输出。 */
   record StreamText(String text) implements AgentEvent {
@@ -124,6 +125,13 @@ public sealed interface AgentEvent
   record PermissionRequested(PermissionRequest request) implements AgentEvent {
     public PermissionRequested {
       Objects.requireNonNull(request, "request");
+    }
+  }
+
+  /** 当前前台子任务已发布到后台，父 TUI 可以立即恢复输入。 */
+  record SubAgentBackgrounded(String taskId) implements AgentEvent {
+    public SubAgentBackgrounded {
+      taskId = requireText(taskId, "taskId");
     }
   }
 

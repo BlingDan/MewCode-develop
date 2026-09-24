@@ -14,6 +14,7 @@ import com.mewcode.compact.ContextManager;
 import com.mewcode.config.HookConfigLoader;
 import com.mewcode.config.McpServerConfig;
 import com.mewcode.config.ProviderConfig;
+import com.mewcode.config.SubAgentConfig;
 import com.mewcode.conversation.ConversationManager;
 import com.mewcode.hook.HookEngine;
 import com.mewcode.hook.HookEvent;
@@ -47,12 +48,17 @@ import com.mewcode.skill.SkillCatalog;
 import com.mewcode.skill.SkillDefinition;
 import com.mewcode.skill.SkillExecutor;
 import com.mewcode.skill.SkillRun;
+import com.mewcode.subagent.AgentCatalog;
+import com.mewcode.subagent.SubAgentRuntime;
+import com.mewcode.subagent.SubAgentTaskManager;
 import com.mewcode.tool.FileStateCache;
 import com.mewcode.tool.ToolApiProtocol;
 import com.mewcode.tool.ToolExecutor;
 import com.mewcode.tool.ToolRegistry;
 import com.mewcode.tool.ToolResult;
+import com.mewcode.tool.impl.AgentTool;
 import com.mewcode.tool.impl.LoadSkillTool;
+import com.mewcode.tool.impl.TaskTools;
 import com.mewcode.tool.support.CommandRunner;
 import com.mewcode.tui.tea.Command;
 import com.mewcode.tui.tea.KeyPressMessage;
@@ -101,6 +107,8 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   private final ConversationManager conversation = new ConversationManager();
   private final SessionManager sessionManager;
   private final MemoryManager memoryManager;
+  private final AgentCatalog agentCatalog;
+  private final SubAgentTaskManager taskManager = new SubAgentTaskManager();
   private final HookConfigLoader.LoadedHooks loadedHooks;
   private final HookEngine hookEngine;
   private final List<ChatMessage> chatMessages = new ArrayList<>();
@@ -141,6 +149,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   private String usageLabel = "Token 用量：unknown";
   private PermissionRequest pendingPermission;
   private volatile boolean closed;
+  private long autoBackgroundMs = SubAgentConfig.DEFAULT_AUTO_BACKGROUND_MS;
   private boolean compactionRun;
   private volatile String backgroundDiagnostic;
   private volatile Thread mcpInitializationThread;
@@ -156,6 +165,8 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   private int completionCursor;
 
   public record StreamPollMessage() implements Message {}
+
+  public record TaskNotificationPollMessage() implements Message {}
 
   public record McpInitializationPollMessage() implements Message {}
 
@@ -281,6 +292,10 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     this.systemPromptBundle = PromptBuilder.buildBundle(this.projectRoot, instructions.text());
     this.clientFactory = Objects.requireNonNull(clientFactory, "clientFactory");
     this.loopConfig = Objects.requireNonNull(loopConfig, "loopConfig").copy();
+    this.agentCatalog =
+        AgentCatalog.load(
+            this.projectRoot, this.userHome, List.of(), this.loopConfig.getMaxIterations());
+    this.agentCatalog.diagnostics().forEach(this::recordDiagnostic);
     this.mcpServerConfigs = mcpServerConfigs == null ? List.of() : List.copyOf(mcpServerConfigs);
     this.permissionRuntime =
         new PermissionRuntime(
@@ -328,6 +343,12 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     }
   }
 
+  /** 设置已校验的 SubAgent 运行配置；必须在 Provider 初始化前调用。 */
+  public void configureSubAgents(SubAgentConfig config) {
+    if (ready || client != null) throw new IllegalStateException("Provider 已开始初始化");
+    this.autoBackgroundMs = Objects.requireNonNull(config, "config").copy().getAutoBackgroundMs();
+  }
+
   /** 初始化阶段请求一次窗口尺寸，随后再创建 provider。 */
   @Override
   public Command init() {
@@ -368,6 +389,10 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
 
     if (message instanceof StreamPollMessage) {
       return pollStream();
+    }
+
+    if (message instanceof TaskNotificationPollMessage) {
+      return pollTaskNotifications();
     }
 
     if (message instanceof PromptCheckPollMessage) {
@@ -415,6 +440,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
 
   /** 创建 provider、默认工具注册表和 Agent 协调器；失败只阻塞当前会话而不崩溃 TUI。 */
   private void initializeProvider() {
+    taskManager.cancelSession(sessionManager.currentSessionId());
     closeContextManager();
     closeToolExecutor();
     try {
@@ -431,7 +457,10 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
       if (toolRegistry == null) {
         toolRegistry = ToolRegistry.createDefault();
         toolRegistry.register(new LoadSkillTool());
+        ensureSubAgentTools();
         refreshSkills();
+      } else {
+        ensureSubAgentTools();
       }
       toolExecutor =
           new ToolExecutor(toolRegistry, projectRoot, new FileStateCache(), permissionGate);
@@ -459,6 +488,22 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
               bashSandbox);
       coordinator.setHookSessionId(hookSessionId);
       coordinator.configureHooks(hookEngine, hookState);
+      coordinator.setSubAgentRuntime(
+          new SubAgentRuntime(
+              agentCatalog,
+              taskManager,
+              toolRegistry,
+              projectRoot,
+              new PromptRequestFactory(systemPromptBundle),
+              loopConfig,
+              permissionGate,
+              permissionRuntime.snapshot().ruleEngine(),
+              pathAuthorizationStore,
+              bashSandbox,
+              hookEngine,
+              hookSessionId,
+              autoBackgroundMs,
+              providerRouter));
       if (!sessionStarted) {
         dispatchHook(HookEvent.SESSION_START, Map.of("phase", "ready"), hookState);
         sessionStarted = true;
@@ -466,7 +511,12 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
       coordinator.setPromptAdditionsSupplier(
           () ->
               new PromptAdditions(
-                  memoryManager.indexText(), sessionManager.consumeResumeReminder()));
+                  memoryManager.indexText(),
+                  sessionManager.consumeResumeReminder(),
+                  "",
+                  "",
+                  List.of(),
+                  agentCatalog.promptSummary()));
       coordinator.configureSkills(
           skillCatalog, this::refreshSkills, providerRouter, this::runForkSkill);
       coordinator.setCompletionListener(
@@ -485,6 +535,14 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
       coordinator = null;
       initializationError = "Provider initialization failed.";
     }
+  }
+
+  private void ensureSubAgentTools() {
+    toolRegistry.register(new AgentTool());
+    TaskTools.registerAll(toolRegistry, taskManager, sessionManager::currentSessionId);
+    agentCatalog
+        .diagnoseUnknownTools(toolRegistry.ordinaryToolNames())
+        .forEach(this::recordDiagnostic);
   }
 
   /** 使用入口在 TUI 出现前已发现并校验的 Skill/MCP 工具集合。 */
@@ -566,6 +624,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     if (closed) return;
     closed = true;
     if (activeRun != null) activeRun.cancel();
+    taskManager.cancelAll();
     if (sessionStarted) {
       dispatchHook(HookEvent.SESSION_END, Map.of("reason", "shutdown"), hookState);
     }
@@ -579,6 +638,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     closeToolExecutor();
     memoryManager.close();
     sessionManager.close();
+    taskManager.close();
     activeRun = null;
     streamEvents = null;
     coordinator = null;
@@ -588,6 +648,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   private UpdateResult<MewCodeModel> handleChatKey(KeyPressMessage message) {
     if (pendingPromptCheck != null) return UpdateResult.from(this);
     if (streaming) {
+      if ("ctrl+b".equals(message.key())) return requestBackground();
       return pendingPermission == null ? UpdateResult.from(this) : handlePermissionKey(message);
     }
 
@@ -837,6 +898,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
       return UpdateResult.from(this, Command.println(renderError(message, 0)));
     }
 
+    injectPendingTaskNotifications();
     chatMessages.add(new ChatMessage("user", text, 0));
     streamBuffer.setLength(0);
     requestStartMillis = System.currentTimeMillis();
@@ -1138,6 +1200,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   }
 
   private String resumeSession(String id) {
+    taskManager.cancelSession(sessionManager.currentSessionId());
     SessionManager.PreparedSession prepared = sessionManager.prepareResume(id);
     if (activeRun != null) activeRun.cancel();
     HookSessionState previousState = hookState;
@@ -1299,6 +1362,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
 
   @Override
   public void startNewConversation() {
+    taskManager.cancelSession(sessionManager.currentSessionId());
     if (activeSkillRun != null) activeSkillRun.clear();
     SessionManager.PreparedSession prepared = sessionManager.prepareNewSession();
     if (activeRun != null) activeRun.cancel();
@@ -1333,7 +1397,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
 
   /** 批量消费事件并转换为 UI 命令；定时 tick 保证没有事件时 spinner 仍会刷新。 */
   private UpdateResult<MewCodeModel> pollStream() {
-    if (!streaming || streamEvents == null) return UpdateResult.from(this);
+    if (!streaming || streamEvents == null) return pollTaskNotifications();
 
     spinnerFrame++;
     var printCommands = new ArrayList<Command>();
@@ -1376,16 +1440,25 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
             if (compactionRun) {
               return withLeadingCommands(
                   printCommands,
-                  pendingStreamError == null
-                      ? completeCompaction()
-                      : failCompaction(pendingStreamError));
+                  withTaskPolling(
+                      pendingStreamError == null
+                          ? completeCompaction()
+                          : failCompaction(pendingStreamError)));
             }
             return withLeadingCommands(
                 printCommands,
-                pendingStreamError == null ? completeStream() : failStream(pendingStreamError));
+                withTaskPolling(
+                    pendingStreamError == null
+                        ? completeStream()
+                        : failStream(pendingStreamError)));
           }
           case AgentEvent.Error error -> {
             pendingStreamError = error.message();
+          }
+          case AgentEvent.SubAgentBackgrounded backgrounded -> {
+            pendingPermission = null;
+            printCommands.add(
+                Command.println(Styles.DIM.render("  子 Agent 已转入后台：" + backgrounded.taskId())));
           }
         }
       }
@@ -1395,6 +1468,42 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     }
     printCommands.add(Command.tick(POLL_INTERVAL, ignored -> new StreamPollMessage()));
     return UpdateResult.from(this, sequence(printCommands));
+  }
+
+  private UpdateResult<MewCodeModel> pollTaskNotifications() {
+    var commands = new ArrayList<Command>();
+    for (SubAgentTaskManager.TaskNotification notification : drainTaskNotifications()) {
+      conversation.addUserMessage(notification.content());
+      commands.add(
+          Command.println(
+              Styles.DIM.render(
+                  "  后台任务 %s 已%s。"
+                      .formatted(
+                          notification.taskId(),
+                          notification.status().name().toLowerCase(java.util.Locale.ROOT)))));
+    }
+    if (taskManager.hasWork(sessionManager.currentSessionId())) {
+      commands.add(Command.tick(POLL_INTERVAL, ignored -> new TaskNotificationPollMessage()));
+    }
+    return UpdateResult.from(this, sequence(commands));
+  }
+
+  private void injectPendingTaskNotifications() {
+    for (SubAgentTaskManager.TaskNotification notification : drainTaskNotifications()) {
+      conversation.addUserMessage(notification.content());
+    }
+  }
+
+  private List<SubAgentTaskManager.TaskNotification> drainTaskNotifications() {
+    return taskManager.drainNotifications(sessionManager.currentSessionId());
+  }
+
+  private UpdateResult<MewCodeModel> withTaskPolling(UpdateResult<MewCodeModel> result) {
+    if (!taskManager.hasWork(sessionManager.currentSessionId())) return result;
+    var commands = new ArrayList<Command>();
+    if (result.command() != null) commands.add(result.command());
+    commands.add(Command.tick(POLL_INTERVAL, ignored -> new TaskNotificationPollMessage()));
+    return UpdateResult.from(this, sequence(commands));
   }
 
   private Command renderToolStarted(AgentEvent.ToolUse event) {
@@ -1413,6 +1522,13 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
             toolDisplayColumns());
     var style = summary.isError() ? Styles.ERROR : Styles.TOOL_RESULT;
     return Command.println(style.render(summary.text()));
+  }
+
+  private UpdateResult<MewCodeModel> requestBackground() {
+    if (activeRun == null) return UpdateResult.from(this);
+    if (activeRun.requestBackground().isEmpty()) return UpdateResult.from(this);
+    pendingPermission = null;
+    return UpdateResult.from(this);
   }
 
   private int toolDisplayColumns() {
@@ -1481,7 +1597,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     output.append(
         Styles.DIM.render("  已取消本轮 Agent Loop（耗时 %.1fs · %s）".formatted(elapsed, finalUsage)));
     resetStream();
-    return UpdateResult.from(this, Command.println(output.toString()));
+    return withTaskPolling(UpdateResult.from(this, Command.println(output.toString())));
   }
 
   /** provider/Loop 出错时展示安全错误文本，并丢弃未完成的流式响应。 */
@@ -1501,7 +1617,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     output.append(renderError(safeMessage, elapsed));
     output.append("\n").append(Styles.DIM.render("  " + finalUsage));
     resetStream();
-    return UpdateResult.from(this, Command.println(output.toString()));
+    return withTaskPolling(UpdateResult.from(this, Command.println(output.toString())));
   }
 
   /** 清空本轮临时状态，使取消或完成后可以继续输入下一条消息。 */

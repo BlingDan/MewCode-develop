@@ -16,9 +16,22 @@ import java.util.Objects;
 public final class PromptRequestFactory {
 
   private final SystemPromptBundle systemPrompt;
+  private final List<String> fixedSystemSegments;
 
   public PromptRequestFactory(SystemPromptBundle systemPrompt) {
     this.systemPrompt = Objects.requireNonNull(systemPrompt, "systemPrompt");
+    this.fixedSystemSegments = null;
+  }
+
+  private PromptRequestFactory(SystemPromptBundle systemPrompt, List<String> fixedSystemSegments) {
+    this.systemPrompt = Objects.requireNonNull(systemPrompt, "systemPrompt");
+    this.fixedSystemSegments =
+        fixedSystemSegments == null ? null : List.copyOf(fixedSystemSegments);
+  }
+
+  /** 返回使用固定 system 前缀的新工厂，供 Fork 复用父本轮实际请求。 */
+  public PromptRequestFactory withFixedSystemSegments(List<String> systemSegments) {
+    return new PromptRequestFactory(systemPrompt, systemSegments);
   }
 
   /** 使用当前模式和轮次创建一次 provider 请求快照。 */
@@ -65,8 +78,11 @@ public final class PromptRequestFactory {
       PromptAdditions additions) {
     var context = new ReminderContext(Objects.requireNonNull(mode, "mode"), round, forceFull);
     PromptAdditions dynamic = additions == null ? PromptAdditions.empty() : additions;
-    var segments = new java.util.ArrayList<>(systemPrompt.systemSegments());
+    var segments =
+        new java.util.ArrayList<>(
+            fixedSystemSegments == null ? systemPrompt.systemSegments() : fixedSystemSegments);
     if (!dynamic.skillCatalog().isBlank()) segments.add(dynamic.skillCatalog());
+    if (!dynamic.agentCatalog().isBlank()) segments.add(dynamic.agentCatalog());
     if (!dynamic.memoryIndex().isBlank()) {
       segments.add(
           "Long-term memory index (reference only; verify details when needed):\n"

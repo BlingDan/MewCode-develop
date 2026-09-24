@@ -9,6 +9,7 @@ import com.mewcode.skill.ScriptTool;
 import com.mewcode.skill.SkillCatalog;
 import com.mewcode.tool.Tool;
 import com.mewcode.tool.ToolRegistry;
+import com.mewcode.tool.impl.AgentTool;
 import com.mewcode.tool.impl.LoadSkillTool;
 import com.mewcode.tui.MewCodeModel;
 import com.mewcode.tui.tea.Program;
@@ -51,13 +52,15 @@ public final class MewCode {
 
     ToolRegistry registry = ToolRegistry.createDefault();
     registry.register(new LoadSkillTool());
+    registry.register(new AgentTool());
     SkillCatalog catalog =
         SkillCatalog.load(
             projectRoot,
             Path.of(System.getProperty("user.home", ".")).toAbsolutePath().normalize());
     CommandRegistry commands = CommandRegistry.createDefault();
-    SkillCatalog.RefreshResult beforeMcp =
-        catalog.refresh(registry.ordinaryToolNames(), commands.reservedNames());
+    var knownTools = new java.util.LinkedHashSet<>(registry.ordinaryToolNames());
+    knownTools.addAll(java.util.Set.of("TaskList", "TaskGet", "TaskCreate", "TaskUpdate"));
+    SkillCatalog.RefreshResult beforeMcp = catalog.refresh(knownTools, commands.reservedNames());
     for (String diagnostic : beforeMcp.diagnostics()) {
       System.err.println("MewCode: " + diagnostic);
     }
@@ -80,8 +83,10 @@ public final class MewCode {
     if (requiresMcpDiscovery(beforeMcp.missingTools())) {
       McpManager.ConnectionReport report = mcpManager.connectAll(mcp.servers());
       report.errors().forEach(error -> System.err.println("MewCode: " + error));
+      var finalKnownTools = new java.util.LinkedHashSet<>(registry.ordinaryToolNames());
+      finalKnownTools.addAll(java.util.Set.of("TaskList", "TaskGet", "TaskCreate", "TaskUpdate"));
       SkillCatalog.RefreshResult finalSkills =
-          catalog.refresh(registry.ordinaryToolNames(), commands.reservedNames());
+          catalog.refresh(finalKnownTools, commands.reservedNames());
       scripts = replaceScripts(registry, finalSkills);
       if (!scripts.conflicts().isEmpty() || !finalSkills.missingTools().isEmpty()) {
         scripts.conflicts().forEach(name -> System.err.println("MewCode: Skill 工具名称冲突：" + name));
@@ -104,6 +109,7 @@ public final class MewCode {
               permissions.pathAuthorizationStore(),
               com.mewcode.permission.BashSandboxFactory.create(),
               mcp.servers());
+      model.configureSubAgents(config.getAgent().getSubagent());
       model.useSkillBootstrap(catalog, registry, mcpManager);
     } catch (RuntimeException error) {
       mcpManager.close();

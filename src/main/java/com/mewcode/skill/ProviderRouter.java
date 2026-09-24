@@ -70,6 +70,20 @@ public final class ProviderRouter {
     }
   }
 
+  /** 按 Provider 名称或模型别名选择路由；显式选择失败时返回空而不静默回退。 */
+  public synchronized java.util.Optional<Route> selectModel(String model) {
+    if (model == null || model.isBlank() || "inherit".equalsIgnoreCase(model)) {
+      return java.util.Optional.of(main);
+    }
+    for (ProviderConfig provider : configurations.values()) {
+      if (!model.equalsIgnoreCase(provider.getName())
+          && !model.equalsIgnoreCase(provider.getModel())) continue;
+      Route route = select(provider.getName());
+      return route.fallback() ? java.util.Optional.empty() : java.util.Optional.of(route);
+    }
+    return java.util.Optional.empty();
+  }
+
   private static ToolApiProtocol protocol(ProviderConfig config) {
     return "anthropic".equalsIgnoreCase(config.getProtocol())
         ? ToolApiProtocol.ANTHROPIC

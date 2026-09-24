@@ -4,9 +4,11 @@ import com.mewcode.permission.PermissionBroker;
 import com.mewcode.permission.PermissionRequest;
 import com.mewcode.permission.PermissionResponse;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
+import java.util.function.Supplier;
 
 /**
  * 一次 Agent Loop 的运行句柄和取消边界。
@@ -28,6 +30,8 @@ public final class AgentRun implements AutoCloseable {
   private final CopyOnWriteArrayList<BiFunction<String, PermissionResponse, Boolean>>
       permissionDelegates = new CopyOnWriteArrayList<>();
   private final AtomicReference<State> state = new AtomicReference<>(State.RUNNING);
+  private final AtomicReference<Supplier<Optional<String>>> backgroundRequester =
+      new AtomicReference<>();
 
   /** 返回本次运行的异步事件流。 */
   public AgentEventStream events() {
@@ -76,6 +80,27 @@ public final class AgentRun implements AutoCloseable {
     return state() == State.RUNNING;
   }
 
+  /** 安装当前前台子任务的后台化回调；同一运行至多保留一个。 */
+  public void setBackgroundRequester(Supplier<Optional<String>> requester) {
+    backgroundRequester.set(requester);
+  }
+
+  /** 清除已完成或已发布任务的后台化回调。 */
+  public void clearBackgroundRequester() {
+    backgroundRequester.set(null);
+  }
+
+  /** 请求当前运行转入后台，未安装回调或已完成时返回空。 */
+  public Optional<String> requestBackground() {
+    Supplier<Optional<String>> requester = backgroundRequester.get();
+    if (!isRunning() || requester == null) return Optional.empty();
+    try {
+      return Optional.ofNullable(requester.get()).orElse(Optional.empty());
+    } catch (RuntimeException ignored) {
+      return Optional.empty();
+    }
+  }
+
   /** 幂等取消本次 Loop，并立即触发所有底层资源的关闭 hook。 */
   public boolean cancel() {
     if (!state.compareAndSet(State.RUNNING, State.CANCELLED)) return false;
@@ -90,6 +115,7 @@ public final class AgentRun implements AutoCloseable {
     }
     cancellationHooks.clear();
     permissionDelegates.clear();
+    backgroundRequester.set(null);
     return true;
   }
 
@@ -116,6 +142,7 @@ public final class AgentRun implements AutoCloseable {
     state.compareAndSet(State.RUNNING, State.COMPLETED);
     cancellationHooks.clear();
     permissionDelegates.clear();
+    backgroundRequester.set(null);
     permissionBroker.close();
     events.complete();
   }

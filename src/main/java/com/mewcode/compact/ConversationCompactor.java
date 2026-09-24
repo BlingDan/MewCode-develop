@@ -154,6 +154,13 @@ public final class ConversationCompactor {
             tokenCount += (long) Math.ceil(messageCharacters(message) / CHARACTERS_PER_TOKEN);
             messageCount++;
         }
+        // 工具调用和结果属于同一回合，尾部边界不能把它们拆开。
+        if (index > 0
+                && index < history.size()
+                && history.get(index).content().stream().anyMatch(ToolResultBlock.class::isInstance)
+                && history.get(index - 1).content().stream().anyMatch(ToolUseBlock.class::isInstance)) {
+            index--;
+        }
         return index;
     }
 

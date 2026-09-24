@@ -8,10 +8,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.mewcode.conversation.ContentBlock;
 import com.mewcode.conversation.Message;
 import com.mewcode.conversation.ToolResultBlock;
+import com.mewcode.conversation.ToolUseBlock;
 import com.mewcode.llm.StreamEvent;
 import com.mewcode.testsupport.FakeLlmClient;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
 import org.junit.jupiter.api.Test;
@@ -78,6 +80,35 @@ class ConversationCompactorTest {
             assertFalse(history.getMessages().stream()
                     .anyMatch(message -> message.textContent().equals("old tool output")));
         }
+    }
+
+    @Test
+    void keepsToolCallWithTailResultAtCompactionBoundary() {
+        var history = new com.mewcode.conversation.ConversationManager();
+        history.addUserMessage("goal");
+        history.addAssistantMessage("old answer");
+        history.addUserMessage("check task");
+        var firstCall = new ToolUseBlock("call-1", "TaskGet", Map.of("task_id", "agent-3"));
+        var firstResult = new ToolResultBlock("call-1", "R".repeat(13_000), false);
+        history.addToolTurn(List.of(firstCall), List.of(firstResult));
+        for (int index = 2; index <= 3; index++) {
+            String id = "call-" + index;
+            history.addToolTurn(
+                    List.of(new ToolUseBlock(id, "TaskGet", Map.of("task_id", "agent-3"))),
+                    List.of(new ToolResultBlock(id, "R".repeat(13_000), false)));
+        }
+
+        var client = new FakeLlmClient();
+        client.enqueue(new StreamEvent.TextDelta(summary()), new StreamEvent.StreamEnd("end_turn"));
+        try (var externalizer = new ToolResultExternalizer(tempDir)) {
+            new ConversationCompactor(client, new TokenEstimator(), externalizer)
+                    .compact(history, new ContextRequest(List.of(), List.of(), Optional.empty()));
+        }
+
+        var messages = history.getMessages();
+        int resultIndex = messages.indexOf(new Message("user", List.of(firstResult)));
+        assertTrue(resultIndex > 0);
+        assertEquals(new Message("assistant", List.of(firstCall)), messages.get(resultIndex - 1));
     }
 
     @Test

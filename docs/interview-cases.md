@@ -1,29 +1,25 @@
-# MewCode 面试口述卡
+# MewCode SubAgent 面试问答
 
-参考[面试叙述文章](https://my.feishu.cn/wiki/Qv94wQHPDiottokCXUicMuSNnDb)的“约束、选择、踩坑、边界”结构。先讲 30 秒；对方追问，再展开一层。以下只讲本项目做过的事。
+简历可写：实现定义式与 Fork 子 Agent，处理前后台任务切换、工具权限隔离和结果通知。
 
-## 主讲 1：子 Agent 的异步结果
+### 面试官：你做子 Agent 时，最难的工程问题是什么？
 
-**30 秒说法：** 子 Agent 可以转后台，但父对话只能收到最终结果。调试发现，多轮工具执行会把中间文本混进结果。我把状态和通知收口到任务管理器，只保留最后回复、只发一次通知；真实终端的 Fork 验收通过。
+我：最难的是后台任务的结果怎么可靠地回到父对话。模型可能先输出几句文本，再调用工具；如果一直拼接流式文本，这些中间话也会混进最终答案。我把任务状态和结果收口到同一个管理器，只保留最后一轮无工具调用的回复。前台直接返回结果；转后台后先返回任务 ID，任务结束再给父对话一条通知。
 
-**简历一句：** 实现 SubAgent 前后台任务管理，解决多轮结果污染和后台通知一致性问题。
+### 面试官：这个问题你是怎么发现和验证的？
 
-**被追问再答：** 为什么通知先于完成信号？否则调用方可能读到“已完成”，却还读不到结果通知。[代码](../src/main/java/com/mewcode/subagent/SubAgentTaskManager.java)｜[验收](ch13/verification.md)。取消终态有自动化测试，长 SSE 场景没有完整终态证据。
+我：先在测试里构造两轮事件：第一轮输出文本并调用工具，第二轮输出最终答案，检查结果只取第二轮。随后在 tmux 里启动真正的 MewCode，用本地假模型服务控制输出。Fork 会立即返回任务 ID，父会话历史里最终只有一条完成通知。任务结束时，我先把通知放进队列，再告诉调用方任务已完成，避免状态和通知对不上。
 
-## 主讲 2：子 Agent 的工具权限
+### 面试官：子 Agent 能调用主 Agent 的所有工具吗？
 
-**30 秒说法：** 子 Agent 的工具权限不能只靠模型看到的列表，因为模型仍能构造禁用调用。我从父任务权限逐层收窄工具集，让模型声明与执行入口共用同一策略。子 Agent 因此不能再创建 Agent，也不能管理主任务。
+我：不能。子 Agent 的工具集从父任务权限逐层收窄，还要受角色定义和后台白名单限制。同一份策略既决定模型能看到哪些工具，也在本地执行前再检查一次。这样即使模型构造了禁用工具调用，也不能递归创建 Agent 或操作主任务的 Task 工具。这是设计时防范的风险，不是已经发生过的越权事故。
 
-**简历一句：** 设计 SubAgent 工具权限策略，在模型声明与执行入口双重校验，限制递归委派和任务越权。
+### 面试官：验收时还踩过什么坑？
 
-**被追问再答：** 为什么用“绝对”策略？普通 system 工具默认可用，子 Agent 需要覆盖这个例外。[策略](../src/main/java/com/mewcode/agent/ToolPolicy.java)｜[执行校验](../src/main/java/com/mewcode/tool/ToolExecutor.java)。这是设计时防范的风险，不要说成发生过越权事故。
+我：有一次终端报“未知工具：Agent”。我查了模型请求的工具列表和正在运行的 JAR，发现它们确实没有 Agent 实现；再查 Git 才发现代码还在独立 worktree，没有合进验收分支。提交并快进合并后，从目标分支重建，用同一句对话复测才通过。这提醒我验收时要先确认运行的是哪个提交的产物。
 
-## 备用踩坑：验收时找不到 Agent
+### 准备时记住的边界
 
-**备用说法：** 验收报“未知工具：Agent”。我查 Provider 工具列表、JAR 和 worktree，发现实现没合进目标分支。快进合并、重建后复测通过。这是排障故事，不写简历。
-
-## 备用踩坑：参考示例无法注册
-
-飞书[验收示例](https://my.feishu.cn/wiki/WK97wEjSVi8m2RkEJOhcxO2XnQb#share-HwDTdqjR7oMqRYxCt4sckC8Rnid)写的是 `permissionMode: bypassPermissions`，本项目只接受 `default` 或 `dontAsk`。真实解析器会拒绝原值，改为 `dontAsk` 才能加载；`model: sonnet` 还需对应模型路由。这里只验证了解析，没验证完整安全审查流程。
-
-**别讲错：** 参考文章里的“每个子 Agent 独立 Worktree、文件邮箱、Coordinator”是文章案例；当前 MewCode 子 Agent 仍共享项目文件系统。
+- 当前子 Agent 共享项目文件系统；[参考文章](https://my.feishu.cn/wiki/S65pwIyJoiYbbZkC1Tpc1zabnMb)提到的 Agent Team、文件邮箱、每个 Agent 独立 Worktree 不是本项目已实现的功能。
+- tmux 验收使用真实 TUI、Agent Loop、工具和任务管理；假 Provider 只控制模型输出。没有测出可宣称的性能提升数字。
+- 代码和验证记录：[SubAgentTaskManager](../src/main/java/com/mewcode/subagent/SubAgentTaskManager.java)、[ToolPolicy](../src/main/java/com/mewcode/agent/ToolPolicy.java)、[第 13 章验收记录](ch13/verification.md)。

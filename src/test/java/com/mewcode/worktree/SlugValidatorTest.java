@@ -2,6 +2,8 @@ package com.mewcode.worktree;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 
 class SlugValidatorTest {
@@ -33,6 +35,22 @@ class SlugValidatorTest {
           "a".repeat(65)
         }) {
       assertThrows(IllegalArgumentException.class, () -> validate(input), input);
+    }
+  }
+
+  @Test
+  void rejectsLinkedManagementParentsAndTargets() throws Exception {
+    Path root = Files.createTempDirectory("mew-slug-").toRealPath();
+    try {
+      Path outside = Files.createDirectory(root.resolve("outside"));
+      Files.createSymbolicLink(root.resolve(".mewcode"), outside);
+      assertThrows(
+          java.io.IOException.class, () -> SlugValidator.safePath(root, ".mewcode/worktrees/new"));
+      assertFalse(Files.exists(outside.resolve("worktrees")));
+    } finally {
+      Files.deleteIfExists(root.resolve(".mewcode"));
+      Files.deleteIfExists(root.resolve("outside"));
+      Files.deleteIfExists(root);
     }
   }
 

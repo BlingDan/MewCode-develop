@@ -25,4 +25,18 @@ public final class SlugValidator {
   public static String branch(String name) {
     return "codex/worktree/" + validate(name) + "/task";
   }
+
+  /** 不存在的目标也逐段检查已有父目录，禁止管理目录或文件被软链替换。 */
+  static java.nio.file.Path safePath(java.nio.file.Path root, String relative)
+      throws java.io.IOException {
+    java.nio.file.Path base = root.toRealPath();
+    java.nio.file.Path target = base.resolve(relative).normalize();
+    if (!target.startsWith(base) || target.equals(base)) throw new java.io.IOException("管理路径越界");
+    java.nio.file.Path cursor = base;
+    for (java.nio.file.Path part : base.relativize(target)) {
+      cursor = cursor.resolve(part);
+      if (java.nio.file.Files.isSymbolicLink(cursor)) throw new java.io.IOException("管理路径不允许符号链接");
+    }
+    return target;
+  }
 }

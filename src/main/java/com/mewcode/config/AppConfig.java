@@ -11,6 +11,7 @@ public final class AppConfig {
   private List<ProviderConfig> providers = new ArrayList<>();
   private AgentConfig agent = new AgentConfig();
   private PermissionConfig permissions = new PermissionConfig();
+  private WorktreeConfig worktree = new WorktreeConfig();
   private Map<String, Object> mcpServers = new LinkedHashMap<>();
 
   /** 返回 provider 配置列表，供启动时选择和创建客户端。 */
@@ -46,6 +47,14 @@ public final class AppConfig {
   /** 返回项目级 MCP Server 原始配置，由 MCP 专用加载器逐条校验。 */
   public Map<String, Object> getMcpServers() {
     return mcpServers;
+  }
+
+  public WorktreeConfig getWorktree() {
+    return worktree;
+  }
+
+  public void setWorktree(WorktreeConfig value) {
+    worktree = value == null ? new WorktreeConfig() : value;
   }
 
   /** 设置项目级 MCP Server 原始配置；空值按没有 MCP 配置处理。 */

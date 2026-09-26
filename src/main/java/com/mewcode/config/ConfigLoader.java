@@ -60,6 +60,11 @@ public final class ConfigLoader {
 
   /** 校验 Loop 边界、provider 唯一性、协议和 base URL，不输出 API key。 */
   private static void validate(AppConfig config) throws ConfigException {
+    try {
+      config.getWorktree().validate();
+    } catch (IllegalArgumentException error) {
+      throw new ConfigException("Invalid worktree configuration: time or relative file rules");
+    }
     if (config.getAgent() == null || config.getAgent().getLoop() == null) {
       throw new ConfigException("agent.loop must be an object");
     }

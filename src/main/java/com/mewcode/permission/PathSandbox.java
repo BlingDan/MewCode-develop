@@ -8,6 +8,28 @@ import java.util.Objects;
 
 /** 文件工具的应用层路径沙箱；先解引用，再进行组件边界检查。 */
 public final class PathSandbox {
+  public PathCheck inspect(ToolCall call, PermissionContext context, boolean write) {
+    PathCheck check = inspect(call, context.projectRoot());
+    var scope = context.workspaceScope();
+    if (scope == null || check.boundary() == PathBoundary.INVALID) return check;
+    String denied = scope.checkPath(check.normalizedPath(), write);
+    if (denied != null)
+      return new PathCheck(
+          PathBoundary.INVALID,
+          check.normalizedPath(),
+          check.resolvedPath(),
+          denied,
+          check.authorizationKey());
+    if (!write && scope.isShared(check.resolvedPath()))
+      return new PathCheck(
+          PathBoundary.INSIDE_PROJECT,
+          check.normalizedPath(),
+          check.resolvedPath(),
+          "已声明的只读共享依赖",
+          check.authorizationKey());
+    return check;
+  }
+
   public PathCheck inspect(ToolCall call, Path projectRoot) {
     Objects.requireNonNull(call, "call");
     Path root = normalizeRoot(projectRoot);

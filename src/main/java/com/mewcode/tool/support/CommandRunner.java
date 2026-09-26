@@ -40,31 +40,24 @@ public final class CommandRunner {
   public Result run(String command, ToolExecutionContext context) throws IOException {
     BashSandbox selected =
         context.permissionContext() == null ? sandbox : context.permissionContext().bashSandbox();
-    List<Path> writableScopes = List.of(context.projectRoot());
     SandboxedProcess prepared =
-        selected.prepare(new BashSandboxRequest(command, context.projectRoot(), writableScopes));
-    Process process =
+        selected.prepare(sandboxRequest(command, context.projectRoot(), context, List.of()));
+    ProcessBuilder builder =
         new ProcessBuilder(prepared.argv())
             .directory(prepared.workingDirectory().toFile())
-            .redirectErrorStream(true)
-            .start();
-
+            .redirectErrorStream(true);
+    applyEnvironment(builder.environment(), context);
+    Process process = builder.start();
     var output = new OutputCollector(MAX_OUTPUT_CHARS);
     Thread reader = Thread.startVirtualThread(() -> readOutput(process.getInputStream(), output));
-    boolean finished;
-    try {
-      finished = process.waitFor(context.timeout().toMillis(), TimeUnit.MILLISECONDS);
-    } catch (InterruptedException error) {
-      process.destroyForcibly();
-      Thread.currentThread().interrupt();
-      throw new IOException("命令执行被中断", error);
-    }
-    if (!finished) {
-      process.destroyForcibly();
+    ProcessWait completed = waitForProcess(process, context);
+    if (completed.timedOut() || completed.cancelled()) {
       joinReader(reader);
-      return new Result(output.text(), -1, true, output.truncated());
+      requireReadersStopped(context, reader);
+      return new Result(output.text(), -1, completed.timedOut(), output.truncated());
     }
     joinReader(reader);
+    requireReadersStopped(context, reader);
     return new Result(output.text(), process.exitValue(), false, output.truncated());
   }
 
@@ -78,23 +71,43 @@ public final class CommandRunner {
     BashSandbox selected =
         context.permissionContext() == null ? sandbox : context.permissionContext().bashSandbox();
     String command = "'" + executable.toString().replace("'", "'\"'\"'") + "'";
+    Path skillDirectory = workingDirectory.toAbsolutePath().normalize();
+    Path actualCwd =
+        context.workspaceScope() != null && context.workspaceScope().isolated()
+            ? context.projectRoot()
+            : workingDirectory;
     SandboxedProcess prepared =
-        selected.prepare(
-            new BashSandboxRequest(command, workingDirectory, List.of(context.projectRoot())));
+        selected.prepare(sandboxRequest(command, actualCwd, context, List.of(skillDirectory)));
     ProcessBuilder builder =
         new ProcessBuilder(prepared.argv()).directory(prepared.workingDirectory().toFile());
     Map<String, String> environment = builder.environment();
+    Map<String, String> inherited = Map.copyOf(environment);
     String path = environment.getOrDefault("PATH", "/usr/bin:/bin:/usr/sbin:/sbin");
     String temp = environment.getOrDefault("TMPDIR", "/tmp");
     environment.clear();
     environment.put("PATH", path);
     environment.put("TMPDIR", temp);
     environment.put("MEWCODE_PROJECT_ROOT", context.projectRoot().toString());
-    Process process = builder.start();
-    try (OutputStream stdin = process.getOutputStream()) {
-      stdin.write(input.getBytes(StandardCharsets.UTF_8));
-      stdin.write('\n');
+    environment.put("MEWCODE_SKILL_DIR", skillDirectory.toString());
+    if (context.workspaceScope() != null && context.workspaceScope().isolated()) {
+      inherited.forEach(
+          (key, value) -> {
+            if (key.equals("GIT_CONFIG_COUNT")
+                || key.startsWith("GIT_CONFIG_KEY_")
+                || key.startsWith("GIT_CONFIG_VALUE_")) environment.put(key, value);
+          });
     }
+    applyEnvironment(environment, context);
+    Process process = builder.start();
+    Thread inputWriter =
+        Thread.startVirtualThread(
+            () -> {
+              try (OutputStream stdin = process.getOutputStream()) {
+                stdin.write(input.getBytes(StandardCharsets.UTF_8));
+                stdin.write('\n');
+              } catch (IOException ignored) {
+              }
+            });
 
     var stdout = new OutputCollector(MAX_OUTPUT_CHARS);
     var stderr = new OutputCollector(MAX_OUTPUT_CHARS);
@@ -102,32 +115,13 @@ public final class CommandRunner {
         Thread.startVirtualThread(() -> readOutput(process.getInputStream(), stdout));
     Thread errorReader =
         Thread.startVirtualThread(() -> readOutput(process.getErrorStream(), stderr));
-    long deadline = System.nanoTime() + context.timeout().toNanos();
-    boolean timedOut = false;
-    boolean cancelled = false;
-    try {
-      while (process.isAlive()) {
-        if (context.cancellationToken().isCancelled()) {
-          cancelled = true;
-          process.destroyForcibly();
-          break;
-        }
-        long remaining = deadline - System.nanoTime();
-        if (remaining <= 0) {
-          timedOut = true;
-          process.destroyForcibly();
-          break;
-        }
-        process.waitFor(
-            Math.min(TimeUnit.NANOSECONDS.toMillis(remaining), 50), TimeUnit.MILLISECONDS);
-      }
-    } catch (InterruptedException error) {
-      process.destroyForcibly();
-      Thread.currentThread().interrupt();
-      throw new IOException("脚本执行被中断", error);
-    }
+    ProcessWait completed = waitForProcess(process, context);
+    boolean timedOut = completed.timedOut();
+    boolean cancelled = completed.cancelled();
+    joinReader(inputWriter);
     joinReader(outReader);
     joinReader(errorReader);
+    requireReadersStopped(context, inputWriter, outReader, errorReader);
     int exitCode = process.isAlive() ? -1 : process.exitValue();
     return new ScriptResult(
         stdout.text(),
@@ -146,6 +140,18 @@ public final class CommandRunner {
       java.time.Duration timeout,
       CancellationToken cancellation)
       throws IOException {
+    return runHook(
+        command,
+        input,
+        new ToolExecutionContext(
+            workingDirectory, timeout, new com.mewcode.tool.FileStateCache(), cancellation));
+  }
+
+  public ScriptResult runHook(String command, String input, ToolExecutionContext context)
+      throws IOException {
+    java.time.Duration timeout = context.timeout();
+    CancellationToken cancellation = context.cancellationToken();
+    Path workingDirectory = context.projectRoot();
     if (command == null || command.isBlank())
       throw new IllegalArgumentException("command must not be blank");
     if (workingDirectory == null || !workingDirectory.isAbsolute()) {
@@ -158,10 +164,11 @@ public final class CommandRunner {
     if (cancellation.isCancelled()) return new ScriptResult("", "", -1, false, true, false);
 
     Path root = workingDirectory.toAbsolutePath().normalize();
-    SandboxedProcess prepared =
-        sandbox.prepare(new BashSandboxRequest(command, root, List.of(root)));
-    Process process =
-        new ProcessBuilder(prepared.argv()).directory(prepared.workingDirectory().toFile()).start();
+    SandboxedProcess prepared = sandbox.prepare(sandboxRequest(command, root, context, List.of()));
+    ProcessBuilder builder =
+        new ProcessBuilder(prepared.argv()).directory(prepared.workingDirectory().toFile());
+    applyEnvironment(builder.environment(), context);
+    Process process = builder.start();
     var stdout = new OutputCollector(MAX_OUTPUT_CHARS);
     var stderr = new OutputCollector(MAX_OUTPUT_CHARS);
     Thread outReader =
@@ -179,33 +186,13 @@ public final class CommandRunner {
               }
             });
 
-    long deadline = System.nanoTime() + timeout.toNanos();
-    boolean timedOut = false;
-    boolean cancelled = false;
-    try {
-      while (process.isAlive()) {
-        if (cancellation.isCancelled()) {
-          cancelled = true;
-          process.destroyForcibly();
-          break;
-        }
-        long remaining = deadline - System.nanoTime();
-        if (remaining <= 0) {
-          timedOut = true;
-          process.destroyForcibly();
-          break;
-        }
-        process.waitFor(
-            Math.min(TimeUnit.NANOSECONDS.toMillis(remaining), 50), TimeUnit.MILLISECONDS);
-      }
-    } catch (InterruptedException error) {
-      process.destroyForcibly();
-      Thread.currentThread().interrupt();
-      throw new IOException("Hook 执行被中断", error);
-    }
+    ProcessWait completed = waitForProcess(process, context);
+    boolean timedOut = completed.timedOut();
+    boolean cancelled = completed.cancelled();
     joinReader(inputWriter);
     joinReader(outReader);
     joinReader(errorReader);
+    requireReadersStopped(context, inputWriter, outReader, errorReader);
     int exitCode = process.isAlive() ? -1 : process.exitValue();
     return new ScriptResult(
         stdout.text(),
@@ -214,6 +201,87 @@ public final class CommandRunner {
         timedOut,
         cancelled,
         stdout.truncated() || stderr.truncated());
+  }
+
+  private static void requireReadersStopped(ToolExecutionContext context, Thread... readers)
+      throws IOException {
+    for (Thread reader : readers)
+      if (reader.isAlive()) {
+        if (context.workspaceScope() != null) context.workspaceScope().markUnconfirmedProcess();
+        throw new UnconfirmedProcessException();
+      }
+  }
+
+  private BashSandboxRequest sandboxRequest(
+      String command, Path cwd, ToolExecutionContext context, List<Path> readableAssets) {
+    return context.workspaceScope() == null
+        ? new BashSandboxRequest(command, cwd, List.of(context.projectRoot()))
+        : context.workspaceScope().sandboxRequest(command, cwd, readableAssets);
+  }
+
+  private static void applyEnvironment(
+      Map<String, String> environment, ToolExecutionContext context) {
+    if (context.workspaceScope() != null) context.workspaceScope().applyEnvironment(environment);
+  }
+
+  private record ProcessWait(boolean timedOut, boolean cancelled) {}
+
+  /** 记录本次进程的后代，取消后等待真实退出，不能仅返回 destroyForcibly 已发出。 */
+  private static ProcessWait waitForProcess(Process process, ToolExecutionContext context)
+      throws IOException {
+    try {
+      return waitForProcess(process, context.timeout(), context.cancellationToken());
+    } catch (UnconfirmedProcessException error) {
+      if (context.workspaceScope() != null) context.workspaceScope().markUnconfirmedProcess();
+      throw error;
+    }
+  }
+
+  private static final class UnconfirmedProcessException extends IOException {
+    UnconfirmedProcessException() {
+      super("无法确认命令进程实际停止，必须保留工作树");
+    }
+  }
+
+  private static ProcessWait waitForProcess(
+      Process process, java.time.Duration timeout, CancellationToken cancellation)
+      throws IOException {
+    long deadline = System.nanoTime() + timeout.toNanos();
+    var descendants = new java.util.LinkedHashSet<ProcessHandle>();
+    try {
+      while (process.isAlive()) {
+        process.descendants().forEach(descendants::add);
+        if (cancellation.isCancelled() || System.nanoTime() >= deadline) {
+          stopProcess(process, descendants);
+          return new ProcessWait(!cancellation.isCancelled(), cancellation.isCancelled());
+        }
+        process.waitFor(25, TimeUnit.MILLISECONDS);
+      }
+      // shell 已返回但已观察到的后台进程未结束，不允许释放目录后继续写入。
+      if (descendants.stream().anyMatch(ProcessHandle::isAlive)) stopProcess(process, descendants);
+      return new ProcessWait(false, false);
+    } catch (InterruptedException error) {
+      stopProcess(process, descendants);
+      Thread.currentThread().interrupt();
+      throw new IOException("命令已中断，所启动进程已停止");
+    }
+  }
+
+  private static void stopProcess(Process process, java.util.Set<ProcessHandle> known)
+      throws IOException {
+    process.descendants().forEach(known::add);
+    new java.util.ArrayList<>(known).reversed().forEach(ProcessHandle::destroyForcibly);
+    try {
+      process.waitFor(200, TimeUnit.MILLISECONDS);
+    } catch (InterruptedException ignored) {
+    }
+    if (process.isAlive()) process.destroyForcibly();
+    long deadline = System.nanoTime() + java.time.Duration.ofSeconds(2).toNanos();
+    while ((process.isAlive() || known.stream().anyMatch(ProcessHandle::isAlive))
+        && System.nanoTime() < deadline)
+      java.util.concurrent.locks.LockSupport.parkNanos(10_000_000);
+    if (process.isAlive() || known.stream().anyMatch(ProcessHandle::isAlive))
+      throw new UnconfirmedProcessException();
   }
 
   /** 判断退出码是否表示工具失败；grep/find 等命令的 1 可表示“没有结果”。 */

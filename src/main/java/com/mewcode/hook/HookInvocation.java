@@ -13,7 +13,8 @@ public record HookInvocation(
     HookEvent event,
     Map<String, Object> payload,
     HookSessionState state,
-    CancellationToken cancellation) {
+    CancellationToken cancellation,
+    com.mewcode.tool.ToolExecutionContext executionContext) {
   public HookInvocation {
     event = Objects.requireNonNull(event, "event");
     state = Objects.requireNonNull(state, "state");
@@ -28,7 +29,17 @@ public record HookInvocation(
     if (!(cwd instanceof String text) || text.isBlank()) {
       throw new IllegalArgumentException("payload cwd must be a non-empty string");
     }
+    if (executionContext != null && !executionContext.projectRoot().toString().equals(text))
+      throw new IllegalArgumentException("Hook cwd 与调用快照不符");
     payload = Collections.unmodifiableMap(copy);
+  }
+
+  public HookInvocation(
+      HookEvent event,
+      Map<String, Object> payload,
+      HookSessionState state,
+      CancellationToken cancellation) {
+    this(event, payload, state, cancellation, null);
   }
 
   private static LinkedHashMap<String, Object> copyMap(Map<?, ?> source) {

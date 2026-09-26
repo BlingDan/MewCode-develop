@@ -60,24 +60,19 @@ public final class GlobTool implements Tool {
     String patternError =
         ToolInput.requireString(input, "pattern", " 请传入例如 /项目根目录/**/*.java 的绝对模式。");
     if (patternError != null) return patternError;
-    return PathGuard.validatePatternArgument(
-        input.get("pattern"), context.projectRoot(), context.externalPathAuthorized());
+    return PathGuard.validatePatternArgument(input.get("pattern"), context);
   }
 
   /** 在项目根目录内遍历 glob 结果，并过滤构建产物和超出数量上限的结果。 */
   @Override
   public ToolResult execute(ToolExecutionContext context, Map<String, Object> input) {
     String patternText = (String) input.get("pattern");
-    String patternError =
-        PathGuard.validatePattern(
-            patternText, context.projectRoot(), context.externalPathAuthorized());
+    String patternError = PathGuard.validatePatternArgument(patternText, context);
     if (patternError != null) return ToolResult.error(patternError);
     try {
       Path pattern = Path.of(patternText).toAbsolutePath().normalize();
       Path searchRoot = searchRoot(pattern);
-      String rootError =
-          PathGuard.validatePath(
-              searchRoot.toString(), context.projectRoot(), true, context.externalPathAuthorized());
+      String rootError = PathGuard.validatePath(searchRoot.toString(), context, true, false);
       if (rootError != null) return ToolResult.error("glob 搜索根目录不可用：" + rootError);
       if (!Files.isDirectory(searchRoot)) {
         return ToolResult.error("glob 搜索根目录不存在或不是目录：" + searchRoot + "。请调整绝对模式后重试。");
@@ -89,7 +84,8 @@ public final class GlobTool implements Tool {
           new SimpleFileVisitor<>() {
             @Override
             public FileVisitResult preVisitDirectory(Path directory, BasicFileAttributes attrs) {
-              return directory.equals(searchRoot) || !SearchSupport.shouldSkipDirectory(directory)
+              return directory.equals(searchRoot)
+                      || !SearchSupport.shouldSkipDirectory(directory, context)
                   ? FileVisitResult.CONTINUE
                   : FileVisitResult.SKIP_SUBTREE;
             }

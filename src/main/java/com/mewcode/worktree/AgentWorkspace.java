@@ -211,8 +211,82 @@ public final class AgentWorkspace {
       return slug == null ? () -> {} : manager.retain(slug, recordId, owner);
     }
 
+    public void markUnconfirmedProcess() {
+      if (slug != null) manager.markUnconfirmedProcess(slug, recordId);
+    }
+
     public void applyEnvironment(Map<String, String> environment) {
       PostCreationSetup.addHooksEnvironment(environment, hooks, hooksMode);
+    }
+
+    public boolean isShared(Path path) {
+      return shared.stream().anyMatch(path::startsWith);
+    }
+
+    public boolean excluded(Path path) {
+      Path normalized = path.toAbsolutePath().normalize();
+      Path trees = storageRoot.resolve(".mewcode/worktrees");
+      return normalized.startsWith(storageRoot.resolve(".mewcode/worktree-state"))
+          || normalized.startsWith(trees) && !(isolated() && normalized.startsWith(cwd));
+    }
+
+    public String checkPath(Path path, boolean write) {
+      try {
+        Path normalized = path.toAbsolutePath().normalize();
+        Path resolved = resolveExisting(normalized);
+        if (excluded(normalized) || excluded(resolved)) return "隔离范围拒绝访问工作树管理区域或其他副本";
+        if (!isolated()) return null;
+        if (write && (normalized.startsWith(cwd.resolve(".git")) || isShared(resolved)))
+          return "隔离范围拒绝写入 Git 元数据或只读共享依赖";
+        if (!resolved.startsWith(cwd) && !(isShared(resolved) && !write))
+          return "隔离范围拒绝访问当前工作树之外的路径";
+        return null;
+      } catch (java.io.IOException | RuntimeException error) {
+        return "隔离范围无法验证路径，操作已拒绝";
+      }
+    }
+
+    private static Path resolveExisting(Path path) throws java.io.IOException {
+      Path result = path.getRoot();
+      for (Path part : path) {
+        result = result.resolve(part);
+        if (java.nio.file.Files.exists(result) || java.nio.file.Files.isSymbolicLink(result))
+          result = result.toRealPath();
+      }
+      return result.normalize();
+    }
+
+    public com.mewcode.permission.BashSandboxRequest sandboxRequest(
+        String command, Path workingDirectory, List<Path> extraReadScopes) {
+      if (isolated()) manager.verifyCommandLayout(slug, recordId);
+      var readOnly = new java.util.ArrayList<Path>();
+      readOnly.add(storageRoot.resolve(".mewcode/worktree-state"));
+      if (isolated()) {
+        readOnly.add(cwd.resolve(".git"));
+        readOnly.addAll(shared);
+      } else {
+        readOnly.add(storageRoot.resolve(".mewcode/worktrees"));
+        try {
+          Path initialCommon = WorktreeSessionStore.commonDirectory(storageRoot);
+          readOnly.add(initialCommon.resolve("worktrees"));
+          readOnly.add(initialCommon.resolve("refs/heads/codex/worktree"));
+          readOnly.add(initialCommon.resolve("logs/refs/heads/codex/worktree"));
+        } catch (java.io.IOException ignored) {
+        }
+      }
+      var exceptions = new java.util.ArrayList<Path>();
+      exceptions.add(cwd);
+      if (common != null) exceptions.add(common);
+      exceptions.addAll(shared);
+      if (!hooks.isBlank()) exceptions.add(Path.of(hooks));
+      if (extraReadScopes != null) exceptions.addAll(extraReadScopes);
+      return new com.mewcode.permission.BashSandboxRequest(
+          command,
+          workingDirectory,
+          writableScopes(),
+          readOnly,
+          isolated() ? storageRoot : null,
+          exceptions);
     }
 
     public List<Path> writableScopes() {

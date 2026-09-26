@@ -64,13 +64,27 @@ public final class HookActionExecutor {
 
   private Optional<HookRejection> executeShell(
       HookRule rule, HookInvocation invocation, HookAction.Shell action) throws IOException {
+    var captured = invocation.executionContext();
+    if (captured == null)
+      captured =
+          new com.mewcode.tool.ToolExecutionContext(
+              java.nio.file.Path.of((String) invocation.payload().get("cwd")),
+              rule.timeout(),
+              new com.mewcode.tool.FileStateCache(),
+              invocation.cancellation());
+    else
+      captured =
+          new com.mewcode.tool.ToolExecutionContext(
+              captured.projectRoot(),
+              rule.timeout(),
+              captured.fileStateCache(),
+              invocation.cancellation(),
+              captured.permissionContext(),
+              captured.externalPathAuthorized(),
+              captured.workspaceScope());
     CommandRunner.ScriptResult result =
         commandRunner.runHook(
-            action.command(),
-            java.nio.file.Path.of((String) invocation.payload().get("cwd")),
-            objectMapper.writeValueAsString(invocation.payload()),
-            rule.timeout(),
-            invocation.cancellation());
+            action.command(), objectMapper.writeValueAsString(invocation.payload()), captured);
     if (result.cancelled() || invocation.cancellation().isCancelled()) {
       throw new IOException("shell hook cancelled");
     }

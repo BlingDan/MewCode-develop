@@ -102,6 +102,67 @@ public final class PathGuard {
     return validatePattern(raw, projectRoot, allowOutside);
   }
 
+  /** 工作区范围先于可扩大的一般项目路径授权，且在执行时再次检查真实目标。 */
+  public static String validatePath(
+      Object raw, com.mewcode.tool.ToolExecutionContext context, boolean mustExist, boolean write) {
+    String isolation = validateIsolation(raw, context, write, false);
+    if (isolation != null) return isolation;
+    return validatePath(raw, context.projectRoot(), mustExist, scopedOutside(raw, context, write));
+  }
+
+  public static String validatePathArgument(
+      Object raw, com.mewcode.tool.ToolExecutionContext context, boolean write) {
+    String isolation = validateIsolation(raw, context, write, false);
+    if (isolation != null) return isolation;
+    return validatePathArgument(raw, context.projectRoot(), scopedOutside(raw, context, write));
+  }
+
+  public static String validatePatternArgument(
+      Object raw, com.mewcode.tool.ToolExecutionContext context) {
+    String isolation = validateIsolation(raw, context, false, true);
+    if (isolation != null) return isolation;
+    return validatePatternArgument(raw, context.projectRoot(), context.externalPathAuthorized());
+  }
+
+  public static String validateIsolation(
+      Object raw, com.mewcode.tool.ToolExecutionContext context, boolean write, boolean glob) {
+    if (context.workspaceScope() == null || !(raw instanceof String text)) return null;
+    try {
+      Path path = Path.of(text);
+      if (!path.isAbsolute()) return null; // 格式错误仍由工具给出已有的详细提示。
+      if (glob) path = globAnchor(path);
+      return context.workspaceScope().checkPath(path, write);
+    } catch (RuntimeException error) {
+      return "隔离范围无法验证路径";
+    }
+  }
+
+  private static boolean scopedOutside(
+      Object raw, com.mewcode.tool.ToolExecutionContext context, boolean write) {
+    if (context.externalPathAuthorized()) return true;
+    if (!write && context.workspaceScope() != null && raw instanceof String value) {
+      Path path = parse(value);
+      if (path != null) {
+        try {
+          return context.workspaceScope().isShared(path.toRealPath());
+        } catch (IOException ignored) {
+        }
+      }
+    }
+    return false;
+  }
+
+  private static Path globAnchor(Path pattern) {
+    Path anchor = pattern.getRoot();
+    for (Path part : pattern) {
+      String value = part.toString();
+      if (value.contains("*") || value.contains("?") || value.contains("[") || value.contains("{"))
+        break;
+      anchor = anchor.resolve(part);
+    }
+    return anchor;
+  }
+
   private static Path parse(String value) {
     try {
       return Path.of(value);

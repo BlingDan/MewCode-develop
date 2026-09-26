@@ -614,7 +614,12 @@ public final class ToolExecutor implements AutoCloseable {
     if (hookEngine == null || hookState == null) return Optional.empty();
     var payload = hookPayload(context, call);
     return hookEngine.dispatch(
-        new HookInvocation(HookEvent.PRE_TOOL_USE, payload, hookState, context.token()));
+        new HookInvocation(
+            HookEvent.PRE_TOOL_USE,
+            payload,
+            hookState,
+            context.token(),
+            context.executionContext()));
   }
 
   private ToolInvocationResult hookRejected(ToolCall call, HookRejection rejection, long started) {
@@ -641,7 +646,12 @@ public final class ToolExecutor implements AutoCloseable {
         "status", result.metadata().getOrDefault("status", result.isError() ? "error" : "success"));
     payload.put("duration_ms", result.metadata().getOrDefault("durationMs", 0L));
     hookEngine.dispatch(
-        new HookInvocation(HookEvent.POST_TOOL_USE, payload, hookState, context.token()));
+        new HookInvocation(
+            HookEvent.POST_TOOL_USE,
+            payload,
+            hookState,
+            context.token(),
+            context.executionContext()));
   }
 
   private LinkedHashMap<String, Object> hookPayload(HookContext context, ToolCall call) {
@@ -682,7 +692,8 @@ public final class ToolExecutor implements AutoCloseable {
         original.pathAuthorizationStore(),
         original.bashSandbox(),
         original.permissionBroker(),
-        original.cancellationToken());
+        original.cancellationToken(),
+        context.workspaceScope());
   }
 
   private ToolInvocationResult withCallUsage(

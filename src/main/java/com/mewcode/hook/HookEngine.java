@@ -55,7 +55,7 @@ public final class HookEngine implements AutoCloseable {
         continue;
       }
       if (rule.onlyOnce() && !invocation.state().tryStartOnce(rule.name())) continue;
-      Optional<HookRejection> rejection = run(rule, invocation);
+      Optional<HookRejection> rejection = runPinned(rule, invocation);
       if (rejection.isPresent()) return rejection;
     }
     return Optional.empty();
@@ -64,7 +64,7 @@ public final class HookEngine implements AutoCloseable {
   public void cancelSession(HookSessionState state) {
     if (state == null) return;
     state.close();
-    Set<Future<?>> running = tasks.remove(state);
+    Set<Future<?>> running = tasks.get(state);
     if (running == null) return;
     for (Future<?> task : running) task.cancel(true);
   }
@@ -78,15 +78,48 @@ public final class HookEngine implements AutoCloseable {
     }
     Set<Future<?>> stateTasks =
         tasks.computeIfAbsent(state, ignored -> ConcurrentHashMap.newKeySet());
+    AutoCloseable use;
+    try {
+      use = acquireUse(invocation);
+    } catch (RuntimeException error) {
+      if (rule.onlyOnce()) state.releaseOnceStart(rule.name());
+      diagnostics.accept("Hook 所属工作树不可用：" + rule.name());
+      return false;
+    }
+    var started = new java.util.concurrent.atomic.AtomicInteger();
+    var entered = new java.util.concurrent.atomic.AtomicBoolean();
     FutureTask<Void> task =
         new FutureTask<>(
             () -> {
-              run(rule, invocation);
-              return null;
+              entered.set(true);
+              try {
+                run(rule, invocation);
+                return null;
+              } finally {
+                closeUse(use);
+              }
             }) {
           @Override
+          public void run() {
+            if (!started.compareAndSet(0, 1)) return;
+            try {
+              super.run();
+            } finally {
+              if (!entered.get() && rule.onlyOnce()) state.releaseOnceStart(rule.name());
+              closeUse(use);
+              started.set(2);
+              removeTask(state, this);
+            }
+          }
+
+          @Override
           protected void done() {
-            removeTask(state, this);
+            // cancel(true) 的 done 可能早于 Callable 真正返回。
+            if (started.compareAndSet(0, 2)) {
+              closeUse(use);
+              if (rule.onlyOnce()) state.releaseOnceStart(rule.name());
+              removeTask(state, this);
+            }
           }
         };
     stateTasks.add(task);
@@ -94,11 +127,53 @@ public final class HookEngine implements AutoCloseable {
       background.execute(task);
       return true;
     } catch (RejectedExecutionException error) {
+      task.cancel(false);
       stateTasks.remove(task);
       if (stateTasks.isEmpty()) tasks.remove(state, stateTasks);
       if (rule.onlyOnce()) state.releaseOnceStart(rule.name());
       diagnostics.accept("Hook 后台任务提交失败：" + rule.name() + " " + rule.event().configName());
       return false;
+    }
+  }
+
+  public boolean hasPending(HookSessionState state) {
+    Set<Future<?>> running = tasks.get(state);
+    return running != null && !running.isEmpty();
+  }
+
+  public boolean awaitSessionIdle(HookSessionState state, Duration timeout) {
+    long deadline = System.nanoTime() + timeout.toNanos();
+    while (hasPending(state)) {
+      if (System.nanoTime() >= deadline || Thread.currentThread().isInterrupted()) return false;
+      java.util.concurrent.locks.LockSupport.parkNanos(10_000_000);
+    }
+    return true;
+  }
+
+  private AutoCloseable acquireUse(HookInvocation invocation) {
+    var context = invocation.executionContext();
+    return context == null || context.workspaceScope() == null
+        ? () -> {}
+        : context.workspaceScope().retain();
+  }
+
+  private static void closeUse(AutoCloseable use) {
+    try {
+      use.close();
+    } catch (Exception ignored) {
+    }
+  }
+
+  private Optional<HookRejection> runPinned(HookRule rule, HookInvocation invocation) {
+    AutoCloseable use = null;
+    try {
+      use = acquireUse(invocation);
+      return run(rule, invocation);
+    } catch (RuntimeException error) {
+      diagnostics.accept("Hook 所属工作树不可用：" + rule.name());
+      return Optional.empty();
+    } finally {
+      if (use != null) closeUse(use);
     }
   }
 
@@ -132,7 +207,6 @@ public final class HookEngine implements AutoCloseable {
       entry.getKey().close();
       for (Future<?> task : entry.getValue()) task.cancel(true);
     }
-    tasks.clear();
     background.shutdownNow();
     try {
       background.awaitTermination(

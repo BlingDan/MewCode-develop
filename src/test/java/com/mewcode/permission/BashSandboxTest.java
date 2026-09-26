@@ -55,6 +55,21 @@ class BashSandboxTest {
     assertTrue(sandbox != null);
   }
 
+  @Test
+  void linuxMountsReadOnlyOverlaysAfterWritableDirectories() throws Exception {
+    Path child = java.nio.file.Files.createDirectory(projectRoot.resolve("child"));
+    Path shared = java.nio.file.Files.createDirectory(projectRoot.resolve("shared"));
+    var request =
+        new BashSandboxRequest(
+            "true", child, List.of(child), List.of(shared), projectRoot, List.of(child, shared));
+    List<String> argv = LinuxBubblewrapSandbox.arguments(request);
+    assertTrue(argv.indexOf("--tmpfs") < argv.indexOf("--bind"));
+    assertTrue(argv.lastIndexOf("--ro-bind") > argv.indexOf("--bind"));
+    assertEquals(
+        child.toAbsolutePath().normalize().toString(), argv.get(argv.indexOf("--chdir") + 1));
+    assertEquals("true", argv.getLast());
+  }
+
   private static final class RecordingSandbox implements BashSandbox {
     @Override
     public boolean isAvailable() {

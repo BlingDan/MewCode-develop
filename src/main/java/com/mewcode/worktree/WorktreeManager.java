@@ -320,6 +320,41 @@ public final class WorktreeManager {
     }
   }
 
+  void markUnconfirmedProcess(String slug, String recordId) {
+    Active slot;
+    synchronized (active) {
+      slot = active.get(slug);
+      if (slot == null || !slot.resource.recordId.equals(recordId)) return;
+      slot.resource.lastError = "命令进程停止状态未知";
+    }
+    try {
+      store.saveResource(root, slot.resource);
+    } catch (IOException ignored) {
+    }
+  }
+
+  void verifyCommandLayout(String slug, String recordId) {
+    try {
+      var resource = required(slug);
+      if (!resource.recordId.equals(recordId)) throw new IOException("资源身份变化");
+      store.verifyReady(root, resource);
+      for (Path scope :
+          List.of(
+              resource.gitDir,
+              resource.gitCommonDir.resolve("objects"),
+              resource.gitCommonDir.resolve(
+                  "refs/heads/codex/worktree/" + SlugValidator.validate(slug)),
+              resource.gitCommonDir.resolve(
+                  "logs/refs/heads/codex/worktree/" + SlugValidator.validate(slug)))) {
+        WorktreeSessionStore.noLinks(resource.gitCommonDir, scope);
+        if (!Files.isDirectory(scope, LinkOption.NOFOLLOW_LINKS))
+          throw new IOException("Git 写入范围不能确认");
+      }
+    } catch (IOException error) {
+      throw failure("命令隔离", "Git 布局无法验证，未扩大写入范围", root, SlugValidator.branch(slug));
+    }
+  }
+
   AutoCloseable retain(String slug, String recordId, String owner) {
     Active slot;
     synchronized (active) {
@@ -544,6 +579,8 @@ public final class WorktreeManager {
       WorktreeSessionStore.Resource resource, boolean discard, CancellationToken token)
       throws IOException {
     store.verifyReady(root, resource);
+    if (resource.lastError.equals("命令进程停止状态未知"))
+      throw failure("删除", "无法确认此前命令停止，须保留目录", resource.path, resource.branch);
     var changes = new WorktreeChanges(git);
     var summary = changes.countChanges(resource.path, resource.baseCommit, token);
     int unpushed = changes.countUnpushedCommits(resource.path, token);

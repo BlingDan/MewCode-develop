@@ -12,7 +12,8 @@ public record PermissionContext(
     PathAuthorizationStore pathAuthorizationStore,
     BashSandbox bashSandbox,
     PermissionBroker permissionBroker,
-    CancellationToken cancellationToken) {
+    CancellationToken cancellationToken,
+    com.mewcode.worktree.AgentWorkspace.Scope workspaceScope) {
   public PermissionContext {
     projectRoot = Objects.requireNonNull(projectRoot, "projectRoot").toAbsolutePath().normalize();
     mode = Objects.requireNonNull(mode, "mode");
@@ -22,5 +23,16 @@ public record PermissionContext(
     bashSandbox = Objects.requireNonNull(bashSandbox, "bashSandbox");
     permissionBroker = Objects.requireNonNull(permissionBroker, "permissionBroker");
     cancellationToken = Objects.requireNonNull(cancellationToken, "cancellationToken");
+  }
+
+  public PermissionContext(
+      Path projectRoot,
+      PermissionMode mode,
+      PermissionRuleEngine rules,
+      PathAuthorizationStore paths,
+      BashSandbox sandbox,
+      PermissionBroker broker,
+      CancellationToken token) {
+    this(projectRoot, mode, rules, paths, sandbox, broker, token, null);
   }
 }

@@ -93,9 +93,7 @@ public final class GrepTool implements Tool {
     } catch (PatternSyntaxException error) {
       return "参数 pattern 不是合法正则表达式：" + error.getDescription() + "。请修正后重试。";
     }
-    String boundaryError =
-        PathGuard.validatePathArgument(
-            input.get("path"), context.projectRoot(), context.externalPathAuthorized());
+    String boundaryError = PathGuard.validatePathArgument(input.get("path"), context, false);
     if (boundaryError != null) return boundaryError;
     if (input.containsKey("include") && !(input.get("include") instanceof String)) {
       return "参数 include 必须是文件名 glob 字符串。";
@@ -106,9 +104,7 @@ public final class GrepTool implements Tool {
   /** 在允许的路径范围内执行正则搜索，并以带行号的分组文本返回匹配结果。 */
   @Override
   public ToolResult execute(ToolExecutionContext context, Map<String, Object> input) {
-    String pathError =
-        PathGuard.validatePath(
-            input.get("path"), context.projectRoot(), true, context.externalPathAuthorized());
+    String pathError = PathGuard.validatePath(input.get("path"), context, true, false);
     if (pathError != null) return ToolResult.error(pathError);
     Path root = Path.of((String) input.get("path")).toAbsolutePath().normalize();
     if (!Files.isDirectory(root)) {
@@ -127,7 +123,8 @@ public final class GrepTool implements Tool {
           new SimpleFileVisitor<>() {
             @Override
             public FileVisitResult preVisitDirectory(Path directory, BasicFileAttributes attrs) {
-              return directory.equals(root) || !SearchSupport.shouldSkipDirectory(directory)
+              return directory.equals(root)
+                      || !SearchSupport.shouldSkipDirectory(directory, context)
                   ? FileVisitResult.CONTINUE
                   : FileVisitResult.SKIP_SUBTREE;
             }

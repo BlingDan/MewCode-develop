@@ -18,7 +18,7 @@ public final class WorktreeChanges {
   }
 
   public ChangeSummary countChanges(Path worktreePath, String headCommit, CancellationToken token) {
-    if (headCommit == null || !headCommit.matches("[0-9a-f]{40,64}"))
+    if (headCommit == null || !headCommit.matches("(?:[0-9a-f]{40}|[0-9a-f]{64})"))
       throw WorktreeManager.failure("成果检查", "创建基线无效", worktreePath, null);
     String status =
         git.run(worktreePath, token, "status", "--porcelain=v1", "-z", "--untracked-files=all");

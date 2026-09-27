@@ -278,6 +278,79 @@ class SubAgentRuntimeTest {
     }
   }
 
+  @Test
+  void failedIsolationInitializationNeverCallsProviderOrTouchesParentAndHidesConfig()
+      throws Exception {
+    var repo = new com.mewcode.worktree.GitRepositoryFixture(projectRoot);
+    java.nio.file.Files.createDirectories(projectRoot.resolve(".mewcode/agents"));
+    java.nio.file.Files.writeString(
+        projectRoot.resolve(".mewcode/agents/broken.md"),
+        "---\nname: broken\ndescription: broken\nisolation: worktree\n---\nEdit notes.");
+    repo.git("add", ".mewcode/agents");
+    repo.git("commit", "-m", "role");
+    String credential = "fake-startup-config-secret";
+    java.nio.file.Files.writeString(
+        projectRoot.resolve(".mewcode/config.yaml"), "api_key: " + credential);
+    var config = new com.mewcode.config.WorktreeConfig();
+    config.setRequiredFiles(List.of("missing-runtime-file"));
+    var manager = new com.mewcode.worktree.WorktreeManager(projectRoot, config, "session");
+    var workspace =
+        new com.mewcode.worktree.AgentWorkspace(
+            projectRoot,
+            projectRoot.resolve("test-home"),
+            "session",
+            "main",
+            new FileStateCache(),
+            manager);
+    var promptFactory = new com.mewcode.agent.PromptRequestFactory(workspace);
+    var client = new FakeLlmClient();
+    var provider = provider("main", "model");
+    var router =
+        new ProviderRouter(
+            List.of(provider), provider, client, (ignored, prompt) -> client, "system");
+    try (var tasks = new SubAgentTaskManager()) {
+      var runtime =
+          new SubAgentRuntime(
+              AgentCatalog.load(projectRoot, projectRoot, List.of(), 5),
+              tasks,
+              ToolRegistry.createDefault(),
+              projectRoot,
+              promptFactory,
+              new AgentLoopConfig(5, 3),
+              new PermissionGate(),
+              new PermissionRuleEngine(),
+              new PathAuthorizationStore(projectRoot),
+              BashSandboxFactory.create(),
+              null,
+              "session",
+              10_000,
+              router);
+      runtime.configureWorkspace(workspace);
+      var parent =
+          new SubAgentRuntime.ParentAgentSnapshot(
+              promptFactory.create(AgentMode.EXECUTE, 1, false, List.of(), List.of()),
+              List.of(),
+              com.mewcode.agent.ToolPolicy.forMode(AgentMode.EXECUTE),
+              router.main(),
+              AgentMode.EXECUTE,
+              new AgentRun(),
+              "session",
+              workspace.capture(new com.mewcode.agent.CancellationToken()));
+      var result =
+          runtime.execute(
+              new SubAgentRuntime.SubAgentInvocation(
+                  "edit", "edit", "broken", null, false, "dispatch"),
+              parent);
+      assertTrue(result.isError(), result.content());
+      assertTrue(result.content().contains("初始化"), result.content());
+      assertTrue(!result.content().contains(credential));
+      assertEquals(0, client.requestCount());
+      assertEquals("baseline\n", java.nio.file.Files.readString(projectRoot.resolve("notes.txt")));
+      assertTrue(manager.list().isEmpty());
+      assertTrue(tasks.drainNotifications("session").toString().indexOf(credential) < 0);
+    }
+  }
+
   private static ProviderConfig provider(String name, String model) {
     var provider = new ProviderConfig();
     provider.setName(name);

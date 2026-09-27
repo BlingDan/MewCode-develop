@@ -17,6 +17,37 @@ class WorkspaceToolExecutionTest {
   @TempDir Path root;
 
   @Test
+  void readEnterReadBatchUsesTheDirectoryAtEachBarrier() throws Exception {
+    new GitRepositoryFixture(root);
+    root = root.toRealPath();
+    var manager = new WorktreeManager(root, new WorktreeConfig(), "session");
+    Path child = manager.create(root, "child", new CancellationToken()).path();
+    java.nio.file.Files.writeString(root.resolve("notes.txt"), "parent version");
+    java.nio.file.Files.writeString(child.resolve("notes.txt"), "child version");
+    var workspace = new AgentWorkspace(root, "session", "main", new FileStateCache(), manager);
+    var registry = ToolRegistry.createDefault();
+    registry.register(new com.mewcode.tool.impl.WorktreeTool(workspace));
+    try (var tools = new ToolExecutor(registry, root, new FileStateCache())) {
+      tools.configureWorkspace(workspace);
+      var results =
+          tools.executeBatch(
+              java.util.List.of(
+                  new ToolCall(
+                      "before", "ReadFile", Map.of("path", root.resolve("notes.txt").toString())),
+                  new ToolCall("enter", "Worktree", Map.of("action", "enter", "name", "child")),
+                  new ToolCall(
+                      "after", "ReadFile", Map.of("path", child.resolve("notes.txt").toString()))));
+      assertTrue(
+          results.get(0).result().content().contains("parent version"),
+          results.get(0).result().content());
+      assertFalse(results.get(1).result().isError(), results.get(1).result().content());
+      assertTrue(results.get(2).result().content().contains("child version"));
+      assertEquals(child, workspace.currentCwd());
+    }
+    manager.exit(workspace, false, new CancellationToken());
+  }
+
+  @Test
   void validationAndExecutionKeepTheCapturedDirectoryAfterKeepExit() throws Exception {
     new GitRepositoryFixture(root);
     var manager = new WorktreeManager(root, new WorktreeConfig(), "session");

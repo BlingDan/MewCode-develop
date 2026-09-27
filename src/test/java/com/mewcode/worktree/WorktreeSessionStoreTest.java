@@ -63,6 +63,39 @@ class WorktreeSessionStoreTest {
     assertThrows(java.io.IOException.class, () -> store.verifyReady(root, record));
   }
 
+  @Test
+  void rejectsMissingBaselineObjectWithoutExecutingGit() throws Exception {
+    var repo = new GitRepositoryFixture(root);
+    var record = resource(repo);
+    var store = new WorktreeSessionStore();
+    record.baseCommit = "a".repeat(40);
+    assertThrows(java.io.IOException.class, () -> store.verifyReady(root, record));
+  }
+
+  @Test
+  void rejectsCorruptLooseBaselineObject() throws Exception {
+    var repo = new GitRepositoryFixture(root);
+    var record = resource(repo);
+    Path object =
+        root.resolve(".git/objects")
+            .resolve(record.baseCommit.substring(0, 2))
+            .resolve(record.baseCommit.substring(2));
+    Files.delete(object);
+    Files.writeString(object, "not-a-git-object");
+    assertThrows(
+        java.io.IOException.class, () -> new WorktreeSessionStore().verifyReady(root, record));
+  }
+
+  @Test
+  void verifiesPackedBaselineWithFilesystemReadsOnly() throws Exception {
+    var repo = new GitRepositoryFixture(root);
+    var record = resource(repo);
+    var store = new WorktreeSessionStore();
+    repo.git("repack", "-ad");
+    repo.git("prune-packed");
+    assertDoesNotThrow(() -> store.verifyReady(root, record));
+  }
+
   private WorktreeSessionStore.Resource resource(GitRepositoryFixture repo) throws Exception {
     Path child = root.resolve(".mewcode/worktrees/child");
     String base = repo.git("rev-parse", "HEAD");

@@ -70,6 +70,21 @@ class BashSandboxTest {
     assertEquals("true", argv.getLast());
   }
 
+  @Test
+  void linuxMasksMissingProtectedRegionsRatherThanLeavingThemWritable() throws Exception {
+    Path absent = projectRoot.resolve(".mewcode/worktrees");
+    var request =
+        new BashSandboxRequest(
+            "true", projectRoot, List.of(projectRoot), List.of(absent), null, List.of());
+    var argv = LinuxBubblewrapSandbox.arguments(request);
+    int mask = argv.indexOf("--tmpfs");
+    assertTrue(mask > argv.indexOf("--bind"));
+    assertEquals(absent.toString(), argv.get(mask + 1));
+    assertEquals("--remount-ro", argv.get(mask + 2));
+    assertEquals(absent.toString(), argv.get(mask + 3));
+    assertFalse(java.nio.file.Files.exists(absent));
+  }
+
   private static final class RecordingSandbox implements BashSandbox {
     @Override
     public boolean isAvailable() {

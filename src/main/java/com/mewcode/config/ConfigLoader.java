@@ -45,6 +45,7 @@ public final class ConfigLoader {
 
     AppConfig config;
     try {
+      validateWorktreeTypes(yamlText);
       var options = new LoaderOptions();
       var constructor = new Constructor(AppConfig.class, options);
       constructor.setPropertyUtils(new SnakeCaseProperties());
@@ -56,6 +57,43 @@ public final class ConfigLoader {
     if (config == null) config = new AppConfig();
     validate(config);
     return config;
+  }
+
+  /** 先检查节点类型，避免 Bean 绑定把数字或布尔路径隐式转成字符串。 */
+  private static void validateWorktreeTypes(String text) {
+    var yaml = new Yaml(new org.yaml.snakeyaml.constructor.SafeConstructor(new LoaderOptions()));
+    var root = yaml.compose(new java.io.StringReader(text));
+    if (!(root instanceof org.yaml.snakeyaml.nodes.MappingNode mapping)) return;
+    for (var entry : mapping.getValue()) {
+      if (!(entry.getKeyNode() instanceof org.yaml.snakeyaml.nodes.ScalarNode key)
+          || !"worktree".equals(key.getValue())) continue;
+      if (!(entry.getValueNode() instanceof org.yaml.snakeyaml.nodes.MappingNode worktree))
+        throw new IllegalArgumentException("worktree type");
+      for (var field : worktree.getValue()) {
+        String name =
+            ((org.yaml.snakeyaml.nodes.ScalarNode) field.getKeyNode()).getValue().replace('-', '_');
+        var value = field.getValueNode();
+        if (Set.of(
+                "cleanup_interval_minutes",
+                "stale_cutoff_hours",
+                "cleanupIntervalMinutes",
+                "staleCutoffHours")
+            .contains(name)) {
+          if (!(value instanceof org.yaml.snakeyaml.nodes.ScalarNode)
+              || !value.getTag().equals(org.yaml.snakeyaml.nodes.Tag.INT))
+            throw new IllegalArgumentException("worktree integer type");
+        } else if (Set.of(
+                "symlink_directories", "required_files", "symlinkDirectories", "requiredFiles")
+            .contains(name)) {
+          if (!(value instanceof org.yaml.snakeyaml.nodes.SequenceNode list))
+            throw new IllegalArgumentException("worktree list type");
+          for (var item : list.getValue())
+            if (!(item instanceof org.yaml.snakeyaml.nodes.ScalarNode)
+                || !item.getTag().equals(org.yaml.snakeyaml.nodes.Tag.STR))
+              throw new IllegalArgumentException("worktree path type");
+        }
+      }
+    }
   }
 
   /** 校验 Loop 边界、provider 唯一性、协议和 base URL，不输出 API key。 */

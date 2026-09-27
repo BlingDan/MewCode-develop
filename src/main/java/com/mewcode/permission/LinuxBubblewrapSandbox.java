@@ -51,6 +51,9 @@ public final class LinuxBubblewrapSandbox implements BashSandbox {
     for (Path scope : request.readOnlyScopes()) {
       if (Files.exists(scope))
         argv.addAll(List.of("--ro-bind", scope.toString(), scope.toString()));
+      else
+        // 未出现的管理目录也必须遮蔽，避免运行中创建后落入 broad cwd 的可写挂载。
+        argv.addAll(List.of("--tmpfs", scope.toString(), "--remount-ro", scope.toString()));
     }
     argv.add("--chdir");
     argv.add(request.projectRoot().toString());

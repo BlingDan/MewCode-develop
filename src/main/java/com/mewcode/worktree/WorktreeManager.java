@@ -81,7 +81,8 @@ public final class WorktreeManager {
       Path source = sourceCwd.toRealPath();
       // 只在新建入口固定提交，已有目录恢复绝不执行 Git。
       String base = frozenHead == null ? freezeHead(source, token) : frozenHead;
-      if (!base.matches("[0-9a-f]{40,64}")) throw failure("创建", "提交基线无效", target, null);
+      if (!base.matches("(?:[0-9a-f]{40}|[0-9a-f]{64})"))
+        throw failure("创建", "提交基线无效", target, null);
       Path common = commonFor(source, token);
       if (!common.equals(WorktreeSessionStore.commonDirectory(root)))
         throw failure("创建", "来源不属于初始仓库", target, null);
@@ -157,7 +158,8 @@ public final class WorktreeManager {
 
   public String freezeHead(Path source, CancellationToken token) {
     String head = git.run(source, token, "rev-parse", "--verify", "HEAD^{commit}").strip();
-    if (!head.matches("[0-9a-f]{40,64}")) throw failure("基线", "无法确认已提交 HEAD", source, null);
+    if (!head.matches("(?:[0-9a-f]{40}|[0-9a-f]{64})"))
+      throw failure("基线", "无法确认已提交 HEAD", source, null);
     return head;
   }
 

@@ -54,4 +54,62 @@ class GitCommandRunnerTest {
         () -> runner.run(temporary, new com.mewcode.agent.CancellationToken(), "status"));
     assertFalse(process.get().isAlive());
   }
+
+  @Test
+  void cancellationStopsAnAlreadyStartedProcessWithinTheBound() throws Exception {
+    var started = new java.util.concurrent.CountDownLatch(1);
+    var process = new java.util.concurrent.atomic.AtomicReference<Process>();
+    var token = new com.mewcode.agent.CancellationToken();
+    var runner =
+        new GitCommandRunner(
+            java.time.Duration.ofSeconds(10),
+            builder -> {
+              var child = new ProcessBuilder("/bin/sh", "-c", "exec sleep 10").start();
+              process.set(child);
+              started.countDown();
+              return child;
+            });
+    try (var threads = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+      var result = threads.submit(() -> runner.run(temporary, token, "status"));
+      assertTrue(started.await(2, java.util.concurrent.TimeUnit.SECONDS));
+      token.cancel();
+      var error =
+          assertThrows(
+              java.util.concurrent.ExecutionException.class,
+              () -> result.get(3, java.util.concurrent.TimeUnit.SECONDS));
+      assertTrue(error.getCause().getMessage().contains("已取消"));
+      assertFalse(process.get().isAlive());
+    }
+  }
+
+  @Test
+  void failureDoesNotExposeRawStderrOrLauncherDetails() {
+    String credential = "fake-api-key-must-not-leak";
+    var runner =
+        new GitCommandRunner(
+            java.time.Duration.ofSeconds(2),
+            builder ->
+                new ProcessBuilder("/bin/sh", "-c", "printf '%s' '" + credential + "' >&2; exit 42")
+                    .start());
+    var error =
+        assertThrows(
+            WorktreeException.class,
+            () -> runner.run(temporary, new com.mewcode.agent.CancellationToken(), "status"));
+    assertFalse(error.toString().contains(credential));
+    assertTrue(error.getMessage().contains("42"));
+    assertTrue(error.getMessage().contains(temporary.toString()));
+    var unavailable =
+        new GitCommandRunner(
+            java.time.Duration.ofSeconds(2),
+            builder -> {
+              throw new java.io.IOException(credential);
+            });
+    assertFalse(
+        assertThrows(
+                WorktreeException.class,
+                () ->
+                    unavailable.run(temporary, new com.mewcode.agent.CancellationToken(), "status"))
+            .toString()
+            .contains(credential));
+  }
 }

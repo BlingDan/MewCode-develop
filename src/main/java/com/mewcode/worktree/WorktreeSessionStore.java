@@ -253,9 +253,71 @@ public final class WorktreeSessionStore {
         .strip()
         .equals("ref: refs/heads/" + resource.branch)) throw new IOException("资源分支不符");
     String commit = readRef(common, "refs/heads/" + resource.branch);
-    if (!commit.matches("[0-9a-f]{40,64}")) throw new IOException("分支引用无效");
+    if (!commit.matches("(?:[0-9a-f]{40}|[0-9a-f]{64})")) throw new IOException("分支引用无效");
+    verifyObjectExists(common, resource.baseCommit);
+    verifyObjectExists(common, commit);
     Path lock = lockPath(repoRoot, resource.slug);
     if (!Files.isRegularFile(lock, LinkOption.NOFOLLOW_LINKS)) throw new IOException("资源锁缺失");
+  }
+
+  /** 只读取对象目录或 pack 索引；恢复不创建进程，也不解包或修改对象。 */
+  private static void verifyObjectExists(Path common, String hash) throws IOException {
+    Path objects = common.resolve("objects");
+    Path loose = objects.resolve(hash.substring(0, 2)).resolve(hash.substring(2));
+    noLinks(common, loose);
+    if (Files.isRegularFile(loose, LinkOption.NOFOLLOW_LINKS)) {
+      try (var input = new java.util.zip.InflaterInputStream(Files.newInputStream(loose))) {
+        var header = new java.io.ByteArrayOutputStream();
+        int value;
+        while ((value = input.read()) > 0 && header.size() < 64) header.write(value);
+        if (value != 0
+            || !header
+                .toString(java.nio.charset.StandardCharsets.US_ASCII)
+                .matches("commit [1-9][0-9]*")) throw new IOException("创建基线或分支对象无效");
+        return;
+      }
+    }
+    Path packs = objects.resolve("pack");
+    noLinks(common, packs);
+    if (Files.isDirectory(packs, LinkOption.NOFOLLOW_LINKS)) {
+      try (var entries = Files.list(packs)) {
+        for (Path index :
+            entries.filter(path -> path.getFileName().toString().endsWith(".idx")).toList()) {
+          noLinks(common, index);
+          Path pack =
+              index.resolveSibling(index.getFileName().toString().replaceFirst("\\.idx$", ".pack"));
+          noLinks(common, pack);
+          if (!Files.isRegularFile(pack, LinkOption.NOFOLLOW_LINKS)) continue;
+          try (var channel =
+              java.nio.channels.FileChannel.open(index, java.nio.file.StandardOpenOption.READ)) {
+            var header = java.nio.ByteBuffer.allocate(8);
+            if (channel.read(header, 0) != 8) continue;
+            header.flip();
+            if (header.getInt() != 0xff744f63 || header.getInt() != 2) continue;
+            var lastCount = java.nio.ByteBuffer.allocate(4);
+            if (channel.read(lastCount, 8 + 255 * 4) != 4) continue;
+            lastCount.flip();
+            long count = Integer.toUnsignedLong(lastCount.getInt());
+            int width = hash.length() / 2;
+            long table = 8 + 256 * 4;
+            if (count > (channel.size() - table) / width) continue;
+            byte[] target = java.util.HexFormat.of().parseHex(hash);
+            long low = 0, high = count - 1;
+            while (low <= high) {
+              long mid = (low + high) >>> 1;
+              var oid = java.nio.ByteBuffer.allocate(width);
+              if (channel.read(oid, table + mid * width) != width)
+                throw new IOException("pack 索引不完整");
+              int compare = java.util.Arrays.compareUnsigned(oid.array(), target);
+              if (compare == 0) return;
+              if (compare < 0) low = mid + 1;
+              else high = mid - 1;
+            }
+          }
+        }
+      }
+    }
+    throw new IOException("创建基线或分支对象缺失，无法验证恢复");
   }
 
   static Path commonDirectory(Path root) throws IOException {
@@ -307,7 +369,7 @@ public final class WorktreeSessionStore {
                   repoRoot, ".mewcode/worktrees/" + SlugValidator.validate(r.slug)))
           || !r.branch.equals(SlugValidator.branch(r.slug))
           || !r.sourceCwd.isAbsolute()
-          || !r.baseCommit.matches("[0-9a-f]{40,64}")
+          || !r.baseCommit.matches("(?:[0-9a-f]{40}|[0-9a-f]{64})")
           || !r.gitCommonDir.isAbsolute()
           || r.createdAt == null
           || r.lastUsedAt == null) throw new IOException("资源身份不符");

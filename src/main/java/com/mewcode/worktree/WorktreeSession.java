@@ -22,7 +22,7 @@ public record WorktreeSession(
       throw new IllegalArgumentException("工作树分支与名称不符");
     WorktreeSessionStore.validateId(sessionId);
     WorktreeSessionStore.validateId(agentId);
-    if (originalHeadCommit == null || !originalHeadCommit.matches("[0-9a-f]{40,64}"))
+    if (originalHeadCommit == null || !originalHeadCommit.matches("(?:[0-9a-f]{40}|[0-9a-f]{64})"))
       throw new IllegalArgumentException("无效提交基线");
     originalBranch = originalBranch == null ? "" : originalBranch;
     if (creationDurationMs < 0) throw new IllegalArgumentException("无效创建耗时");

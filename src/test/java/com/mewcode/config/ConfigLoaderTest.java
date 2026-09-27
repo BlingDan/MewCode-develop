@@ -32,6 +32,11 @@ class ConfigLoaderTest {
     for (String fields :
         new String[] {
           "cleanup_interval_minutes: 0",
+          "cleanup_interval_minutes: \"3\"",
+          "stale_cutoff_hours: true",
+          "required_files: [123]",
+          "symlink_directories: [false]",
+          "required_files: null",
           "stale_cutoff_hours: -1",
           "required_files: [/outside-secret]",
           "symlink_directories: [a/../b]",

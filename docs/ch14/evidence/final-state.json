@@ -1,0 +1,89 @@
+{
+  "at": "2026-09-27T13:10:32.753590+08:00",
+  "root": "/private/tmp/mewcode-ch14-e2e-yygckul6",
+  "parent_notes": "parent-change\n",
+  "head": "ab3f58f815c247b34e09515d957cb201e5e9f5ad",
+  "resources": [
+    {
+      "record_id": "0f0432b1-6649-4f61-af29-c013119417c2",
+      "slug": "manual-demo",
+      "path": "/private/tmp/mewcode-ch14-e2e-yygckul6/.mewcode/worktrees/manual-demo",
+      "branch": "codex/worktree/manual-demo/task",
+      "state": "READY",
+      "last_error": "",
+      "base_commit": "ab3f58f815c247b34e09515d957cb201e5e9f5ad",
+      "notes": "manual-change\n",
+      "directory_exists": true,
+      "branch_exists": true
+    },
+    {
+      "record_id": "eecec3a4-5e6c-489e-9715-2a5c4f8fef3f",
+      "slug": "manual-final",
+      "path": "/private/tmp/mewcode-ch14-e2e-yygckul6/.mewcode/worktrees/manual-final",
+      "branch": "codex/worktree/manual-final/task",
+      "state": "READY",
+      "last_error": "",
+      "base_commit": "ab3f58f815c247b34e09515d957cb201e5e9f5ad",
+      "notes": "manual-change\n",
+      "directory_exists": true,
+      "branch_exists": true
+    },
+    {
+      "record_id": "0b189686-0ab5-4f51-8cad-80ab8964ecba",
+      "slug": "temp-agent-1-c334434d",
+      "path": "/private/tmp/mewcode-ch14-e2e-yygckul6/.mewcode/worktrees/temp-agent-1-c334434d",
+      "branch": "codex/worktree/temp-agent-1-c334434d/task",
+      "state": "READY",
+      "last_error": "",
+      "base_commit": "ab3f58f815c247b34e09515d957cb201e5e9f5ad",
+      "notes": "child-change\n",
+      "directory_exists": true,
+      "branch_exists": true
+    },
+    {
+      "record_id": "a01bdbdd-b991-461e-833a-0e60443b4892",
+      "slug": "temp-agent-2-5dbd5d9b",
+      "path": "/private/tmp/mewcode-ch14-e2e-yygckul6/.mewcode/worktrees/temp-agent-2-5dbd5d9b",
+      "branch": "codex/worktree/temp-agent-2-5dbd5d9b/task",
+      "state": "READY",
+      "last_error": "命令进程停止状态未知",
+      "base_commit": "ab3f58f815c247b34e09515d957cb201e5e9f5ad",
+      "notes": "child-change\n",
+      "directory_exists": true,
+      "branch_exists": true
+    }
+  ],
+  "removed": [
+    {
+      "slug": "temp-agent-2-8d548b11",
+      "directory_exists": false,
+      "branch_exists": false
+    },
+    {
+      "slug": "temp-agent-3-38bac86d",
+      "directory_exists": false,
+      "branch_exists": false
+    },
+    {
+      "slug": "temp-agent-1-0ba5ec9e",
+      "directory_exists": false,
+      "branch_exists": false
+    },
+    {
+      "slug": "discard-demo",
+      "directory_exists": false,
+      "branch_exists": false
+    },
+    {
+      "slug": "discard-final",
+      "directory_exists": false,
+      "branch_exists": false
+    }
+  ],
+  "final_test_pid": 43415,
+  "jar_sha256": "588517f7d3e3468cbc26125549c5072ebf07c9872aebe1cd6fb39c87f630856c",
+  "original_config_mtime_ns": 1789058659548000000,
+  "test_sessions_stopped": true,
+  "test_process_alive": false,
+  "checked_at": "2026-09-27T13:13:50.769947+08:00"
+}

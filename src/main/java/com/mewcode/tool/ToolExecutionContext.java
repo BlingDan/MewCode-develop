@@ -18,7 +18,8 @@ public record ToolExecutionContext(
     FileStateCache fileStateCache,
     CancellationToken cancellationToken,
     PermissionContext permissionContext,
-    boolean externalPathAuthorized) {
+    boolean externalPathAuthorized,
+    com.mewcode.worktree.AgentWorkspace.Scope workspaceScope) {
 
   public static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(120);
 
@@ -44,6 +45,16 @@ public record ToolExecutionContext(
       Path projectRoot,
       Duration timeout,
       FileStateCache fileStateCache,
+      CancellationToken token,
+      PermissionContext permissions,
+      boolean externalPathAuthorized) {
+    this(projectRoot, timeout, fileStateCache, token, permissions, externalPathAuthorized, null);
+  }
+
+  public ToolExecutionContext(
+      Path projectRoot,
+      Duration timeout,
+      FileStateCache fileStateCache,
       CancellationToken cancellationToken) {
     this(projectRoot, timeout, fileStateCache, cancellationToken, null, false);
   }
@@ -55,13 +66,19 @@ public record ToolExecutionContext(
   /** 复制上下文但替换为本轮 AgentRun 的取消 token。 */
   public ToolExecutionContext withCancellationToken(CancellationToken token) {
     return new ToolExecutionContext(
-        projectRoot, timeout, fileStateCache, token, permissionContext, externalPathAuthorized);
+        projectRoot,
+        timeout,
+        fileStateCache,
+        token,
+        permissionContext,
+        externalPathAuthorized,
+        workspaceScope);
   }
 
   /** 绑定一次权限判断产生的上下文和取消 token。 */
   public ToolExecutionContext withPermissionContext(
       PermissionContext context, CancellationToken token, boolean allowExternalPath) {
     return new ToolExecutionContext(
-        projectRoot, timeout, fileStateCache, token, context, allowExternalPath);
+        projectRoot, timeout, fileStateCache, token, context, allowExternalPath, workspaceScope);
   }
 }

@@ -59,6 +59,7 @@ public final class MewCode {
             Path.of(System.getProperty("user.home", ".")).toAbsolutePath().normalize());
     CommandRegistry commands = CommandRegistry.createDefault();
     var knownTools = new java.util.LinkedHashSet<>(registry.ordinaryToolNames());
+    knownTools.add("Worktree");
     knownTools.addAll(java.util.Set.of("TaskList", "TaskGet", "TaskCreate", "TaskUpdate"));
     SkillCatalog.RefreshResult beforeMcp = catalog.refresh(knownTools, commands.reservedNames());
     for (String diagnostic : beforeMcp.diagnostics()) {
@@ -84,6 +85,7 @@ public final class MewCode {
       McpManager.ConnectionReport report = mcpManager.connectAll(mcp.servers());
       report.errors().forEach(error -> System.err.println("MewCode: " + error));
       var finalKnownTools = new java.util.LinkedHashSet<>(registry.ordinaryToolNames());
+      finalKnownTools.add("Worktree");
       finalKnownTools.addAll(java.util.Set.of("TaskList", "TaskGet", "TaskCreate", "TaskUpdate"));
       SkillCatalog.RefreshResult finalSkills =
           catalog.refresh(finalKnownTools, commands.reservedNames());
@@ -109,6 +111,7 @@ public final class MewCode {
               permissions.pathAuthorizationStore(),
               com.mewcode.permission.BashSandboxFactory.create(),
               mcp.servers());
+      model.configureWorktree(config.getWorktree());
       model.configureSubAgents(config.getAgent().getSubagent());
       model.useSkillBootstrap(catalog, registry, mcpManager);
     } catch (RuntimeException error) {

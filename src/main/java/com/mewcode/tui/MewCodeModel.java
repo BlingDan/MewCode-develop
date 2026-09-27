@@ -90,7 +90,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   private static final Duration POLL_INTERVAL = Duration.ofMillis(50);
   private static final String[] SPINNER = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
   // streaming view 还要保留状态栏、输入框和 spinner，正文只能占剩余行数。
-  private static final int STREAMING_FIXED_LINES = 10;
+  private static final int STREAMING_FIXED_LINES = 11;
 
   private final List<ProviderConfig> providers;
   private final Path projectRoot;
@@ -107,6 +107,14 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   private final ConversationManager conversation = new ConversationManager();
   private final SessionManager sessionManager;
   private final MemoryManager memoryManager;
+  private com.mewcode.worktree.WorktreeManager worktreeManager;
+  private volatile com.mewcode.worktree.AgentWorkspace workspace;
+  private final java.util.Map<String, com.mewcode.worktree.AgentWorkspace> workspaces =
+      new java.util.concurrent.ConcurrentHashMap<>();
+  private SubAgentRuntime subAgentRuntime;
+  private com.mewcode.worktree.StaleCleanup staleCleanup;
+  private String pendingWorktreeCommand;
+  private String lastWorktreeMessage = "";
   private final AgentCatalog agentCatalog;
   private final SubAgentTaskManager taskManager = new SubAgentTaskManager();
   private final HookConfigLoader.LoadedHooks loadedHooks;
@@ -315,7 +323,16 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     this.bashSandbox = Objects.requireNonNull(bashSandbox, "bashSandbox");
     this.sessionManager =
         new SessionManager(this.projectRoot, this.userHome, conversation, this::recordDiagnostic);
-    this.memoryManager = new MemoryManager(this.projectRoot, this.userHome, this::recordDiagnostic);
+    this.worktreeManager =
+        new com.mewcode.worktree.WorktreeManager(
+            this.projectRoot,
+            new com.mewcode.config.WorktreeConfig(),
+            sessionManager.currentSessionId());
+    this.workspace = workspaceForSession();
+    this.staleCleanup =
+        new com.mewcode.worktree.StaleCleanup(
+            worktreeManager, new com.mewcode.config.WorktreeConfig(), this::recordDiagnostic);
+    this.memoryManager = workspace.memory(false, this::recordDiagnostic);
     this.loadedHooks =
         HookConfigLoader.load(this.projectRoot, this.userHome, this::recordDiagnostic);
     this.hookEngine =
@@ -341,6 +358,53 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     } else {
       state = AppState.PROVIDER_SELECT;
     }
+  }
+
+  public void configureWorktree(com.mewcode.config.WorktreeConfig config) {
+    if (ready || client != null) throw new IllegalStateException("Provider 已开始初始化");
+    workspaces.values().forEach(com.mewcode.worktree.AgentWorkspace::closeMemories);
+    workspaces.clear();
+    staleCleanup.close();
+    worktreeManager =
+        new com.mewcode.worktree.WorktreeManager(
+            projectRoot, config, sessionManager.currentSessionId());
+    workspace = workspaceForSession();
+    staleCleanup =
+        new com.mewcode.worktree.StaleCleanup(worktreeManager, config, this::recordDiagnostic);
+  }
+
+  public Path workingDirectory() {
+    return workspace.currentCwd();
+  }
+
+  private com.mewcode.worktree.AgentWorkspace workspaceForSession() {
+    return workspaces.computeIfAbsent(
+        sessionManager.currentSessionId(),
+        id ->
+            new com.mewcode.worktree.AgentWorkspace(
+                projectRoot, userHome, id, "main", new FileStateCache(), worktreeManager));
+  }
+
+  private MemoryManager currentMemory() {
+    var memory = workspace.memory(false, this::recordDiagnostic);
+    if (client != null && selectedProvider != null)
+      memory.attachClient(client, selectedProvider.getModel());
+    return memory;
+  }
+
+  private void rebindWorkspace() {
+    worktreeManager.detach(workspace);
+    workspace = workspaceForSession();
+    try {
+      worktreeManager.restore(workspace);
+    } catch (com.mewcode.worktree.WorktreeException error) {
+      recordDiagnostic(error.getMessage());
+    }
+    if (toolExecutor != null) toolExecutor.configureWorkspace(workspace);
+    if (toolRegistry != null)
+      toolRegistry.register(new com.mewcode.tool.impl.WorktreeTool(workspace));
+    if (coordinator != null) coordinator.configureWorkspace(workspace);
+    if (subAgentRuntime != null) subAgentRuntime.configureWorkspace(workspace);
   }
 
   /** 设置已校验的 SubAgent 运行配置；必须在 Provider 初始化前调用。 */
@@ -376,6 +440,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
       width = Math.max(size.width(), 1);
       height = Math.max(size.height(), 3);
       ready = true;
+      staleCleanup.start();
       if (singleProviderPending) {
         singleProviderPending = false;
         initializeProvider();
@@ -453,7 +518,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
               clientFactory,
               systemPromptBundle.flattenedText());
       sessionManager.attachTitleClient(client, selectedProvider.getModel());
-      memoryManager.attachClient(client, selectedProvider.getModel());
+      currentMemory().attachClient(client, selectedProvider.getModel());
       if (toolRegistry == null) {
         toolRegistry = ToolRegistry.createDefault();
         toolRegistry.register(new LoadSkillTool());
@@ -464,6 +529,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
       }
       toolExecutor =
           new ToolExecutor(toolRegistry, projectRoot, new FileStateCache(), permissionGate);
+      toolExecutor.configureWorkspace(workspace);
       if (mcpManager == null) mcpManager = new McpManager(toolRegistry);
       contextManager =
           new ContextManager(projectRoot, client, selectedProvider.getContextWindowTokens());
@@ -480,7 +546,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
               conversation,
               protocol,
               loopConfig,
-              new PromptRequestFactory(systemPromptBundle),
+              new PromptRequestFactory(() -> workspace.systemPrompt()),
               contextManager,
               permissionGate,
               permissionRuntime,
@@ -488,13 +554,13 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
               bashSandbox);
       coordinator.setHookSessionId(hookSessionId);
       coordinator.configureHooks(hookEngine, hookState);
-      coordinator.setSubAgentRuntime(
+      subAgentRuntime =
           new SubAgentRuntime(
               agentCatalog,
               taskManager,
               toolRegistry,
               projectRoot,
-              new PromptRequestFactory(systemPromptBundle),
+              new PromptRequestFactory(() -> workspace.systemPrompt()),
               loopConfig,
               permissionGate,
               permissionRuntime.snapshot().ruleEngine(),
@@ -503,7 +569,10 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
               hookEngine,
               hookSessionId,
               autoBackgroundMs,
-              providerRouter));
+              providerRouter);
+      subAgentRuntime.configureWorkspace(workspace);
+      coordinator.setSubAgentRuntime(subAgentRuntime);
+      coordinator.configureWorkspace(workspace);
       if (!sessionStarted) {
         dispatchHook(HookEvent.SESSION_START, Map.of("phase", "ready"), hookState);
         sessionStarted = true;
@@ -511,18 +580,18 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
       coordinator.setPromptAdditionsSupplier(
           () ->
               new PromptAdditions(
-                  memoryManager.indexText(),
+                  currentMemory().indexText(),
                   sessionManager.consumeResumeReminder(),
                   "",
                   "",
                   List.of(),
-                  agentCatalog.promptSummary()));
+                  workspace.agentCatalog(loopConfig.getMaxIterations()).promptSummary()));
       coordinator.configureSkills(
           skillCatalog, this::refreshSkills, providerRouter, this::runForkSkill);
       coordinator.setCompletionListener(
           completedTurn -> {
             sessionManager.onCompletedTurn(completedTurn);
-            memoryManager.updateAsync(completedTurn);
+            currentMemory().updateAsync(completedTurn);
           });
       if (mcpManager.connectedServers().isEmpty() && mcpManager.errors().isEmpty()) {
         startMcpInitialization();
@@ -539,6 +608,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
 
   private void ensureSubAgentTools() {
     toolRegistry.register(new AgentTool());
+    toolRegistry.register(new com.mewcode.tool.impl.WorktreeTool(workspace));
     TaskTools.registerAll(toolRegistry, taskManager, sessionManager::currentSessionId);
     agentCatalog
         .diagnoseUnknownTools(toolRegistry.ordinaryToolNames())
@@ -623,6 +693,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   public void close() {
     if (closed) return;
     closed = true;
+    staleCleanup.close();
     if (activeRun != null) activeRun.cancel();
     taskManager.cancelAll();
     if (sessionStarted) {
@@ -636,7 +707,8 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     closeContextManager();
     closeMcpManager();
     closeToolExecutor();
-    memoryManager.close();
+    workspaces.values().forEach(com.mewcode.worktree.AgentWorkspace::closeMemories);
+    worktreeManager.detach(workspace);
     sessionManager.close();
     taskManager.close();
     activeRun = null;
@@ -805,16 +877,19 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     var token = new com.mewcode.agent.CancellationToken();
     pendingPromptCheck = new PromptCheck(checkId, sessionId, text, token);
     completedPromptCheck = null;
+    var submittedContext = workspace.capture(token);
     Thread.startVirtualThread(
         () -> {
           Optional<HookRejection> rejection = Optional.empty();
           try {
             var payload = hookPayload(agentMode);
+            payload.put("cwd", submittedContext.projectRoot().toString());
             payload.put("prompt", text);
             payload.put("raw_input", text);
             rejection =
                 hookEngine.dispatch(
-                    new HookInvocation(HookEvent.USER_PROMPT_SUBMIT, payload, state, token));
+                    new HookInvocation(
+                        HookEvent.USER_PROMPT_SUBMIT, payload, state, token, submittedContext));
           } catch (RuntimeException error) {
             recordDiagnostic("UserPromptSubmit Hook 执行失败。");
           }
@@ -875,7 +950,9 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     pendingPrompt = null;
     pendingCompactFocus = null;
     pendingUiCommand = null;
+    pendingWorktreeCommand = null;
     String output = commandRegistry.execute(call.get(), commandContext(call.get().args()));
+    if (pendingWorktreeCommand != null) return startWorktreeRequest(pendingWorktreeCommand);
     if (pendingPrompt != null) return startAgentRequest(pendingPrompt);
     if (pendingCompactFocus != null) return startManualCompaction(pendingCompactFocus);
     var commands = new ArrayList<Command>();
@@ -884,6 +961,108 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
       commands.add(Command.println(Styles.DIM.render(output)));
     }
     return UpdateResult.from(this, sequence(commands));
+  }
+
+  /** UI 只建立事件桥；身份绑定、权限等待、Git 及 Hook 全在工作线程中。 */
+  private UpdateResult<MewCodeModel> startWorktreeRequest(String arguments) {
+    final Map<String, Object> input;
+    try {
+      input = com.mewcode.command.WorktreeCommand.parse(arguments);
+    } catch (IllegalArgumentException error) {
+      return UpdateResult.from(this, Command.println(error.getMessage()));
+    }
+    var run = new AgentRun();
+    run.setPermissionPublisher(
+        request -> run.events().publish(new AgentEvent.PermissionRequested(request)));
+    activeRun = run;
+    streamEvents = run.events();
+    streaming = true;
+    compactionRun = false;
+    streamBuffer.setLength(0);
+    pendingStreamError = null;
+    requestStartMillis = System.currentTimeMillis();
+    spinnerVerb = "Worktree";
+    var targetWorkspace = workspace;
+    Thread.startVirtualThread(
+        () -> {
+          try {
+            var tool = new com.mewcode.tool.impl.WorktreeTool(targetWorkspace);
+            var localRegistry = new ToolRegistry();
+            localRegistry.register(tool);
+            try (var localExecutor =
+                new ToolExecutor(
+                    localRegistry,
+                    targetWorkspace.currentCwd(),
+                    new FileStateCache(),
+                    permissionGate)) {
+              localExecutor.configureWorkspace(targetWorkspace);
+              localExecutor.setHookSessionId(hookSessionId);
+              localExecutor.configureHooks(hookEngine, hookState);
+              var call =
+                  new com.mewcode.tool.ToolCall(UUID.randomUUID().toString(), "Worktree", input);
+              AutoCloseable capability = () -> {};
+              if (Boolean.TRUE.equals(input.get("discardChanges"))) {
+                String target = (String) input.get("name");
+                if (target == null)
+                  target =
+                      targetWorkspace
+                          .currentSession()
+                          .orElseThrow(() -> new IllegalArgumentException("当前未进入工作树"))
+                          .worktreeName();
+                capability =
+                    tool.authorizeUserDiscard(
+                        call.arguments(), worktreeManager.resourceIdentityForUserCommand(target));
+              }
+              try (var authorization = capability) {
+                var snapshot = permissionRuntime.snapshot();
+                var permissions =
+                    new com.mewcode.permission.PermissionContext(
+                        targetWorkspace.currentCwd(),
+                        snapshot.mode(),
+                        snapshot.ruleEngine(),
+                        pathAuthorizationStore,
+                        bashSandbox,
+                        run.permissionBroker(),
+                        run.cancellationToken());
+                run.events()
+                    .publish(
+                        new AgentEvent.ToolUse(
+                            call.toolUseId(), call.toolName(), call.arguments()));
+                var invocation =
+                    localExecutor
+                        .executeBatch(
+                            List.of(call),
+                            com.mewcode.agent.ToolPolicy.forMode(agentMode),
+                            permissions,
+                            call.toolUseId(),
+                            agentMode)
+                        .getFirst();
+                var result = invocation.result();
+                run.events()
+                    .publish(
+                        new AgentEvent.ToolResult(
+                            call.toolUseId(),
+                            call.toolName(),
+                            result.content(),
+                            result.isError(),
+                            0));
+                run.events().publish(new AgentEvent.StreamText(result.content()));
+              }
+            }
+          } catch (Exception error) {
+            run.events()
+                .publish(
+                    new AgentEvent.StreamText(
+                        error instanceof com.mewcode.worktree.WorktreeException
+                                || error instanceof IllegalArgumentException
+                            ? error.getMessage()
+                            : "Worktree 请求失败，相关目录与成果保留。"));
+          } finally {
+            run.events().publish(new AgentEvent.LoopComplete(0));
+            run.complete();
+          }
+        });
+    return UpdateResult.from(this, Command.tick(POLL_INTERVAL, ignored -> new StreamPollMessage()));
   }
 
   private UpdateResult<MewCodeModel> startAgentRequest(String text) {
@@ -994,6 +1173,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
             ? java.util.Set.of(
                 "ReadFile", "WriteFile", "EditFile", "Bash", "Glob", "Grep", LoadSkillTool.NAME)
             : toolRegistry.ordinaryToolNames();
+    skillCatalog = workspace.skillCatalog();
     SkillCatalog.RefreshResult result =
         skillCatalog.refreshHot(known, commandRegistry.reservedNames());
     if (toolRegistry != null) {
@@ -1029,14 +1209,21 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
             request.mainHistory(),
             request.skill().meta().context(),
             request.skill().meta().contextCount()));
+    var submittedContext = workspace.capture(new com.mewcode.agent.CancellationToken());
+    var forkWorkspace =
+        workspace.forkForChild(
+            submittedContext, "skill-fork-" + UUID.randomUUID().toString().substring(0, 8));
+    AutoCloseable parentUse = submittedContext.workspaceScope().retain();
     var temporaryContext =
         new ContextManager(
-            projectRoot,
+            submittedContext.projectRoot(),
             providerRouter.main().client(),
             providerRouter.main().config().getContextWindowTokens());
     var forkState = new HookSessionState();
     var forkToolExecutor =
-        new ToolExecutor(toolRegistry, projectRoot, new FileStateCache(), permissionGate);
+        new ToolExecutor(
+            toolRegistry, submittedContext.projectRoot(), new FileStateCache(), permissionGate);
+    forkToolExecutor.configureWorkspace(forkWorkspace);
     try {
       var child =
           new AgentTurnCoordinator(
@@ -1046,13 +1233,35 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
               temporary,
               providerRouter.main().protocol(),
               loopConfig,
-              new PromptRequestFactory(systemPromptBundle),
+              new PromptRequestFactory(forkWorkspace),
               temporaryContext,
               permissionGate,
               permissionRuntime,
               pathAuthorizationStore,
               bashSandbox);
-      child.setPromptAdditionsSupplier(PromptAdditions::empty);
+      child.setPromptAdditionsSupplier(
+          () ->
+              new PromptAdditions(
+                  forkWorkspace.memory(true, ignored -> {}).indexText(),
+                  java.util.Optional.empty()));
+      child.setToolPolicySupplier(
+          () ->
+              com.mewcode.agent.ToolPolicy.forSubAgent(
+                  toolRegistry,
+                  com.mewcode.agent.ToolPolicy.forModeAndTools(
+                      request.mode(), java.util.Set.copyOf(request.skill().meta().tools()), true),
+                  new com.mewcode.subagent.SubAgentSpec(
+                      "skill-fork",
+                      "skill fork",
+                      null,
+                      java.util.Set.of(),
+                      "完成分配任务",
+                      loopConfig.getMaxIterations(),
+                      "inherit",
+                      com.mewcode.subagent.SubAgentSpec.PermissionMode.DEFAULT,
+                      com.mewcode.subagent.SubAgentSpec.Source.BUILTIN,
+                      request.skill().entry()),
+                  false));
       child.configureSkills(
           skillCatalog,
           this::refreshSkills,
@@ -1069,6 +1278,11 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
       hookEngine.cancelSession(forkState);
       forkToolExecutor.close();
       temporaryContext.close();
+      forkWorkspace.closeMemories();
+      try {
+        parentUse.close();
+      } catch (Exception ignored) {
+      }
     }
   }
 
@@ -1113,7 +1327,12 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     var payload = hookPayload(agentMode);
     if (fields != null) payload.putAll(fields);
     hookEngine.dispatch(
-        new HookInvocation(event, payload, state, new com.mewcode.agent.CancellationToken()));
+        new HookInvocation(
+            event,
+            payload,
+            state,
+            new com.mewcode.agent.CancellationToken(),
+            workspace.capture(new com.mewcode.agent.CancellationToken())));
   }
 
   private void bindHookSession() {
@@ -1124,7 +1343,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
 
   private java.util.LinkedHashMap<String, Object> hookPayload(AgentMode mode) {
     var payload = new java.util.LinkedHashMap<String, Object>();
-    payload.put("cwd", projectRoot.toString());
+    payload.put("cwd", workingDirectory().toString());
     if (hookSessionId != null) payload.put("session_id", hookSessionId);
     payload.put("mode", (mode == null ? agentMode : mode).name());
     return payload;
@@ -1133,7 +1352,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   private CommandContext commandContext(String args) {
     return new CommandContext(
         args,
-        projectRoot.toString(),
+        workingDirectory().toString(),
         selectedProvider == null ? "" : selectedProvider.getModel(),
         this,
         this::statusSummary,
@@ -1144,13 +1363,14 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
         this::memorySummary,
         this::memoryLines,
         this::addMemory,
-        memoryManager::clearAll,
+        () -> currentMemory().clearAll(),
         this::permissionSummary,
         this::permissionLines,
         this::setPermissionMode,
         this::addPermissionRule,
         permissionRuntime::reset,
-        this::hookLines);
+        this::hookLines,
+        argsToRun -> pendingWorktreeCommand = argsToRun);
   }
 
   private String hookLines() {
@@ -1214,6 +1434,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
       prepared.close();
       throw error;
     }
+    rebindWorkspace();
     hookState = new HookSessionState();
     hookSessionId = sessionManager.currentSessionId();
     sessionStarted = true;
@@ -1225,7 +1446,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   }
 
   private String memorySummary() {
-    var summary = memoryManager.summary();
+    var summary = currentMemory().summary();
     var text =
         new StringBuilder(
             "记忆概要：user %d 条，project %d 条"
@@ -1242,7 +1463,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   }
 
   private List<String> memoryLines() {
-    var summary = memoryManager.summary();
+    var summary = currentMemory().summary();
     var lines = new ArrayList<String>();
     summary.user().forEach(note -> lines.add(memoryLine("user", note)));
     summary.project().forEach(note -> lines.add(memoryLine("project", note)));
@@ -1254,7 +1475,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   }
 
   private String addMemory(String type, String content) {
-    var note = memoryManager.addManual(type, content);
+    var note = currentMemory().addManual(type, content);
     return "已添加记忆：" + note.title();
   }
 
@@ -1286,7 +1507,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   }
 
   private String statusSummary() {
-    var memory = memoryManager.summary();
+    var memory = currentMemory().summary();
     long tokens = getTokenCount();
     int window = selectedProvider == null ? 0 : selectedProvider.getContextWindowTokens();
     long percent = window <= 0 ? 0 : Math.min(100, tokens * 100 / window);
@@ -1310,6 +1531,8 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
         记忆：user %d 条，project %d 条
         MCP：%s
         工作目录：%s
+        分支：%s
+        Worktree：%s
         版本：v%s
         """
         .formatted(
@@ -1325,7 +1548,9 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
             memory.user().size(),
             memory.project().size(),
             mcp,
-            projectRoot,
+            workingDirectory(),
+            worktreeManager.branchLabel(workingDirectory()),
+            lastWorktreeMessage.isBlank() ? "暂无生命周期结果" : safeTerminalText(lastWorktreeMessage),
             VERSION)
         .stripTrailing();
   }
@@ -1377,6 +1602,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
       prepared.close();
       throw error;
     }
+    rebindWorkspace();
     hookState = new HookSessionState();
     hookSessionId = sessionManager.currentSessionId();
     sessionStarted = true;
@@ -1407,7 +1633,10 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
         switch (event) {
           case AgentEvent.StreamText text -> streamBuffer.append(text.text());
           case AgentEvent.ToolUse started -> printCommands.add(renderToolStarted(started));
-          case AgentEvent.ToolResult completed -> printCommands.add(renderToolCompleted(completed));
+          case AgentEvent.ToolResult completed -> {
+            if ("Worktree".equals(completed.toolName())) lastWorktreeMessage = completed.result();
+            printCommands.add(renderToolCompleted(completed));
+          }
           case AgentEvent.PermissionRequested request -> {
             pendingPermission = request.request();
             printCommands.add(
@@ -1657,6 +1886,16 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     var view = new StringBuilder();
     view.append(Styles.DIM.render("● Ready for conversation and tools · " + modeLabel()));
     view.append('\n');
+    view.append(
+            Styles.DIM.render(
+                "  目录："
+                    + tailCharacters(
+                        workingDirectory()
+                            + " · "
+                            + worktreeManager.branchLabel(workingDirectory()),
+                        Math.max(1, width - 9),
+                        1)))
+        .append('\n');
 
     if (streaming) {
       if (!streamBuffer.isEmpty()) {
@@ -1844,7 +2083,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
         + "\n"
         + Styles.BANNER.render("( o.o )   " + model)
         + "\n"
-        + Styles.BANNER.render(" > ^ <    " + projectRoot);
+        + Styles.BANNER.render(" > ^ <    " + workingDirectory());
   }
 
   private static Path currentProjectRoot() {

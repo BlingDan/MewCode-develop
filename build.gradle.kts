@@ -42,6 +42,11 @@ tasks.withType<JavaCompile> {
 spotless {
     java {
         target(
+                "src/main/java/com/mewcode/worktree/**/*.java",
+                "src/test/java/com/mewcode/worktree/**/*.java",
+                "src/main/java/com/mewcode/config/WorktreeConfig.java",
+                "src/main/java/com/mewcode/tool/impl/WorktreeTool.java",
+                "src/test/java/com/mewcode/tool/impl/WorktreeToolTest.java",
                 "src/main/java/com/mewcode/command/**/*.java",
                 "src/main/java/com/mewcode/prompt/**/*.java",
                 "src/main/java/com/mewcode/llm/PromptRequest.java",

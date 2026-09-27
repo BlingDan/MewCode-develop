@@ -293,6 +293,58 @@ class MemoryManagerTest {
         assertEquals("memory 更新失败，保留旧笔记和索引。", diagnostic.get());
     }
 
+    @Test
+    void readOnlyChildIndexNeverCreatesDirectoriesOrPrunes() throws Exception {
+        Path project = tempDir.resolve("child");
+        Path home = tempDir.resolve("readonly-home");
+        try (var manager = MemoryManager.readOnly(project, home)) {
+            assertEquals("", manager.indexText());
+            assertFalse(Files.exists(project));
+            assertFalse(Files.exists(home));
+            assertThrows(IllegalStateException.class, () -> manager.addManual("project_knowledge", "never"));
+        }
+    }
+
+    @Test
+    void projectManagersShareTheEntireUserUpdateLock() throws Exception {
+        Path home = tempDir.resolve("shared-home");
+        try (var first = new MemoryManager(tempDir.resolve("one"), home, ignored -> {});
+             var second = new MemoryManager(tempDir.resolve("two"), home, ignored -> {})) {
+            var start = new CountDownLatch(1);
+            try (var pool = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+                var a = pool.submit(() -> { start.await(); first.addManual("user_preference", "first preference"); return null; });
+                var b = pool.submit(() -> { start.await(); second.addManual("user_preference", "second preference"); return null; });
+                start.countDown(); a.get(3, TimeUnit.SECONDS); b.get(3, TimeUnit.SECONDS);
+            }
+            assertEquals(2, first.summary().user().size());
+            assertTrue(first.indexText().contains("first preference"));
+            assertTrue(second.indexText().contains("second preference"));
+        }
+    }
+
+    @Test
+    void submittedMemoryUpdatePinsItsOriginalWorktreeAcrossKeepExit() throws Exception {
+        Path root = Files.createDirectories(tempDir.resolve("repo"));
+        new com.mewcode.worktree.GitRepositoryFixture(root);
+        var manager = new com.mewcode.worktree.WorktreeManager(root, new com.mewcode.config.WorktreeConfig(), "session");
+        var token = new com.mewcode.agent.CancellationToken();
+        Path child = manager.create(root, "memory", token).path();
+        var workspace = new com.mewcode.worktree.AgentWorkspace(root, tempDir.resolve("home"), "session", "main", new com.mewcode.tool.FileStateCache(), manager);
+        manager.enter(workspace, "memory");
+        var client = new BlockingMemoryClient();
+        var memory = workspace.memory(false, ignored -> {}); memory.attachClient(client, "test");
+        memory.updateAsync(List.of(new Message("user", "remember CI")));
+        assertTrue(client.started.await(2, TimeUnit.SECONDS));
+        try {
+            manager.exit(workspace, false, new com.mewcode.agent.CancellationToken());
+            assertThrows(com.mewcode.worktree.WorktreeException.class, () -> manager.remove("memory", new com.mewcode.agent.CancellationToken()));
+        } finally { client.release.countDown(); }
+        memory.close();
+        assertTrue(Files.exists(child.resolve(".mewcode/memory/project_knowledge_ci.md")));
+        assertFalse(Files.exists(root.resolve(".mewcode/memory/project_knowledge_ci.md")));
+        assertTrue(manager.remove("memory", new com.mewcode.agent.CancellationToken()));
+    }
+
     private static final class BlockingMemoryClient implements LlmClient {
         private static final String RESPONSE =
                 "[{\"action\":\"create\",\"level\":\"project\",\"type\":\"project_knowledge\",\"title\":\"CI\",\"slug\":\"ci\",\"content\":\"Use GitHub Actions.\"}]";

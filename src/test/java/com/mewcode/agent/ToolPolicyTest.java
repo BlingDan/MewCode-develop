@@ -19,6 +19,19 @@ import org.junit.jupiter.api.Test;
 class ToolPolicyTest {
 
   @Test
+  void worktreePolicyHidesUnverifiedDiscoveryEvenForSystemTools() {
+    var registry = new ToolRegistry();
+    registry.register(new com.mewcode.tool.impl.ToolSearchTool(registry));
+    assertTrue(
+        ToolPolicy.forMode(AgentMode.EXECUTE).isAllowed(registry.get("ToolSearch").orElseThrow()));
+    assertFalse(
+        ToolPolicy.forMode(AgentMode.EXECUTE)
+            .forWorkspace(true)
+            .isAllowed(registry.get("ToolSearch").orElseThrow()));
+    assertTrue(ToolPolicy.ALL_AGENT_DISALLOWED_TOOLS.contains("Worktree"));
+  }
+
+  @Test
   void planModeAllowsAllSafeReadOnlyToolsAndExecuteModeAllowsAllTools() {
     var registry = ToolRegistry.createDefault();
     var plan = ToolPolicy.forMode(AgentMode.PLAN);

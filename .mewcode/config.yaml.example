@@ -26,6 +26,14 @@ providers:
 permissions:
   mode: acceptEdits
 
+# 可选工作树配置；省略整个区块时使用以下默认值。
+# 路径必须是项目内安全相对路径，不允许 .、..、.git 或管理区域。
+worktree:
+  cleanup_interval_minutes: 30
+  stale_cutoff_hours: 24
+  symlink_directories: [] # 例如 [node_modules]；共享目标只读，默认不共享。
+  required_files: [] # 例如 [.env.local]；缺失或不安全时阻止新工作树启动。
+
 # MCP Server：通过 command/args/env 配置 stdio，或通过 url/headers 配置 Streamable HTTP。
 # API key 等敏感值直接填写在配置文件中；stdio 仍需使用 Server 要求的环境变量名。
 mcp_servers:

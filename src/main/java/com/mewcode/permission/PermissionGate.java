@@ -42,7 +42,7 @@ public final class PermissionGate {
     }
 
     PathCheck pathCheck =
-        isPathTool(tool) ? pathSandbox.inspect(call, context.projectRoot()) : null;
+        isPathTool(tool) ? pathSandbox.inspect(call, context, !tool.isReadOnly()) : null;
     boolean pathOutside = pathCheck != null && pathCheck.boundary() == PathBoundary.OUTSIDE_PROJECT;
     boolean pathNeedsConfirmation = false;
     if (pathCheck != null) {

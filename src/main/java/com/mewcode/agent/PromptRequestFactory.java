@@ -17,9 +17,23 @@ public final class PromptRequestFactory {
 
   private final SystemPromptBundle systemPrompt;
   private final List<String> fixedSystemSegments;
+  private final java.util.function.Supplier<SystemPromptBundle> promptSupplier;
 
   public PromptRequestFactory(SystemPromptBundle systemPrompt) {
     this.systemPrompt = Objects.requireNonNull(systemPrompt, "systemPrompt");
+    this.fixedSystemSegments = null;
+    this.promptSupplier = () -> systemPrompt;
+  }
+
+  public PromptRequestFactory(com.mewcode.worktree.AgentWorkspace workspace) {
+    this.systemPrompt = workspace.systemPrompt();
+    this.fixedSystemSegments = null;
+    this.promptSupplier = workspace::systemPrompt;
+  }
+
+  public PromptRequestFactory(java.util.function.Supplier<SystemPromptBundle> promptSupplier) {
+    this.promptSupplier = Objects.requireNonNull(promptSupplier);
+    this.systemPrompt = Objects.requireNonNull(promptSupplier.get());
     this.fixedSystemSegments = null;
   }
 
@@ -27,11 +41,12 @@ public final class PromptRequestFactory {
     this.systemPrompt = Objects.requireNonNull(systemPrompt, "systemPrompt");
     this.fixedSystemSegments =
         fixedSystemSegments == null ? null : List.copyOf(fixedSystemSegments);
+    this.promptSupplier = () -> systemPrompt;
   }
 
   /** 返回使用固定 system 前缀的新工厂，供 Fork 复用父本轮实际请求。 */
   public PromptRequestFactory withFixedSystemSegments(List<String> systemSegments) {
-    return new PromptRequestFactory(systemPrompt, systemSegments);
+    return new PromptRequestFactory(systemPrompt(), systemSegments);
   }
 
   /** 使用当前模式和轮次创建一次 provider 请求快照。 */
@@ -80,7 +95,7 @@ public final class PromptRequestFactory {
     PromptAdditions dynamic = additions == null ? PromptAdditions.empty() : additions;
     var segments =
         new java.util.ArrayList<>(
-            fixedSystemSegments == null ? systemPrompt.systemSegments() : fixedSystemSegments);
+            fixedSystemSegments == null ? systemPrompt().systemSegments() : fixedSystemSegments);
     if (!dynamic.skillCatalog().isBlank()) segments.add(dynamic.skillCatalog());
     if (!dynamic.agentCatalog().isBlank()) segments.add(dynamic.agentCatalog());
     if (!dynamic.memoryIndex().isBlank()) {
@@ -122,7 +137,7 @@ public final class PromptRequestFactory {
 
   /** 返回会话级稳定 bundle；不会暴露可变内部集合。 */
   public SystemPromptBundle systemPrompt() {
-    return systemPrompt;
+    return promptSupplier.get();
   }
 
   private static java.util.Optional<Message> mergeReminders(

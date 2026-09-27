@@ -39,6 +39,20 @@ public final class MacSeatbeltSandbox implements BashSandbox {
       profile.append("(subpath \"").append(escape(realScope(scope).toString())).append("\") ");
     }
     profile.append(")\n(allow network-outbound)\n(allow network-inbound)\n");
+    for (Path scope : request.readOnlyScopes()) {
+      profile.append(
+          "(deny file-write* (subpath \"" + escape(realScope(scope).toString()) + "\"))\n");
+    }
+    if (request.excludedReadRoot() != null) {
+      profile.append(
+          "(deny file-read-data (require-all (subpath \""
+              + escape(realScope(request.excludedReadRoot()).toString())
+              + "\")");
+      for (Path allowed : request.readableExceptions())
+        profile.append(
+            " (require-not (subpath \"" + escape(realScope(allowed).toString()) + "\"))");
+      profile.append("))\n");
+    }
     return profile.toString();
   }
 

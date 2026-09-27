@@ -12,6 +12,46 @@ class ConfigLoaderTest {
   @TempDir Path tempDir;
 
   @Test
+  void acceptsOptionalWorktreeConfiguration() throws Exception {
+    assertDoesNotThrow(
+        () ->
+            ConfigLoader.load(
+                write(
+                    """
+        worktree:
+          cleanup_interval_minutes: 2
+          stale_cutoff_hours: 3
+          symlink_directories: [node_modules]
+          required_files: [runtime/local.json]
+        """
+                        + validProvider())));
+  }
+
+  @Test
+  void rejectsInvalidWorktreeConfigurationWithoutPrintingValues() throws Exception {
+    for (String fields :
+        new String[] {
+          "cleanup_interval_minutes: 0",
+          "cleanup_interval_minutes: \"3\"",
+          "stale_cutoff_hours: true",
+          "required_files: [123]",
+          "symlink_directories: [false]",
+          "required_files: null",
+          "stale_cutoff_hours: -1",
+          "required_files: [/outside-secret]",
+          "symlink_directories: [a/../b]",
+          "required_files: [.git/config]",
+          "required_files: [.mewcode/sessions/history]"
+        }) {
+      var error =
+          assertThrows(
+              ConfigLoader.ConfigException.class,
+              () -> ConfigLoader.load(write("worktree:\n  " + fields + "\n" + validProvider())));
+      assertFalse(error.getMessage().contains("outside-secret"));
+    }
+  }
+
+  @Test
   void loadsProvidersAndDefaultsThinkingToFalse() throws Exception {
     Path config =
         write(

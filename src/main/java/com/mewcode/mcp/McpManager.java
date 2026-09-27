@@ -387,6 +387,8 @@ public final class McpManager implements AutoCloseable {
 
     @Override
     public ToolResult execute(ToolExecutionContext context, Map<String, Object> input) {
+      if (context.workspaceScope() != null && context.workspaceScope().isolated())
+        return ToolResult.error("工作树会话无法验证 MCP 工具的 cwd 隔离，操作已拒绝。");
       try {
         var request =
             McpSchema.CallToolRequest.builder()

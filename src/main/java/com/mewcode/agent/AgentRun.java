@@ -24,7 +24,16 @@ public final class AgentRun implements AutoCloseable {
   }
 
   private final AgentEventStream events = new AgentEventStream();
-  private final CancellationToken cancellationToken = new CancellationToken();
+  private final CancellationToken cancellationToken;
+
+  public AgentRun() {
+    this(new CancellationToken());
+  }
+
+  public AgentRun(CancellationToken cancellationToken) {
+    this.cancellationToken = Objects.requireNonNull(cancellationToken);
+  }
+
   private final PermissionBroker permissionBroker = new PermissionBroker();
   private final CopyOnWriteArrayList<Runnable> cancellationHooks = new CopyOnWriteArrayList<>();
   private final CopyOnWriteArrayList<BiFunction<String, PermissionResponse, Boolean>>

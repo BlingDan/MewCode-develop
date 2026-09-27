@@ -70,9 +70,7 @@ public final class ReadFileTool implements Tool {
   public String validateInput(ToolExecutionContext context, Map<String, Object> input) {
     String pathError = ToolInput.requireString(input, "path", " 请传入项目根目录内的绝对路径。");
     if (pathError != null) return pathError;
-    String boundaryError =
-        PathGuard.validatePathArgument(
-            input.get("path"), context.projectRoot(), context.externalPathAuthorized());
+    String boundaryError = PathGuard.validatePathArgument(input.get("path"), context, false);
     if (boundaryError != null) return boundaryError;
     String numberError = validatePositiveInteger(input, "offset");
     if (numberError != null) return numberError;
@@ -82,9 +80,7 @@ public final class ReadFileTool implements Tool {
   /** 分页读取 UTF-8 文本；二进制文件和超出项目边界的路径会在执行前拒绝。 */
   @Override
   public ToolResult execute(ToolExecutionContext context, Map<String, Object> input) {
-    String pathError =
-        PathGuard.validatePath(
-            input.get("path"), context.projectRoot(), true, context.externalPathAuthorized());
+    String pathError = PathGuard.validatePath(input.get("path"), context, true, false);
     if (pathError != null) return ToolResult.error(pathError);
     Path path = PathGuard.path(input.get("path"));
     if (!Files.isRegularFile(path)) {

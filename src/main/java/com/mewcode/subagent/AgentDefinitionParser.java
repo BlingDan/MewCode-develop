@@ -15,7 +15,14 @@ public final class AgentDefinitionParser {
 
   private static final Set<String> FIELDS =
       Set.of(
-          "name", "description", "tools", "disallowedTools", "model", "maxTurns", "permissionMode");
+          "name",
+          "description",
+          "tools",
+          "disallowedTools",
+          "model",
+          "maxTurns",
+          "permissionMode",
+          "isolation");
 
   private AgentDefinitionParser() {}
 
@@ -78,10 +85,18 @@ public final class AgentDefinitionParser {
           model,
           parsePermissionMode(permission),
           source,
-          sourcePath);
+          sourcePath,
+          parseIsolation(metadata));
     } catch (IllegalArgumentException error) {
       throw new ParseException(error.getMessage());
     }
+  }
+
+  private static SubAgentSpec.IsolationMode parseIsolation(Map<String, Object> metadata) {
+    if (!metadata.containsKey("isolation")) return SubAgentSpec.IsolationMode.NONE;
+    if (!"worktree".equals(metadata.get("isolation")))
+      throw new ParseException("isolation 只支持 worktree");
+    return SubAgentSpec.IsolationMode.WORKTREE;
   }
 
   private static SubAgentSpec.PermissionMode parsePermissionMode(String value) {

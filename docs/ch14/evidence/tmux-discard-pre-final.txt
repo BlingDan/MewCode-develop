@@ -1,0 +1,49 @@
+ /\_/\    MewCode 0.1.0
+( o.o )
+ > ^ <    /private/tmp/mewcode-ch14-e2e-yygckul6
+
+Select a provider
+
+    claude (claude-sonnet-4-20250514)
+    openai (gpt-4o)
+  ❯ deepseek-openai (deepseek-v4-flash)
+
+↑/↓ select · Enter confirm · Ctrl+C quit
+ /\_/\    MewCode 0.1.0
+( o.o )   deepseek-v4-flash
+ > ^ <    /private/tmp/mewcode-ch14-e2e-yygckul6
+● Worktree(action=create, name=discard-demo)
+MewCode 想要执行以下操作：
+
+[Worktree] {action=create, name=discard-demo}
+
+原因：当前权限模式要求用户确认操作
+
+允许执行？(y)是 / (n)否 / (s)本会话允许 / (a)始终允许此类操作
+已允许本会话中的同类操作
+⎿ 已创建工作树，尚未进入。 … [truncated]
+● 已创建工作树，尚未进入。 路径：/private/tmp/mewcode-ch14-e2e-yygckul6/.mewcode/worktrees/discard-demo 分支：codex/worktree/discard-demo/task
+可选本地配置不存在：.mewcode/permissions.local.yaml 可选本地配置不存在：.mewcode/hooks.yaml
+  Completed in 29.9s · Token 用量：unknown
+● Worktree(action=enter, name=discard-demo)
+⎿ 已进入工作树。 … [truncated]
+● 已进入工作树。 路径：/private/tmp/mewcode-ch14-e2e-yygckul6/.mewcode/worktrees/discard-demo 分支：codex/worktree/discard-demo/task
+后续文件操作使用此目录，编辑前重新读取。
+  Completed in 0.1s · Token 用量：unknown
+● Worktree(action=exit, delete=true)
+⎿ Error: 工作树 删除 失败：有文件修改或新增提交，须保留；目录=/private/tmp/mewcode-ch14-e2e-yygckul6/.mewco… [truncated]
+● 工作树 删除
+失败：有文件修改或新增提交，须保留；目录=/private/tmp/mewcode-ch14-e2e-yygckul6/.mewcode/worktrees/discard-demo；分支=codex/worktree/discard-demo/task
+  Completed in 0.1s · Token 用量：unknown
+● Worktree(action=exit, delete=true, discardChanges=true)
+⎿ 已退出并删除工作树：/private/tmp/mewcode-ch14-e2e-yygckul6/.mewcode/worktrees/discard-demo
+● 已退出并删除工作树：/private/tmp/mewcode-ch14-e2e-yygckul6/.mewcode/worktrees/discard-demo
+  Completed in 0.3s · Token 用量：unknown
+● Ready for conversation and tools · Execute Mode
+  目录：/private/tmp/mewcode-ch14-e2e-yygckul6 · main
+
+✖ 内置 Skill test：ZipFile invalid LOC header (bad signature)
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ ❯ Send a message...                                                                                                                               │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+[DEFAULT]                                                                                                                            deepseek-v4-flash

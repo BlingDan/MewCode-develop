@@ -138,4 +138,29 @@ class ToolResultExternalizerTest {
         second.close();
         assertFalse(Files.exists(secondSession));
     }
+    @Test
+    void routesLargeResultsToTheirCapturedDirectories() throws Exception {
+        Path first = Files.createDirectory(tempDir.resolve("first")); Path second = Files.createDirectory(tempDir.resolve("second"));
+        try (var externalizer = new ToolResultExternalizer(tempDir)) {
+            var results = externalizer.externalize(List.of(
+                new ToolResultBlock("a", "a".repeat(50_001), false),
+                new ToolResultBlock("b", "b".repeat(50_001), false)), java.util.Map.of("a", first, "b", second));
+            assertTrue(results.get(0).content().contains(first.toString()));
+            assertTrue(results.get(1).content().contains(second.toString()));
+            assertTrue(Files.exists(first.resolve(".mewcode/context")));
+            assertTrue(Files.exists(second.resolve(".mewcode/context")));
+        }
+    }
+
+    @Test
+    void doesNotRecreateADeletedCallDirectory() throws Exception {
+        Path child = Files.createDirectory(tempDir.resolve("child"));
+        try (var externalizer = new ToolResultExternalizer(tempDir)) {
+            Files.delete(child);
+            var result = externalizer.externalize(List.of(new ToolResultBlock("old-read", "x".repeat(50_001), false)), Map.of("old-read", child));
+            assertTrue(result.getFirst().isError());
+            assertTrue(result.getFirst().content().length() < 1000);
+            assertFalse(Files.exists(child));
+        }
+    }
 }

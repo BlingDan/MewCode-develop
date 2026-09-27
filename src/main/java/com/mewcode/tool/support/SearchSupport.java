@@ -23,6 +23,10 @@ public final class SearchSupport {
         return fileName != null && SKIP_DIRS.contains(fileName.toString());
     }
 
+    public static boolean shouldSkipDirectory(Path path, com.mewcode.tool.ToolExecutionContext context) {
+        return shouldSkipDirectory(path) || context.workspaceScope() != null && context.workspaceScope().excluded(path);
+    }
+
     public static String relative(Path root, Path path) {
         return root.relativize(path).toString().replace(path.getFileSystem().getSeparator(), "/");
     }

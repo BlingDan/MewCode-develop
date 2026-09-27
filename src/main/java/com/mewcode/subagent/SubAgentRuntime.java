@@ -41,6 +41,7 @@ public final class SubAgentRuntime {
   private static final String FORK_RULES = "这是 Fork 工作进程。不要提问、不要请求确认、不要创建子 Agent，只完成分配范围并返回简洁结果。";
 
   private final AgentCatalog catalog;
+  private volatile com.mewcode.worktree.AgentWorkspace workspace;
   private final SubAgentTaskManager taskManager;
   private final ToolRegistry registry;
   private final Path projectRoot;
@@ -92,13 +93,20 @@ public final class SubAgentRuntime {
     this.autoBackgroundMs = autoBackgroundMs;
   }
 
+  public void configureWorkspace(com.mewcode.worktree.AgentWorkspace workspace) {
+    this.workspace = Objects.requireNonNull(workspace);
+  }
+
   public ToolResult execute(SubAgentInvocation invocation, ParentAgentSnapshot parent) {
     Objects.requireNonNull(invocation, "invocation");
     Objects.requireNonNull(parent, "parent");
     if (invocation.subagentType() == null || invocation.subagentType().isBlank()) {
       return executeFork(invocation, parent);
     }
-    SubAgentSpec spec = catalog.find(invocation.subagentType()).orElse(null);
+    SubAgentSpec spec =
+        (workspace == null ? catalog : workspace.agentCatalog(parentLoopConfig.getMaxIterations()))
+            .find(invocation.subagentType())
+            .orElse(null);
     if (spec == null) return ToolResult.error("未知 SubAgent：" + invocation.subagentType());
     String model = invocation.model() == null ? spec.model() : invocation.model();
     ProviderRouter.Route route = resolveRoute(parent.route(), model);
@@ -119,6 +127,48 @@ public final class SubAgentRuntime {
       SubAgentSpec spec,
       boolean fork,
       ProviderRouter.Route childRoute) {
+    String trustedTaskId = taskManager.allocateTaskId();
+    boolean isolated = spec != null && spec.isolation() == SubAgentSpec.IsolationMode.WORKTREE;
+    var dispatchContext =
+        parent.dispatchContext() == null
+            ? (workspace == null
+                ? new com.mewcode.tool.ToolExecutionContext(projectRoot, new FileStateCache())
+                : workspace.capture(parent.parentRun().cancellationToken()))
+            : parent.dispatchContext();
+    Path dispatchCwd = dispatchContext.projectRoot();
+    com.mewcode.worktree.AgentWorktree adapter;
+    AutoCloseable parentUse;
+    String frozenHead;
+    try {
+      parentUse =
+          dispatchContext.workspaceScope() == null
+              ? () -> {}
+              : dispatchContext.workspaceScope().retain();
+      if (isolated) {
+        if (workspace == null) throw new IllegalStateException("隔离运行缺少工作区管理器");
+        adapter =
+            new com.mewcode.worktree.AgentWorktree(
+                workspace.manager(),
+                trustedTaskId,
+                Path.of(System.getProperty("user.home")),
+                parent.sessionId());
+        try {
+          frozenHead =
+              workspace.manager().freezeHead(dispatchCwd, parent.parentRun().cancellationToken());
+        } catch (RuntimeException failure) {
+          closeUse(parentUse);
+          throw failure;
+        }
+      } else {
+        adapter = null;
+        frozenHead = null;
+      }
+    } catch (RuntimeException failure) {
+      return ToolResult.error("子任务隔离启动失败：" + safeMessage(failure));
+    }
+    var startupToken = new com.mewcode.agent.CancellationToken();
+    var childWorktree = new AtomicReference<com.mewcode.worktree.AgentWorktree.Result>();
+    var retainedNotice = new AtomicReference<String>("");
     boolean publishImmediately = fork || invocation.runInBackground();
     boolean denyPermissionsWhenBackground =
         !fork && spec.permissionMode() == SubAgentSpec.PermissionMode.DEFAULT;
@@ -133,7 +183,7 @@ public final class SubAgentRuntime {
         new AgentLoopConfig(
             spec == null ? parentLoopConfig.getMaxIterations() : spec.maxTurns(),
             parentLoopConfig.getUnknownToolRoundLimit());
-    var taskId = new AtomicReference<String>();
+    var taskId = new AtomicReference<String>(trustedTaskId);
     var cleanup = new AtomicReference<Runnable>();
     var removePermissionDelegate = new AtomicReference<Runnable>();
     var published = new CompletableFuture<String>();
@@ -146,16 +196,84 @@ public final class SubAgentRuntime {
             publishImmediately,
             denyPermissionsWhenBackground,
             () -> {
+              Path childRoot = dispatchCwd;
+              try {
+                if (adapter != null) {
+                  var created =
+                      adapter.create(
+                          dispatchCwd, "temp-" + trustedTaskId, frozenHead, startupToken);
+                  childWorktree.set(created);
+                  childRoot = created.worktreePath();
+                }
+              } finally {
+                if (adapter != null) closeUse(parentUse);
+              }
               HookSessionState childHookState = new HookSessionState();
+              var childWorkspace =
+                  adapter != null
+                      ? adapter.workspace()
+                      : workspace == null
+                          ? null
+                          : workspace.forkForChild(dispatchContext, trustedTaskId);
+              var childRegistry = isolated ? new ToolRegistry() : registry;
+              if (isolated) {
+                registry.getAll().stream()
+                    .filter(tool -> !tool.isSkillTool())
+                    .forEach(childRegistry::register);
+                childRegistry.register(new com.mewcode.tool.impl.ToolSearchTool(childRegistry));
+              }
+              var childSkills = childWorkspace == null ? null : childWorkspace.skillCatalog();
+              if (isolated && childSkills != null) {
+                var scripts = new ArrayList<com.mewcode.tool.Tool>();
+                for (var skill : childSkills.list())
+                  for (var tool : skill.tools())
+                    scripts.add(new com.mewcode.skill.ScriptTool(tool, skill.directory()));
+                childRegistry.replaceSkillTools(scripts);
+              }
+              HookEngine childHooks =
+                  isolated
+                      ? new HookEngine(
+                          com.mewcode.config.HookConfigLoader.load(
+                              childRoot, workspace.userHome(), ignored -> {}),
+                          new com.mewcode.tool.support.CommandRunner(bashSandbox),
+                          ignored -> {})
+                      : hookEngine;
               ToolExecutor childExecutor =
-                  new ToolExecutor(registry, projectRoot, new FileStateCache(), permissionGate);
+                  new ToolExecutor(childRegistry, childRoot, new FileStateCache(), permissionGate);
+              if (childWorkspace != null) childExecutor.configureWorkspace(childWorkspace);
               ContextManager childContext =
                   new ContextManager(
-                      projectRoot,
+                      childRoot,
                       childRoute.client(),
                       childRoute.config() == null
                           ? 128_000
                           : childRoute.config().getContextWindowTokens());
+              PromptRequestFactory effectivePrompt = childPromptFactory;
+              if (isolated && childWorkspace != null) {
+                var segments = new ArrayList<String>();
+                segments.add(spec.systemPrompt());
+                segments.addAll(childWorkspace.systemPrompt().systemSegments());
+                segments.add(adapter.buildNotice(dispatchCwd, childRoot));
+                effectivePrompt =
+                    new PromptRequestFactory(childWorkspace).withFixedSystemSegments(segments);
+              }
+              cleanup.set(
+                  () -> {
+                    Runnable removeDelegate = removePermissionDelegate.getAndSet(null);
+                    if (removeDelegate != null) removeDelegate.run();
+                    if (childHooks != null) {
+                      childHooks.cancelSession(childHookState);
+                      childHooks.awaitSessionIdle(childHookState, java.time.Duration.ofSeconds(2));
+                    }
+                    childExecutor.close();
+                    closeUse(parentUse);
+                    childContext.close();
+                    if (childWorkspace != null) {
+                      childWorkspace.closeMemories();
+                      if (adapter != null) adapter.release();
+                    }
+                    if (isolated && childHooks != null) childHooks.close();
+                  });
               try {
                 PermissionMode permissionMode =
                     fork
@@ -166,19 +284,29 @@ public final class SubAgentRuntime {
                 var child =
                     new AgentTurnCoordinator(
                         childRoute.client(),
-                        registry,
+                        childRegistry,
                         childExecutor,
                         childConversation,
                         childRoute.protocol(),
                         childConfig,
-                        childPromptFactory,
+                        effectivePrompt,
                         childContext,
                         permissionGate,
                         permissionMode,
                         new PermissionRuleEngine(permissionRuleEngine.rules()),
                         pathAuthorizationStore,
                         bashSandbox);
-                child.setPromptAdditionsSupplier(PromptAdditions::empty);
+                child.setPromptAdditionsSupplier(
+                    () ->
+                        childWorkspace == null
+                            ? PromptAdditions.empty()
+                            : new PromptAdditions(
+                                childWorkspace.memory(true, ignored -> {}).indexText(),
+                                java.util.Optional.empty(),
+                                "",
+                                "",
+                                List.of(),
+                                ""));
                 child.setToolPolicySupplier(
                     () -> {
                       boolean background =
@@ -186,32 +314,40 @@ public final class SubAgentRuntime {
                               || (taskId.get() != null
                                   && taskManager.isPublished(sessionId, taskId.get()));
                       return ToolPolicy.forSubAgent(
-                          registry, parent.toolPolicy(), specForPolicy(spec), background);
+                          childRegistry, parent.toolPolicy(), specForPolicy(spec), background);
                     });
-                if (hookEngine != null) {
-                  child.setHookSessionId(hookSessionId);
-                  child.configureHooks(hookEngine, childHookState);
+                if (isolated && childSkills != null)
+                  child.configureSkills(
+                      childSkills,
+                      () ->
+                          childSkills.refreshHot(
+                              childRegistry.ordinaryToolNames(), java.util.Set.of("worktree")),
+                      providerRouter,
+                      ignored -> ToolResult.error("子任务不支持嵌套 Skill fork。"));
+                if (childHooks != null) {
+                  child.setHookSessionId(isolated ? trustedTaskId : hookSessionId);
+                  child.configureHooks(childHooks, childHookState);
                 }
-                AgentRun run = child.startRun(prompt, childMode);
+                startupToken.throwIfCancelled();
+                AgentRun run =
+                    child.startRunWithCancellation(
+                        prompt, childMode, new com.mewcode.skill.SkillRun(), startupToken);
                 if (!fork
                     && spec != null
                     && spec.permissionMode() == SubAgentSpec.PermissionMode.DEFAULT) {
                   Runnable removeDelegate = parent.parentRun().delegatePermissionsTo(run);
                   removePermissionDelegate.set(removeDelegate);
                 }
+                Runnable resources = cleanup.get();
                 cleanup.set(
                     () -> {
-                      Runnable removeDelegate = removePermissionDelegate.getAndSet(null);
-                      if (removeDelegate != null) removeDelegate.run();
-                      if (hookEngine != null) hookEngine.cancelSession(childHookState);
                       run.close();
-                      childContext.close();
-                      childExecutor.close();
+                      resources.run();
                     });
                 return run;
               } catch (RuntimeException error) {
-                childContext.close();
-                childExecutor.close();
+                Runnable resources = cleanup.getAndSet(null);
+                if (resources != null) resources.run();
                 childHookState.close();
                 throw error;
               }
@@ -226,19 +362,42 @@ public final class SubAgentRuntime {
               }
             },
             () -> {
-              Runnable action = cleanup.get();
+              closeUse(parentUse);
+              Runnable action = cleanup.getAndSet(null);
               if (action != null) action.run();
+              if (adapter != null) {
+                adapter.release();
+                var created = childWorktree.get();
+                if (created != null) {
+                  String detail;
+                  try {
+                    adapter.remove(created, new com.mewcode.agent.CancellationToken());
+                    detail = "无成果工作树已清理";
+                  } catch (RuntimeException failure) {
+                    detail = "工作树已保留：" + safeMessage(failure);
+                  }
+                  retainedNotice.set(
+                      detail
+                          + "\n路径："
+                          + created.worktreePath()
+                          + "\n分支："
+                          + created.worktreeBranch());
+                }
+              }
             },
             event -> {
               if (event instanceof AgentEvent.PermissionRequested && parent.parentRun() != null) {
                 parent.parentRun().events().publish(event);
               }
-            });
+            },
+            retainedNotice::get,
+            startupToken);
     SubAgentTaskManager.TaskHandle handle;
     try {
-      handle = taskManager.start(request);
+      handle = taskManager.start(trustedTaskId, request);
       taskId.set(handle.taskId());
     } catch (RuntimeException error) {
+      closeUse(parentUse);
       return ToolResult.error("无法启动 SubAgent。");
     }
 
@@ -394,7 +553,19 @@ public final class SubAgentRuntime {
       ProviderRouter.Route route,
       AgentMode mode,
       AgentRun parentRun,
-      String sessionId) {
+      String sessionId,
+      com.mewcode.tool.ToolExecutionContext dispatchContext) {
+    public ParentAgentSnapshot(
+        PromptRequest sentRequest,
+        List<ContentBlock> assistantBlocks,
+        ToolPolicy toolPolicy,
+        ProviderRouter.Route route,
+        AgentMode mode,
+        AgentRun parentRun,
+        String sessionId) {
+      this(sentRequest, assistantBlocks, toolPolicy, route, mode, parentRun, sessionId, null);
+    }
+
     public ParentAgentSnapshot {
       sentRequest = Objects.requireNonNull(sentRequest, "sentRequest");
       assistantBlocks = List.copyOf(assistantBlocks == null ? List.of() : assistantBlocks);
@@ -403,6 +574,13 @@ public final class SubAgentRuntime {
       mode = mode == null ? AgentMode.EXECUTE : mode;
       parentRun = Objects.requireNonNull(parentRun, "parentRun");
       sessionId = requireText(sessionId, "sessionId");
+    }
+  }
+
+  private static void closeUse(AutoCloseable use) {
+    try {
+      use.close();
+    } catch (Exception ignored) {
     }
   }
 

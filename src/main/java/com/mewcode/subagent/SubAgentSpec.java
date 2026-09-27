@@ -17,7 +17,8 @@ public record SubAgentSpec(
     String model,
     PermissionMode permissionMode,
     Source source,
-    Path sourcePath) {
+    Path sourcePath,
+    IsolationMode isolation) {
 
   public SubAgentSpec {
     name = requireText(name, "Agent 名称").toLowerCase(Locale.ROOT);
@@ -31,8 +32,39 @@ public record SubAgentSpec(
     if (maxTurns <= 0) throw new IllegalArgumentException("maxTurns 必须是正整数");
     model = normalizeModel(model);
     permissionMode = permissionMode == null ? PermissionMode.DEFAULT : permissionMode;
+    isolation = isolation == null ? IsolationMode.NONE : isolation;
     source = Objects.requireNonNull(source, "source");
     sourcePath = Objects.requireNonNull(sourcePath, "sourcePath").toAbsolutePath().normalize();
+  }
+
+  public SubAgentSpec(
+      String name,
+      String description,
+      Set<String> tools,
+      Set<String> disallowedTools,
+      String systemPrompt,
+      int maxTurns,
+      String model,
+      PermissionMode permissionMode,
+      Source source,
+      Path sourcePath) {
+    this(
+        name,
+        description,
+        tools,
+        disallowedTools,
+        systemPrompt,
+        maxTurns,
+        model,
+        permissionMode,
+        source,
+        sourcePath,
+        IsolationMode.NONE);
+  }
+
+  public enum IsolationMode {
+    NONE,
+    WORKTREE
   }
 
   public enum PermissionMode {

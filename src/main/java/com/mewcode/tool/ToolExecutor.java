@@ -41,6 +41,7 @@ public final class ToolExecutor implements AutoCloseable {
 
   private final ToolRegistry registry;
   private final ToolExecutionContext baseContext;
+  private volatile com.mewcode.worktree.AgentWorkspace workspace;
   private final com.mewcode.permission.PermissionGate permissionGate;
   private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
   private volatile HookEngine hookEngine;
@@ -80,7 +81,16 @@ public final class ToolExecutor implements AutoCloseable {
 
   /** 返回所有工具共享的项目根目录。 */
   public Path projectRoot() {
-    return baseContext.projectRoot();
+    return workspace == null ? baseContext.projectRoot() : workspace.currentCwd();
+  }
+
+  public ToolExecutionContext captureForDispatch(CancellationToken token) {
+    return capturedContext(token);
+  }
+
+  /** 绑定所属 Agent 的工作区，之后每次提交捕获独立上下文。 */
+  public void configureWorkspace(com.mewcode.worktree.AgentWorkspace workspace) {
+    this.workspace = java.util.Objects.requireNonNull(workspace);
   }
 
   /** 绑定当前会话的 Hook；未绑定时保持旧的工具执行语义。 */
@@ -104,12 +114,16 @@ public final class ToolExecutor implements AutoCloseable {
       ToolCall call, ToolPolicy policy, CancellationToken token) {
     AgentMode mode = AgentMode.EXECUTE;
     HookContext context = newHookContext(defaultRequestId(), mode, token);
-    Optional<HookRejection> rejection = prepareHook(call, context);
-    if (rejection.isPresent()) {
-      return withHookContext(
-          context, () -> hookRejected(call, rejection.orElseThrow(), System.nanoTime()));
-    }
-    return executeSinglePrepared(call, policy, token, context);
+    return withCallUsage(
+        call,
+        context,
+        () -> {
+          Optional<HookRejection> rejection = prepareHook(call, context);
+          if (rejection.isPresent())
+            return withHookContext(
+                context, () -> hookRejected(call, rejection.orElseThrow(), System.nanoTime()));
+          return executeSinglePrepared(call, policy, token, context);
+        });
   }
 
   private ToolInvocationResult executeSinglePrepared(
@@ -127,23 +141,18 @@ public final class ToolExecutor implements AutoCloseable {
       return result(
           call, ToolResult.error("未知工具：" + call.toolName() + "。请从当前可用工具列表中选择工具。"), started, null);
     }
-    if (!policy.isAllowed(tool)) {
+    if (!policy.forWorkspace(isolatedCall(token)).isAllowed(tool)) {
       return result(
           call, ToolResult.error("当前模式不允许调用工具：" + call.toolName() + "。请先切换到执行模式。"), started, tool);
     }
 
-    ToolExecutionContext context = baseContext.withCancellationToken(token);
+    ToolExecutionContext context = capturedContext(token);
     String validation = safeValidate(tool, context, call.arguments());
     if (validation != null) {
       return result(call, ToolResult.error(validation), started, tool);
     }
 
-    Future<ToolResult> future =
-        executor.submit(
-            () -> {
-              token.throwIfCancelled();
-              return tool.execute(context, call.arguments());
-            });
+    Future<ToolResult> future = submitTool(tool, context, call);
     return awaitSingle(future, call, tool, token, started);
   }
 
@@ -166,12 +175,16 @@ public final class ToolExecutor implements AutoCloseable {
     CancellationToken token =
         permissions == null ? new CancellationToken() : permissions.cancellationToken();
     HookContext context = newHookContext(defaultRequestId(), mode, token);
-    Optional<HookRejection> rejection = prepareHook(call, context);
-    if (rejection.isPresent()) {
-      return withHookContext(
-          context, () -> hookRejected(call, rejection.orElseThrow(), System.nanoTime()));
-    }
-    return executeSinglePermissionPrepared(call, policy, permissions, context);
+    return withCallUsage(
+        call,
+        context,
+        () -> {
+          Optional<HookRejection> rejection = prepareHook(call, context);
+          if (rejection.isPresent())
+            return withHookContext(
+                context, () -> hookRejected(call, rejection.orElseThrow(), System.nanoTime()));
+          return executeSinglePermissionPrepared(call, policy, permissions, context);
+        });
   }
 
   private ToolInvocationResult executeSinglePermissionPrepared(
@@ -193,11 +206,12 @@ public final class ToolExecutor implements AutoCloseable {
       return result(
           call, ToolResult.error("未知工具：" + call.toolName() + "。请从当前可用工具列表中选择工具。"), started, null);
     }
-    if (policy == null || !policy.isAllowed(tool)) {
+    if (policy == null || !policy.forWorkspace(isolatedCall(token)).isAllowed(tool)) {
       return result(
           call, ToolResult.error("当前 Skill 或模式不允许调用工具：" + call.toolName() + "。"), started, tool);
     }
 
+    permissions = permissionsAt(permissions, capturedContext(token));
     PermissionCheck check = permissionGate.check(call, tool, permissions);
     if (check.decision() == PermissionDecision.DENY) {
       return result(call, errorWithStatus(check.message(), "permission_denied"), started, tool);
@@ -238,17 +252,12 @@ public final class ToolExecutor implements AutoCloseable {
     }
 
     ToolExecutionContext context =
-        baseContext.withPermissionContext(permissions, token, externalPathAuthorized);
+        capturedContext(token).withPermissionContext(permissions, token, externalPathAuthorized);
     String validation = safeValidate(tool, context, call.arguments());
     if (validation != null) {
       return result(call, ToolResult.error(validation), started, tool);
     }
-    Future<ToolResult> future =
-        executor.submit(
-            () -> {
-              token.throwIfCancelled();
-              return tool.execute(context, call.arguments());
-            });
+    Future<ToolResult> future = submitTool(tool, context, call);
     return awaitSingle(future, call, tool, token, started);
   }
 
@@ -464,6 +473,9 @@ public final class ToolExecutor implements AutoCloseable {
       String requestId,
       AgentMode mode) {
     if (calls == null || calls.isEmpty()) return List.of();
+    if (workspace != null)
+      return executeWorkspaceBatch(
+          calls, policy, permissions, token, permissionPath, requestId, mode);
     HookContext context = newHookContext(requestId, mode, token);
     var ready = new ArrayList<ToolCall>(calls.size());
     var readyIndexes = new ArrayList<Integer>(calls.size());
@@ -606,7 +618,12 @@ public final class ToolExecutor implements AutoCloseable {
     if (hookEngine == null || hookState == null) return Optional.empty();
     var payload = hookPayload(context, call);
     return hookEngine.dispatch(
-        new HookInvocation(HookEvent.PRE_TOOL_USE, payload, hookState, context.token()));
+        new HookInvocation(
+            HookEvent.PRE_TOOL_USE,
+            payload,
+            hookState,
+            context.token(),
+            context.executionContext()));
   }
 
   private ToolInvocationResult hookRejected(ToolCall call, HookRejection rejection, long started) {
@@ -633,12 +650,17 @@ public final class ToolExecutor implements AutoCloseable {
         "status", result.metadata().getOrDefault("status", result.isError() ? "error" : "success"));
     payload.put("duration_ms", result.metadata().getOrDefault("durationMs", 0L));
     hookEngine.dispatch(
-        new HookInvocation(HookEvent.POST_TOOL_USE, payload, hookState, context.token()));
+        new HookInvocation(
+            HookEvent.POST_TOOL_USE,
+            payload,
+            hookState,
+            context.token(),
+            context.executionContext()));
   }
 
   private LinkedHashMap<String, Object> hookPayload(HookContext context, ToolCall call) {
     var payload = new LinkedHashMap<String, Object>();
-    payload.put("cwd", projectRoot().toString());
+    payload.put("cwd", context.executionContext().projectRoot().toString());
     if (hookSessionId != null) payload.put("session_id", hookSessionId);
     payload.put("request_id", context.requestId());
     payload.put("mode", context.mode().name());
@@ -652,7 +674,171 @@ public final class ToolExecutor implements AutoCloseable {
     return new HookContext(
         requestId == null || requestId.isBlank() ? defaultRequestId() : requestId,
         mode == null ? AgentMode.EXECUTE : mode,
-        token == null ? new CancellationToken() : token);
+        token == null ? new CancellationToken() : token,
+        workspace == null
+            ? baseContext.withCancellationToken(token == null ? new CancellationToken() : token)
+            : workspace.capture(token == null ? new CancellationToken() : token),
+        new CallUse());
+  }
+
+  public boolean isolatedCall(CancellationToken token) {
+    var scope = capturedContext(token).workspaceScope();
+    return scope != null && scope.isolated();
+  }
+
+  private ToolExecutionContext capturedContext(CancellationToken token) {
+    HookContext current = hookContext.get();
+    return current == null
+        ? (workspace == null ? baseContext.withCancellationToken(token) : workspace.capture(token))
+        : current.executionContext().withCancellationToken(token);
+  }
+
+  private PermissionContext permissionsAt(
+      PermissionContext original, ToolExecutionContext context) {
+    return new PermissionContext(
+        context.projectRoot(),
+        original.mode(),
+        original.ruleEngine(),
+        original.pathAuthorizationStore(),
+        original.bashSandbox(),
+        original.permissionBroker(),
+        original.cancellationToken(),
+        context.workspaceScope());
+  }
+
+  private ToolInvocationResult withCallUsage(
+      ToolCall call,
+      HookContext context,
+      java.util.function.Supplier<ToolInvocationResult> action) {
+    try {
+      if (context.executionContext().workspaceScope() != null)
+        context.callUse().use = context.executionContext().workspaceScope().retain();
+      return action.get();
+    } catch (com.mewcode.worktree.WorktreeException error) {
+      return withHookContext(
+          context,
+          () ->
+              result(
+                  call,
+                  ToolResult.error(error.getMessage()),
+                  System.nanoTime(),
+                  registry.get(call.toolName()).orElse(null)));
+    } finally {
+      context.callUse().close();
+    }
+  }
+
+  private static void closeUse(AutoCloseable use) {
+    if (use == null) return;
+    try {
+      use.close();
+    } catch (Exception ignored) {
+    }
+  }
+
+  /** Future 取消不代表 Callable 已停止；仅 run 的实际 finally 或确定未启动时释放。 */
+  private Future<ToolResult> submitTool(Tool tool, ToolExecutionContext context, ToolCall call) {
+    return submitPinned(
+        () -> {
+          context.cancellationToken().throwIfCancelled();
+          return tool.execute(context, call.arguments());
+        },
+        context);
+  }
+
+  private <T> Future<T> submitPinned(
+      java.util.concurrent.Callable<T> action, ToolExecutionContext context) {
+    AutoCloseable use = context.workspaceScope() == null ? null : context.workspaceScope().retain();
+    var state = new java.util.concurrent.atomic.AtomicInteger();
+    var task =
+        new java.util.concurrent.FutureTask<T>(
+            () -> {
+              try {
+                return action.call();
+              } finally {
+                closeUse(use);
+              }
+            }) {
+          @Override
+          public void run() {
+            if (!state.compareAndSet(0, 1)) return;
+            try {
+              super.run();
+            } finally {
+              state.set(2);
+              closeUse(use);
+            }
+          }
+
+          @Override
+          protected void done() {
+            if (state.compareAndSet(0, 2)) closeUse(use);
+          }
+        };
+    try {
+      executor.execute(task);
+    } catch (java.util.concurrent.RejectedExecutionException error) {
+      task.cancel(false);
+      throw error;
+    }
+    return task;
+  }
+
+  private List<ToolInvocationResult> executeWorkspaceBatch(
+      List<ToolCall> calls,
+      ToolPolicy policy,
+      PermissionContext permissions,
+      CancellationToken token,
+      boolean permissionPath,
+      String requestId,
+      AgentMode mode) {
+    var results = new ArrayList<ToolInvocationResult>();
+    var seen = new HashSet<String>();
+    int index = 0;
+    while (index < calls.size()) {
+      int end = index + 1;
+      boolean safe =
+          permissionPath
+              ? isPermissionSafe(
+                  calls.get(index), policy, permissionsAt(permissions, workspace.capture(token)))
+              : isSafe(calls.get(index), policy);
+      if (safe) while (end < calls.size() && isSafe(calls.get(end), policy)) end++;
+      var futures = new ArrayList<Future<ToolInvocationResult>>();
+      for (int i = index; i < end; i++) {
+        ToolCall call = calls.get(i);
+        HookContext context = newHookContext(requestId, mode, token);
+        boolean duplicate = !seen.add(call.toolUseId());
+        java.util.concurrent.Callable<ToolInvocationResult> action =
+            () ->
+                withCallUsage(
+                    call,
+                    context,
+                    () -> {
+                      if (duplicate) return withHookContext(context, () -> duplicateResult(call));
+                      Optional<HookRejection> rejected = prepareHook(call, context);
+                      if (rejected.isPresent())
+                        return withHookContext(
+                            context,
+                            () -> hookRejected(call, rejected.orElseThrow(), System.nanoTime()));
+                      return permissionPath
+                          ? executeSinglePermissionPrepared(call, policy, permissions, context)
+                          : executeSinglePrepared(call, policy, token, context);
+                    });
+        if (safe) futures.add(submitPinned(action, context.executionContext()));
+        else {
+          try {
+            results.add(action.call());
+          } catch (Exception error) {
+            results.add(new ToolInvocationResult(call.toolUseId(), ToolResult.error("工具调用失败")));
+          }
+        }
+      }
+      if (safe)
+        for (int i = 0; i < futures.size(); i++)
+          results.add(awaitBatchResult(futures.get(i), calls.get(index + i), futures, token));
+      index = end;
+    }
+    return List.copyOf(results);
   }
 
   private String defaultRequestId() {
@@ -689,11 +875,38 @@ public final class ToolExecutor implements AutoCloseable {
     }
     metadata.put("durationMs", Duration.ofNanos(System.nanoTime() - started).toMillis());
     metadata.putIfAbsent("status", raw.isError() ? "error" : "success");
+    HookContext captured = hookContext.get();
+    metadata.put(
+        "cwd",
+        (captured == null ? projectRoot() : captured.executionContext().projectRoot()).toString());
     ToolInvocationResult result =
         new ToolInvocationResult(
             call.toolUseId(), new ToolResult(raw.content(), raw.isError(), metadata));
     HookContext context = hookContext.get();
     if (context != null) publishPostHook(call, result, context);
+    Object finalization = raw.metadata().get(com.mewcode.worktree.WorktreeManager.FINALIZATION_KEY);
+    if (finalization instanceof com.mewcode.worktree.WorktreeManager.PreparedExit prepared) {
+      prepared.beginCommit();
+      if (context != null) context.callUse().close();
+      ToolResult actual;
+      try {
+        prepared.commit();
+        actual =
+            ToolResult.success(
+                prepared.deletesDirectory()
+                    ? "已退出并删除工作树：" + prepared.target()
+                    : "已保留工作树并退出：" + prepared.target());
+      } catch (RuntimeException error) {
+        actual = ToolResult.error(safeMessage(error));
+      }
+      metadata.remove(com.mewcode.worktree.WorktreeManager.FINALIZATION_KEY);
+      metadata.put("status", actual.isError() ? "error" : "success");
+      metadata.put("cwd", prepared.currentCwd().toString());
+      metadata.put("durationMs", Duration.ofNanos(System.nanoTime() - started).toMillis());
+      result =
+          new ToolInvocationResult(
+              call.toolUseId(), new ToolResult(actual.content(), actual.isError(), metadata));
+    }
     return result;
   }
 
@@ -726,8 +939,30 @@ public final class ToolExecutor implements AutoCloseable {
   /** 关闭虚拟线程执行器，应用退出时释放仍在等待的工具任务。 */
   @Override
   public void close() {
-    executor.close();
+    executor.shutdownNow();
+    try {
+      executor.awaitTermination(2, TimeUnit.SECONDS);
+    } catch (InterruptedException error) {
+      Thread.currentThread().interrupt();
+    }
+    // 未结束的运行体继续持有目录使用权，删除入口会拒绝。
+
   }
 
-  private record HookContext(String requestId, AgentMode mode, CancellationToken token) {}
+  private record HookContext(
+      String requestId,
+      AgentMode mode,
+      CancellationToken token,
+      ToolExecutionContext executionContext,
+      CallUse callUse) {}
+
+  private static final class CallUse {
+    AutoCloseable use;
+    final java.util.concurrent.atomic.AtomicBoolean closed =
+        new java.util.concurrent.atomic.AtomicBoolean();
+
+    void close() {
+      if (closed.compareAndSet(false, true)) closeUse(use);
+    }
+  }
 }

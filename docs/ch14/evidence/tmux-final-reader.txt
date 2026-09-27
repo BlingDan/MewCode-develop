@@ -1,0 +1,99 @@
+ /\_/\    MewCode 0.1.0
+( o.o )
+ > ^ <    /private/tmp/mewcode-ch14-e2e-yygckul6
+
+Select a provider
+
+    claude (claude-sonnet-4-20250514)
+    openai (gpt-4o)
+  ❯ deepseek-openai (deepseek-v4-flash)
+
+↑/↓ select · Enter confirm · Ctrl+C quit
+ /\_/\    MewCode 0.1.0
+( o.o )   deepseek-v4-flash
+ > ^ <    /private/tmp/mewcode-ch14-e2e-yygckul6
+❯ 请调用隔离角色 wt-reader，只用 ReadFile 读取它自己目录的 notes.txt 并汇报。主 Agent 也不要运行 Bash，不改文件、不提交、不安装。最后报告运行时返回的
+工作树处理结果。
+● Glob(/private/tmp/mewcode-ch14-e2e-yygckul6/**/*wt-reader*)
+● Glob(/private/tmp/mewcode-ch14-e2e-yygckul6/**/notes.txt)
+  Agent 正在推进第 1 轮…
+⎿ .mewcode/agents/wt-reader.md
+⎿ Completed
+● Read(/private/tmp/mewcode-ch14-e2e-yygckul6/.mewcode/agents/wt-reader.md)
+  Agent 正在推进第 2 轮…
+⎿ 1 --- … [truncated]
+● Agent(description=只读汇报工作树中的 notes.txt, prompt=请只使用 ReadFile 工具，读取你自己所在工作树目录中… [truncated]
+● Worktree(action=list)
+  Agent 正在推进第 3 轮…
+MewCode 想要执行以下操作：
+
+[Worktree] {action=list}
+
+原因：当前权限模式要求用户确认操作
+
+允许执行？(y)是 / (n)否 / (s)本会话允许 / (a)始终允许此类操作
+已允许本会话中的同类操作
+⎿ I'll read `notes.txt` from my own worktree directory.## 汇报 … [truncated]
+⎿ 当前目录：/private/tmp/mewcode-ch14-e2e-yygckul6 … [truncated]
+  Agent 正在推进第 4 轮…
+● 任务完成。以下是汇总。
+
+
+──────────────────────────────────────────────────────────────────── 委派执行 ────────────────────────────────────────────────────────────────────
+
+
+ • 通过 Agent 调用隔离角色 wt-reader（定义：.mewcode/agents/wt-reader.md，isolation: worktree，tools: [ReadFile]）。
+ • 该角色在自己的独立工作树中只用 ReadFile 读取了 notes.txt，未运行任何命令。
+
+
+──────────────────────────────────────────────────────────────────── 角色汇报 ────────────────────────────────────────────────────────────────────
+
+
+┌────────────────────┬─────────────────────────────────────────────────────────────────────────────────┐
+│ 项目               │ 值                                                                              │
+╞════════════════════╪═════════════════════════════════════════════════════════════════════════════════╡
+│ 工作树绝对路径     │ /private/tmp/mewcode-ch14-e2e-yygckul6/.mewcode/worktrees/temp-agent-1-0ba5ec9e │
+├────────────────────┼─────────────────────────────────────────────────────────────────────────────────┤
+│ notes.txt 绝对路径 │ .../temp-agent-1-0ba5ec9e/notes.txt                                             │
+├────────────────────┼─────────────────────────────────────────────────────────────────────────────────┤
+│ 文件内容           │ baseline（单行）                                                                │
+├────────────────────┼─────────────────────────────────────────────────────────────────────────────────┤
+│ 分支               │ codex/worktree/temp-agent-1-0ba5ec9e/task                                       │
+└────────────────────┴─────────────────────────────────────────────────────────────────────────────────┘
+
+角色声明：仅调用 ReadFile 一次即成功，无其他路径重试；未运行命令、未创建/修改/删除文件、未提交、未安装依赖。
+
+
+────────────────────────────────────────────────────────────── 运行时工作树处理结果 ──────────────────────────────────────────────────────────────
+
+
+运行时返回的处理结论是：
+
+╭─────────────────────────────────────────────────────────────────────────────────────╮
+│无成果工作树已清理                                                                   │
+│路径：/private/tmp/mewcode-ch14-e2e-yygckul6/.mewcode/worktrees/temp-agent-1-0ba5ec9e│
+│分支：codex/worktree/temp-agent-1-0ba5ec9e/task                                      │
+╰─────────────────────────────────────────────────────────────────────────────────────╯
+
+即该子 Agent 的工作树因无产出改动（只读、无提交）被自动回收；随后 Worktree list 中已不含 temp-agent-1-0ba5ec9e
+，与清理结论一致。列表中现存的是此前遗留的 manual-demo（手动）与 temp-agent-1-c334434d（临时），均为 [READY] 状态，本次未触碰。
+
+
+──────────────────────────────────────────────────────────────────── 边界遵守 ────────────────────────────────────────────────────────────────────
+
+
+主 Agent 全程未运行 Bash、未修改或新建文件、未提交、未安装任何依赖；仅使用了 ReadFile、Glob、Agent、Worktree(list) 这些只读操作。
+  Completed in 57.0s · Token 用量：输入 11978 · 输出 1472
+● Worktree(action=create, name=discard-final)
+⎿ 已创建工作树，尚未进入。 … [truncated]
+● 已创建工作树，尚未进入。 路径：/private/tmp/mewcode-ch14-e2e-yygckul6/.mewcode/worktrees/discard-final 分支：codex/worktree/discard-final/task
+可选本地配置不存在：.mewcode/permissions.local.yaml 可选本地配置不存在：.mewcode/hooks.yaml
+  Completed in 0.3s · Token 用量：unknown
+● Ready for conversation and tools · Execute Mode
+  目录：/private/tmp/mewcode-ch14-e2e-yygckul6 · main
+
+✖ memory 更新失败，保留旧笔记和索引。
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ ❯ Send a message...                                                                                                                               │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+[DEFAULT]                                                                                                                            deepseek-v4-flash

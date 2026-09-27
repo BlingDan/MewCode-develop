@@ -14,6 +14,61 @@ import org.junit.jupiter.api.Test;
 class SubAgentTaskManagerTest {
 
   @Test
+  void completionWaitsForCleanupWithoutBlockingOtherTasks() throws Exception {
+    try (var manager = new SubAgentTaskManager()) {
+      var entered = new java.util.concurrent.CountDownLatch(1);
+      var release = new java.util.concurrent.CountDownLatch(1);
+      var handle =
+          manager.start(
+              new SubAgentTaskManager.TaskRequest(
+                  "cleanup",
+                  SubAgentTaskManager.TaskType.DEFINITION,
+                  "first",
+                  "first",
+                  true,
+                  false,
+                  SubAgentTaskManagerTest::completedRun,
+                  null,
+                  () -> {
+                    entered.countDown();
+                    try {
+                      release.await();
+                    } catch (InterruptedException error) {
+                      Thread.currentThread().interrupt();
+                    }
+                  },
+                  null));
+      assertTrue(entered.await(2, TimeUnit.SECONDS));
+      try {
+        org.junit.jupiter.api.Assertions.assertFalse(handle.completion().isDone());
+        assertTrue(manager.drainNotifications("cleanup").isEmpty());
+        var other =
+            manager.start(
+                new SubAgentTaskManager.TaskRequest(
+                    "other",
+                    SubAgentTaskManager.TaskType.DEFINITION,
+                    "other",
+                    "other",
+                    true,
+                    false,
+                    SubAgentTaskManagerTest::completedRun,
+                    null,
+                    null,
+                    null));
+        assertEquals(
+            SubAgentTaskManager.Status.COMPLETED,
+            other.completion().get(2, TimeUnit.SECONDS).status());
+      } finally {
+        release.countDown();
+      }
+      assertEquals(
+          SubAgentTaskManager.Status.COMPLETED,
+          handle.completion().get(2, TimeUnit.SECONDS).status());
+      assertEquals(1, manager.drainNotifications("cleanup").size());
+    }
+  }
+
+  @Test
   void tracksCompletionAndPublishesOneSafeNotification() throws Exception {
     try (var manager = new SubAgentTaskManager()) {
       var handle =

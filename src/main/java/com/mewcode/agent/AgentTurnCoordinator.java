@@ -88,6 +88,7 @@ public final class AgentTurnCoordinator {
   private volatile HookSessionState hookState;
   private volatile String hookSessionId;
   private volatile SubAgentRuntime subAgentRuntime;
+  private volatile com.mewcode.worktree.AgentWorkspace workspace;
 
   public AgentTurnCoordinator(
       LlmClient client,
@@ -346,10 +347,15 @@ public final class AgentTurnCoordinator {
 
   /** 启动带预激活 Skill 的请求；主要供动态斜杠命令使用。 */
   public AgentRun startRun(String userText, AgentMode mode, SkillRun skills) {
+    return startRunWithCancellation(userText, mode, skills, new CancellationToken());
+  }
+
+  public AgentRun startRunWithCancellation(
+      String userText, AgentMode mode, SkillRun skills, CancellationToken startupToken) {
     Objects.requireNonNull(userText, "userText");
     SkillRun runSkills = Objects.requireNonNull(skills, "skills");
     AgentMode effectiveMode = mode == null ? AgentMode.EXECUTE : mode;
-    var run = new AgentRun();
+    var run = new AgentRun(startupToken);
     run.setPermissionPublisher(
         request -> run.events().publish(new AgentEvent.PermissionRequested(request)));
     try {
@@ -465,6 +471,10 @@ public final class AgentTurnCoordinator {
     toolPolicySupplier = Objects.requireNonNull(supplier, "supplier");
   }
 
+  public void configureWorkspace(com.mewcode.worktree.AgentWorkspace workspace) {
+    this.workspace = workspace;
+  }
+
   /** 绑定 SubAgent 工具的实际运行器；未绑定时 Agent 调用会返回可见错误。 */
   public void setSubAgentRuntime(SubAgentRuntime runtime) {
     subAgentRuntime = Objects.requireNonNull(runtime, "runtime");
@@ -533,11 +543,13 @@ public final class AgentTurnCoordinator {
       while (!run.cancellationToken().isCancelled()
           && completedRounds < config.getMaxIterations()) {
         int round = completedRounds + 1;
-        ToolPolicy policy =
+        ToolPolicy initialPolicy =
             toolPolicySupplier == null
                 ? ToolPolicy.forModeAndTools(
                     mode, skills.allowedTools(), !skills.activeSkills().isEmpty())
                 : Objects.requireNonNull(toolPolicySupplier.get(), "toolPolicySupplier result");
+        ToolPolicy policy =
+            initialPolicy.forWorkspace(executor.isolatedCall(run.cancellationToken()));
         PermissionContext permissions = createPermissionContext(run, mode, permissionSnapshot);
         ProviderRouter.Route route =
             providerRouter == null
@@ -620,31 +632,46 @@ public final class AgentTurnCoordinator {
             turn.calls().stream()
                 .filter(call -> !parseErrors.containsKey(call.toolUseId()))
                 .toList();
-        List<ToolCall> agentCalls =
-            executableCalls.stream()
-                .filter(call -> AgentTool.NAME.equals(call.toolName()))
-                .filter(call -> registry.get(call.toolName()).filter(policy::isAllowed).isPresent())
-                .toList();
-        List<ToolCall> ordinaryCalls =
-            executableCalls.stream().filter(call -> !agentCalls.contains(call)).toList();
-        boolean loadsSkill =
-            ordinaryCalls.stream().anyMatch(call -> LoadSkillTool.NAME.equals(call.toolName()));
-        List<ToolInvocationResult> executed;
-        if (loadsSkill) {
-          executed = executeSkillLoads(ordinaryCalls, policy, mode, run, skills, requestId);
-        } else {
-          executed =
-              permissionGate == null
-                  ? executor.executeBatch(
-                      ordinaryCalls, policy, run.cancellationToken(), requestId, mode)
-                  : executor.executeBatch(ordinaryCalls, policy, permissions, requestId, mode);
-        }
-        if (!agentCalls.isEmpty()) {
-          var withAgents = new ArrayList<ToolInvocationResult>(executed);
-          withAgents.addAll(
-              executeSubAgents(
-                  agentCalls, sentRequest, turn.blocks(), policy, route, mode, run, requestId));
-          executed = List.copyOf(withAgents);
+        // 按模型给出的顺序收口普通批次，Agent 派发是串行边界。
+        var executed = new ArrayList<ToolInvocationResult>();
+        int callIndex = 0;
+        while (callIndex < executableCalls.size()) {
+          ToolCall current = executableCalls.get(callIndex);
+          boolean dispatch =
+              AgentTool.NAME.equals(current.toolName())
+                  && registry.get(current.toolName()).filter(policy::isAllowed).isPresent();
+          if (dispatch) {
+            executed.addAll(
+                executeSubAgents(
+                    List.of(current),
+                    sentRequest,
+                    turn.blocks(),
+                    policy,
+                    route,
+                    mode,
+                    run,
+                    requestId));
+            callIndex++;
+            continue;
+          }
+          int end = callIndex + 1;
+          while (end < executableCalls.size()) {
+            ToolCall next = executableCalls.get(end);
+            if (AgentTool.NAME.equals(next.toolName())
+                && registry.get(next.toolName()).filter(policy::isAllowed).isPresent()) break;
+            end++;
+          }
+          List<ToolCall> ordinary = executableCalls.subList(callIndex, end);
+          if (ordinary.stream().anyMatch(call -> LoadSkillTool.NAME.equals(call.toolName()))) {
+            executed.addAll(executeSkillLoads(ordinary, policy, mode, run, skills, requestId));
+          } else {
+            executed.addAll(
+                permissionGate == null
+                    ? executor.executeBatch(
+                        ordinary, policy, run.cancellationToken(), requestId, mode)
+                    : executor.executeBatch(ordinary, policy, permissions, requestId, mode));
+          }
+          callIndex = end;
         }
         for (Map.Entry<String, String> parseError : parseErrors.entrySet()) {
           turn.calls().stream()
@@ -668,7 +695,13 @@ public final class AgentTurnCoordinator {
         if (contextManager == null) {
           conversation.addToolTurn(turn.blocks(), resultBlocks);
         } else {
-          contextManager.commitToolTurn(conversation, turn.blocks(), resultBlocks);
+          var callDirectories = new java.util.HashMap<String, java.nio.file.Path>();
+          for (ToolInvocationResult invocation : executed) {
+            Object cwd = invocation.result().metadata().get("cwd");
+            if (cwd instanceof String path)
+              callDirectories.put(invocation.toolUseId(), java.nio.file.Path.of(path));
+          }
+          contextManager.commitToolTurn(conversation, turn.blocks(), resultBlocks, callDirectories);
         }
         emitResults(run, turn.calls(), resultBlocks, executed);
 
@@ -752,7 +785,12 @@ public final class AgentTurnCoordinator {
       PromptAdditions additions,
       String requestId,
       int attemptNumber) {
-    List<String> deferredToolNames = memoryOnlyRequest ? List.of() : registry.deferredToolNames();
+    List<String> deferredToolNames =
+        memoryOnlyRequest
+            ? List.of()
+            : registry.deferredToolNames().stream()
+                .filter(name -> registry.get(name).filter(policy::isAllowed).isPresent())
+                .toList();
     List<Map<String, Object>> schemas =
         registry.toAPIFormateForModel(
             route.protocol(), tool -> memoryOnlyRequest ? tool.isSystem() : policy.isAllowed(tool));
@@ -977,7 +1015,10 @@ public final class AgentTurnCoordinator {
     if (hookEngine == null || hookState == null) return;
     var payload = baseHookPayload(mode);
     if (fields != null) payload.putAll(fields);
-    hookEngine.dispatch(new HookInvocation(event, payload, hookState, run.cancellationToken()));
+    var context = executor.captureForDispatch(run.cancellationToken());
+    payload.put("cwd", context.projectRoot().toString());
+    hookEngine.dispatch(
+        new HookInvocation(event, payload, hookState, run.cancellationToken(), context));
   }
 
   private java.util.LinkedHashMap<String, Object> baseHookPayload(AgentMode mode) {
@@ -1078,7 +1119,8 @@ public final class AgentTurnCoordinator {
                       route,
                       mode,
                       parentRun,
-                      hookSessionId == null ? requestId : hookSessionId));
+                      hookSessionId == null ? requestId : hookSessionId,
+                      executor.captureForDispatch(parentRun.cancellationToken())));
         } catch (RuntimeException error) {
           result =
               ToolResult.error("SubAgent 执行失败：" + safeMessage(error))
@@ -1111,6 +1153,7 @@ public final class AgentTurnCoordinator {
       return ToolResult.error("Skill arguments 必须是字符串。");
     }
     if (skillRefresher != null) skillRefresher.get();
+    if (workspace != null) skillCatalog = workspace.skillCatalog();
     SkillDefinition definition = skillCatalog == null ? null : skillCatalog.find(name).orElse(null);
     if (definition == null) return ToolResult.error("未知 Skill：" + name);
     if (definition.meta().mode() == SkillDefinition.Mode.FORK) {

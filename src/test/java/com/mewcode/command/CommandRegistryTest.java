@@ -15,6 +15,26 @@ import org.junit.jupiter.api.Test;
 class CommandRegistryTest {
 
   @Test
+  void worktreeCommandRequiresExplicitDeleteBeforeDiscard() {
+    assertEquals(
+        java.util.Map.of("action", "exit", "delete", true, "discardChanges", true),
+        WorktreeCommand.parse("exit --delete --discard"));
+    assertEquals(
+        java.util.Map.of("action", "create", "name", "task/nested"),
+        WorktreeCommand.parse("create task/nested"));
+    for (String args :
+        List.of(
+            "exit --discard",
+            "create x --discard",
+            "list x",
+            "delete",
+            "delete x --force",
+            "exit --delete --delete")) {
+      assertThrows(IllegalArgumentException.class, () -> WorktreeCommand.parse(args));
+    }
+  }
+
+  @Test
   void rejectsEveryNormalizedNameAndAliasCollisionBeforeDispatch() {
     CommandRegistry registry = new CommandRegistry();
     registry.register(command("Compact", List.of("C")), context -> "ok");
@@ -64,7 +84,7 @@ class CommandRegistryTest {
   }
 
   @Test
-  void createsEightStaticCommandsAndLeavesReviewForSkills() {
+  void createsStaticCommandsIncludingWorktreeAndLeavesReviewForSkills() {
     CommandRegistry registry = CommandRegistry.createDefault();
 
     assertEquals(
@@ -77,7 +97,8 @@ class CommandRegistryTest {
             "memory",
             "permission",
             "status",
-            "hooks"),
+            "hooks",
+            "worktree"),
         registry.listVisible().stream().map(Command::name).toList());
     assertEquals(CommandType.LOCAL_UI, registry.find("CLS").orElseThrow().type());
     assertEquals(CommandType.LOCAL_UI, registry.find("p").orElseThrow().type());

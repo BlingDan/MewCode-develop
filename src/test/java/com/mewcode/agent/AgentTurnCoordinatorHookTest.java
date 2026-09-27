@@ -84,6 +84,63 @@ class AgentTurnCoordinatorHookTest {
     }
   }
 
+  @Test
+  void agentDispatchStaysBetweenItsAdjacentParentWrites() throws Exception {
+    var client = new FakeLlmClient();
+    client.enqueue(
+        new com.mewcode.llm.StreamEvent.ToolCallComplete(
+            "first", "Bash", java.util.Map.of("command", "printf 'first\\n' >> order")),
+        new com.mewcode.llm.StreamEvent.ToolCallComplete(
+            "agent", "Agent", java.util.Map.of("prompt", "task", "description", "task")),
+        new com.mewcode.llm.StreamEvent.ToolCallComplete(
+            "last", "Bash", java.util.Map.of("command", "printf 'last\\n' >> order")),
+        new com.mewcode.llm.StreamEvent.StreamEnd("tool_use"));
+    client.enqueue(
+        new com.mewcode.llm.StreamEvent.TextDelta("done"),
+        new com.mewcode.llm.StreamEvent.StreamEnd("end_turn"));
+    var registry = ToolRegistry.createDefault();
+    registry.register(new com.mewcode.tool.impl.AgentTool());
+    var condition =
+        new HookRule.HookCondition(
+            HookRule.HookCondition.Combination.ALL_OF,
+            List.of(
+                new HookRule.HookCondition.FieldMatch(
+                    "tool_name", new com.mewcode.permission.RuleMatcher.Exact("Agent"))));
+    var hook =
+        new HookRule(
+            "agent-order",
+            HookEvent.POST_TOOL_USE,
+            Optional.of(condition),
+            new HookAction.Shell("printf 'agent\\n' >> order"),
+            false,
+            false,
+            Duration.ofSeconds(2),
+            projectRoot);
+    try (var hooks =
+            new HookEngine(
+                new HookConfigLoader.LoadedHooks(List.of(hook), List.of()),
+                new CommandRunner(new ShellSandbox()),
+                ignored -> {});
+        var executor =
+            new ToolExecutor(
+                registry,
+                new ToolExecutionContext(
+                    projectRoot, Duration.ofSeconds(2), new FileStateCache()))) {
+      var coordinator =
+          new AgentTurnCoordinator(
+              client,
+              registry,
+              executor,
+              new com.mewcode.conversation.ConversationManager(),
+              ToolApiProtocol.OPENAI,
+              new AgentLoopConfig(),
+              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+      coordinator.configureHooks(hooks, new HookSessionState());
+      await(coordinator.startRun("do ordered work", AgentMode.EXECUTE));
+      assertEquals("first\nagent\nlast\n", Files.readString(projectRoot.resolve("order")));
+    }
+  }
+
   private HookRule rule(String name, HookEvent event, HookAction action) {
     return new HookRule(
         name, event, Optional.empty(), action, false, false, Duration.ofSeconds(2), projectRoot);

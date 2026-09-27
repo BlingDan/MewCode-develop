@@ -56,7 +56,7 @@
 | T40 | Hook 入队前固定目录与使用权 | 完成 | 组合回归重跑与 Spotless 通过，见下文 |
 | T41 | Hook 取消后仅在实际结束时释放 | 完成 | 组合回归重跑与 Spotless 通过，见下文 |
 | T42 | 实现当前目录删除的两阶段流程 | 完成 | 同步及异步 Post Hook 两阶段测试通过 |
-| T43 | 保持工具批次的原始调用顺序 | 待执行 | 尚未执行 |
+| T43 | 保持工具批次的原始调用顺序 | 完成 | 先观察错误顺序，再通过协调器与 Hook 回归 |
 | T44 | 固定项目 Memory 的目标目录 | 待执行 | 尚未执行 |
 | T45 | 保护用户 Memory 并保持子任务只读 | 待执行 | 尚未执行 |
 | T46 | 按调用目录外置结果且保留预算 | 待执行 | 尚未执行 |
@@ -105,3 +105,5 @@
 
 - T33–T41 复验：原失败仅发生在夹具的 git init，尚未进入产品逻辑；单例与同一组合分别重跑通过，日志 /private/tmp/mewcode-ch14-init-timeout-recheck.log、/private/tmp/mewcode-ch14-isolation-hooks-recheck.log。未放宽产品超时。
 - T42：Post Hook 在旧 cwd 只收到 prepared 结果且执行一次，真正结束后才删除；异步 Post Hook 未结束时拒绝提交删除并保留会话。日志 /private/tmp/mewcode-ch14-t42-recheck.log，BUILD SUCCESSFUL，Spotless 通过。
+
+- T43：失败测试实测 first/last/agent，修复后 first/agent/last；协调器与 Hook 回归以及 Spotless 通过，日志 /private/tmp/mewcode-ch14-t43-green.log。

@@ -620,31 +620,46 @@ public final class AgentTurnCoordinator {
             turn.calls().stream()
                 .filter(call -> !parseErrors.containsKey(call.toolUseId()))
                 .toList();
-        List<ToolCall> agentCalls =
-            executableCalls.stream()
-                .filter(call -> AgentTool.NAME.equals(call.toolName()))
-                .filter(call -> registry.get(call.toolName()).filter(policy::isAllowed).isPresent())
-                .toList();
-        List<ToolCall> ordinaryCalls =
-            executableCalls.stream().filter(call -> !agentCalls.contains(call)).toList();
-        boolean loadsSkill =
-            ordinaryCalls.stream().anyMatch(call -> LoadSkillTool.NAME.equals(call.toolName()));
-        List<ToolInvocationResult> executed;
-        if (loadsSkill) {
-          executed = executeSkillLoads(ordinaryCalls, policy, mode, run, skills, requestId);
-        } else {
-          executed =
-              permissionGate == null
-                  ? executor.executeBatch(
-                      ordinaryCalls, policy, run.cancellationToken(), requestId, mode)
-                  : executor.executeBatch(ordinaryCalls, policy, permissions, requestId, mode);
-        }
-        if (!agentCalls.isEmpty()) {
-          var withAgents = new ArrayList<ToolInvocationResult>(executed);
-          withAgents.addAll(
-              executeSubAgents(
-                  agentCalls, sentRequest, turn.blocks(), policy, route, mode, run, requestId));
-          executed = List.copyOf(withAgents);
+        // 按模型给出的顺序收口普通批次，Agent 派发是串行边界。
+        var executed = new ArrayList<ToolInvocationResult>();
+        int callIndex = 0;
+        while (callIndex < executableCalls.size()) {
+          ToolCall current = executableCalls.get(callIndex);
+          boolean dispatch =
+              AgentTool.NAME.equals(current.toolName())
+                  && registry.get(current.toolName()).filter(policy::isAllowed).isPresent();
+          if (dispatch) {
+            executed.addAll(
+                executeSubAgents(
+                    List.of(current),
+                    sentRequest,
+                    turn.blocks(),
+                    policy,
+                    route,
+                    mode,
+                    run,
+                    requestId));
+            callIndex++;
+            continue;
+          }
+          int end = callIndex + 1;
+          while (end < executableCalls.size()) {
+            ToolCall next = executableCalls.get(end);
+            if (AgentTool.NAME.equals(next.toolName())
+                && registry.get(next.toolName()).filter(policy::isAllowed).isPresent()) break;
+            end++;
+          }
+          List<ToolCall> ordinary = executableCalls.subList(callIndex, end);
+          if (ordinary.stream().anyMatch(call -> LoadSkillTool.NAME.equals(call.toolName()))) {
+            executed.addAll(executeSkillLoads(ordinary, policy, mode, run, skills, requestId));
+          } else {
+            executed.addAll(
+                permissionGate == null
+                    ? executor.executeBatch(
+                        ordinary, policy, run.cancellationToken(), requestId, mode)
+                    : executor.executeBatch(ordinary, policy, permissions, requestId, mode));
+          }
+          callIndex = end;
         }
         for (Map.Entry<String, String> parseError : parseErrors.entrySet()) {
           turn.calls().stream()

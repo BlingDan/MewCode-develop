@@ -53,6 +53,7 @@ public final class MemoryManager implements AutoCloseable {
     private volatile LlmClient client;
     private volatile String model = "";
     private volatile boolean closed;
+    private java.util.function.Supplier<AutoCloseable> usage = () -> () -> {};
 
     public MemoryManager(Path projectRoot, Path userHome, Consumer<String> diagnostics) {
         this(projectRoot, userHome, diagnostics, false);
@@ -121,6 +122,10 @@ public final class MemoryManager implements AutoCloseable {
         } finally {
             updateLock.unlock();
         }
+    }
+
+    public synchronized void setUsageSupplier(java.util.function.Supplier<AutoCloseable> usage) {
+        this.usage = java.util.Objects.requireNonNull(usage);
     }
 
     public void attachClient(LlmClient client, String model) {
@@ -215,7 +220,15 @@ public final class MemoryManager implements AutoCloseable {
         List<Message> turn = List.copyOf(completedTurn == null ? List.of() : completedTurn);
         LlmClient currentClient = client;
         String currentModel = model;
-        executor.submit(() -> update(turn, currentClient, currentModel));
+        AutoCloseable use;
+        try { use = usage.get(); } catch (RuntimeException error) { diagnostics.accept("memory 目标目录已不可用，未开始更新。"); return; }
+        try {
+            executor.submit(() -> { try { update(turn, currentClient, currentModel); } finally { releaseUse(use); } });
+        } catch (RuntimeException error) { releaseUse(use); throw error; }
+    }
+
+    private static void releaseUse(AutoCloseable use) {
+        try { use.close(); } catch (Exception ignored) { }
     }
 
     @Override

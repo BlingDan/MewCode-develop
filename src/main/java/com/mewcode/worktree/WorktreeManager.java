@@ -306,6 +306,40 @@ public final class WorktreeManager {
     }
   }
 
+  /** 退出应用或切换对话时释放拥有者，保留现场文件供明确恢复；旧调用仍持有锁。 */
+  public void detach(AgentWorkspace workspace) {
+    var session = workspace.currentSession().orElse(null);
+    if (session == null) return;
+    workspace.beginTransition();
+    try {
+      Active slot;
+      synchronized (active) {
+        slot = active.get(session.worktreeName());
+      }
+      if (slot != null && slot.owner.equals(workspace.agentId())) releaseOwner(slot);
+      workspace.restore(session.originalCwd());
+    } finally {
+      workspace.endTransition();
+    }
+  }
+
+  public String branchLabel(Path cwd) {
+    try {
+      Path marker = cwd.resolve(".git");
+      Path gitDir =
+          Files.isDirectory(marker, LinkOption.NOFOLLOW_LINKS)
+              ? marker
+              : Path.of(Files.readString(marker).strip().replaceFirst("^gitdir: ", ""));
+      if (!gitDir.isAbsolute()) gitDir = cwd.resolve(gitDir);
+      Path head = gitDir.resolve("HEAD");
+      if (Files.isSymbolicLink(head)) return "未确认";
+      String text = Files.readString(head).strip();
+      return text.startsWith("ref: refs/heads/") ? text.substring(16) : "detached HEAD";
+    } catch (IOException | RuntimeException error) {
+      return "未确认";
+    }
+  }
+
   public String describeResources() {
     try {
       var rows = new ArrayList<String>();

@@ -59,6 +59,34 @@ class WorktreeToolTest {
     assertFalse(tool.isConcurrencySafe(Map.of("action", "list")));
   }
 
+  @Test
+  void trustedDiscardCannotBeReusedAfterTheSameNameIsRecreated() throws Exception {
+    new GitRepositoryFixture(root);
+    var manager = new WorktreeManager(root, new WorktreeConfig(), "session");
+    var workspace = new AgentWorkspace(root, "session", "main", new FileStateCache(), manager);
+    var tool = new WorktreeTool(workspace);
+    var registry = new ToolRegistry();
+    registry.register(tool);
+    manager.create(root, "same", new CancellationToken());
+    var call =
+        new ToolCall(
+            "trusted",
+            "Worktree",
+            Map.of("action", "delete", "name", "same", "discardChanges", true));
+    try (var capability =
+            tool.authorizeUserDiscard(
+                call.arguments(), manager.resourceIdentityForUserCommand("same"));
+        var executor = new ToolExecutor(registry, root, new FileStateCache())) {
+      executor.configureWorkspace(workspace);
+      assertFalse(executor.executeSingle(call).result().isError());
+      manager.create(root, "same", new CancellationToken());
+      Path child = manager.list().getFirst().path();
+      Files.writeString(child.resolve("notes.txt"), "new result");
+      assertTrue(executor.executeSingle(call).result().isError());
+      assertEquals("new result", Files.readString(child.resolve("notes.txt")));
+    }
+  }
+
   private ToolResult call(ToolExecutor executor, String action, String name) {
     Map<String, Object> args =
         name == null ? Map.of("action", action) : Map.of("action", action, "name", name);

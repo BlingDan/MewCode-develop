@@ -31,6 +31,12 @@ public final class PromptRequestFactory {
     this.promptSupplier = workspace::systemPrompt;
   }
 
+  public PromptRequestFactory(java.util.function.Supplier<SystemPromptBundle> promptSupplier) {
+    this.promptSupplier = Objects.requireNonNull(promptSupplier);
+    this.systemPrompt = Objects.requireNonNull(promptSupplier.get());
+    this.fixedSystemSegments = null;
+  }
+
   private PromptRequestFactory(SystemPromptBundle systemPrompt, List<String> fixedSystemSegments) {
     this.systemPrompt = Objects.requireNonNull(systemPrompt, "systemPrompt");
     this.fixedSystemSegments =

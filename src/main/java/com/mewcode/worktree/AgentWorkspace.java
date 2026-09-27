@@ -140,12 +140,17 @@ public final class AgentWorkspace {
   public com.mewcode.memory.MemoryManager memory(
       boolean readOnly, java.util.function.Consumer<String> diagnostics) {
     Path key = currentCwd();
+    var scope = capture(new CancellationToken()).workspaceScope();
     return memories.computeIfAbsent(
         key,
-        p ->
-            readOnly
-                ? com.mewcode.memory.MemoryManager.readOnly(p, userHome)
-                : new com.mewcode.memory.MemoryManager(p, userHome, diagnostics));
+        p -> {
+          var memory =
+              readOnly
+                  ? com.mewcode.memory.MemoryManager.readOnly(p, userHome)
+                  : new com.mewcode.memory.MemoryManager(p, userHome, diagnostics);
+          if (!readOnly) memory.setUsageSupplier(scope::retain);
+          return memory;
+        });
   }
 
   public void closeMemories() {

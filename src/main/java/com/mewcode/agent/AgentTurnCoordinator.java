@@ -88,6 +88,7 @@ public final class AgentTurnCoordinator {
   private volatile HookSessionState hookState;
   private volatile String hookSessionId;
   private volatile SubAgentRuntime subAgentRuntime;
+  private volatile com.mewcode.worktree.AgentWorkspace workspace;
 
   public AgentTurnCoordinator(
       LlmClient client,
@@ -468,6 +469,10 @@ public final class AgentTurnCoordinator {
   /** 设置子运行时使用的绝对工具策略；未设置时沿用本轮模式和 Skill 策略。 */
   public void setToolPolicySupplier(Supplier<ToolPolicy> supplier) {
     toolPolicySupplier = Objects.requireNonNull(supplier, "supplier");
+  }
+
+  public void configureWorkspace(com.mewcode.worktree.AgentWorkspace workspace) {
+    this.workspace = workspace;
   }
 
   /** 绑定 SubAgent 工具的实际运行器；未绑定时 Agent 调用会返回可见错误。 */
@@ -1010,7 +1015,10 @@ public final class AgentTurnCoordinator {
     if (hookEngine == null || hookState == null) return;
     var payload = baseHookPayload(mode);
     if (fields != null) payload.putAll(fields);
-    hookEngine.dispatch(new HookInvocation(event, payload, hookState, run.cancellationToken()));
+    var context = executor.captureForDispatch(run.cancellationToken());
+    payload.put("cwd", context.projectRoot().toString());
+    hookEngine.dispatch(
+        new HookInvocation(event, payload, hookState, run.cancellationToken(), context));
   }
 
   private java.util.LinkedHashMap<String, Object> baseHookPayload(AgentMode mode) {
@@ -1145,6 +1153,7 @@ public final class AgentTurnCoordinator {
       return ToolResult.error("Skill arguments 必须是字符串。");
     }
     if (skillRefresher != null) skillRefresher.get();
+    if (workspace != null) skillCatalog = workspace.skillCatalog();
     SkillDefinition definition = skillCatalog == null ? null : skillCatalog.find(name).orElse(null);
     if (definition == null) return ToolResult.error("未知 Skill：" + name);
     if (definition.meta().mode() == SkillDefinition.Mode.FORK) {

@@ -26,7 +26,53 @@ public record CommandContext(
     Function<String, String> permissionMode,
     BiFunction<String, String, String> permissionAdd,
     Runnable permissionReset,
-    Supplier<String> hooks) {
+    Supplier<String> hooks,
+    Consumer<String> worktree) {
+
+  public CommandContext(
+      String args,
+      String workDir,
+      String model,
+      UIController ui,
+      Supplier<String> status,
+      Consumer<String> compact,
+      Supplier<String> sessionInfo,
+      Supplier<List<String>> sessionList,
+      Function<String, String> sessionResume,
+      Supplier<String> memorySummary,
+      Supplier<List<String>> memoryList,
+      BiFunction<String, String, String> memoryAdd,
+      Runnable memoryClear,
+      Supplier<String> permissionSummary,
+      Supplier<List<String>> permissionRules,
+      Function<String, String> permissionMode,
+      BiFunction<String, String, String> permissionAdd,
+      Runnable permissionReset,
+      Supplier<String> hooks) {
+    this(
+        args,
+        workDir,
+        model,
+        ui,
+        status,
+        compact,
+        sessionInfo,
+        sessionList,
+        sessionResume,
+        memorySummary,
+        memoryList,
+        memoryAdd,
+        memoryClear,
+        permissionSummary,
+        permissionRules,
+        permissionMode,
+        permissionAdd,
+        permissionReset,
+        hooks,
+        ignored -> {
+          throw new IllegalStateException("Worktree 运行入口未初始化");
+        });
+  }
 
   /** 兼容未接入 Hook 列表前的命令调用方。 */
   public CommandContext(

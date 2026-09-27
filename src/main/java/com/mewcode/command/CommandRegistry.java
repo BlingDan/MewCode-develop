@@ -86,6 +86,19 @@ public final class CommandRegistry {
     registry.register(
         command("hooks", List.of(), "查看已加载 Hook", "/hooks", Command.CommandType.LOCAL, ""),
         context -> context.args().isBlank() ? context.hooks().get() : "用法：/hooks");
+    registry.register(
+        command(
+            "worktree",
+            List.of(),
+            "管理隔离工作目录",
+            "/worktree create|enter|delete <name>，list，exit [--delete] [--discard]",
+            Command.CommandType.LOCAL,
+            "<动作>"),
+        context -> {
+          WorktreeCommand.parse(context.args());
+          context.worktree().accept(context.args());
+          return "";
+        });
     return registry;
   }
 

@@ -49,6 +49,52 @@ class MewCodeModelTest {
   @TempDir Path projectRoot;
 
   @Test
+  void worktreeCommandsUseTheSharedPipelineWithoutProviderCalls() throws Exception {
+    new com.mewcode.worktree.GitRepositoryFixture(projectRoot);
+    var client = new QueueClient();
+    try (var model =
+        new MewCodeModel(
+            List.of(provider("one", "model-one")),
+            projectRoot,
+            (provider, prompt) -> client,
+            new AgentLoopConfig(),
+            PermissionMode.BYPASS_PERMISSIONS,
+            new PermissionRuleEngine(),
+            new PathAuthorizationStore(projectRoot),
+            availableBashSandbox(),
+            List.of(),
+            projectRoot.resolve("test-home"))) {
+      model.update(new WindowSizeMessage(100, 30));
+      type(model, "/worktree create manual");
+      model.update(key("enter"));
+      awaitIdle(model);
+      Path child = projectRoot.toRealPath().resolve(".mewcode/worktrees/manual");
+      assertTrue(Files.exists(child), model.view());
+      assertEquals(projectRoot.toRealPath(), model.workingDirectory());
+      type(model, "/worktree enter manual");
+      model.update(key("enter"));
+      awaitIdle(model);
+      assertEquals(child, model.workingDirectory());
+      Files.writeString(child.resolve("notes.txt"), "child result");
+      type(model, "/worktree exit --delete");
+      model.update(key("enter"));
+      awaitIdle(model);
+      assertEquals(child, model.workingDirectory());
+      assertTrue(Files.exists(child));
+      type(model, "/worktree exit");
+      model.update(key("enter"));
+      awaitIdle(model);
+      assertEquals(projectRoot.toRealPath(), model.workingDirectory());
+      assertTrue(Files.exists(child));
+      type(model, "/worktree delete manual --discard");
+      model.update(key("enter"));
+      awaitIdle(model);
+      assertFalse(Files.exists(child));
+      assertEquals(0, client.calls.get());
+    }
+  }
+
+  @Test
   void rendersToolCallResultAndFinalTextInOrderWithoutChangingHistory() throws Exception {
     Path readme = projectRoot.resolve("README.md");
     Files.writeString(readme, "test", StandardCharsets.UTF_8);

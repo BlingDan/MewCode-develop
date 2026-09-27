@@ -866,6 +866,10 @@ public final class ToolExecutor implements AutoCloseable {
     }
     metadata.put("durationMs", Duration.ofNanos(System.nanoTime() - started).toMillis());
     metadata.putIfAbsent("status", raw.isError() ? "error" : "success");
+    HookContext captured = hookContext.get();
+    metadata.put(
+        "cwd",
+        (captured == null ? projectRoot() : captured.executionContext().projectRoot()).toString());
     ToolInvocationResult result =
         new ToolInvocationResult(
             call.toolUseId(), new ToolResult(raw.content(), raw.isError(), metadata));

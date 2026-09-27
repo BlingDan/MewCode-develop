@@ -138,4 +138,17 @@ class ToolResultExternalizerTest {
         second.close();
         assertFalse(Files.exists(secondSession));
     }
+    @Test
+    void routesLargeResultsToTheirCapturedDirectories() throws Exception {
+        Path first = tempDir.resolve("first"); Path second = tempDir.resolve("second");
+        try (var externalizer = new ToolResultExternalizer(tempDir)) {
+            var results = externalizer.externalize(List.of(
+                new ToolResultBlock("a", "a".repeat(50_001), false),
+                new ToolResultBlock("b", "b".repeat(50_001), false)), java.util.Map.of("a", first, "b", second));
+            assertTrue(results.get(0).content().contains(first.toString()));
+            assertTrue(results.get(1).content().contains(second.toString()));
+            assertTrue(Files.exists(first.resolve(".mewcode/context")));
+            assertTrue(Files.exists(second.resolve(".mewcode/context")));
+        }
+    }
 }

@@ -66,4 +66,25 @@ class AgentWorkspaceTest {
     assertThrows(WorktreeException.class, () -> manager.enter(workspace, "child"));
     manager.exit(workspace, false, new CancellationToken());
   }
+
+  @Test
+  void projectMemoryInstancesRemainBoundToTheirAbsoluteDirectories() throws Exception {
+    new GitRepositoryFixture(root);
+    var manager = new WorktreeManager(root, new WorktreeConfig(), "session");
+    Path child = manager.create(root, "memory-child", new CancellationToken()).path();
+    var workspace =
+        new AgentWorkspace(
+            root, root.resolve("test-home"), "session", "main", new FileStateCache(), manager);
+    var parentMemory = workspace.memory(false, ignored -> {});
+    manager.enter(workspace, "memory-child");
+    var childMemory = workspace.memory(false, ignored -> {});
+    parentMemory.addManual("project_knowledge", "parent only");
+    childMemory.addManual("project_knowledge", "child only");
+    assertTrue(parentMemory.indexText().contains("parent only"));
+    assertFalse(parentMemory.indexText().contains("child only"));
+    assertTrue(childMemory.indexText().contains("child only"));
+    manager.exit(workspace, false, new CancellationToken());
+    assertSame(parentMemory, workspace.memory(false, ignored -> {}));
+    workspace.closeMemories();
+  }
 }

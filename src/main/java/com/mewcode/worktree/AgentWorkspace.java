@@ -27,6 +27,7 @@ public final class AgentWorkspace {
   private final Map<Path, SystemPromptBundle> prompts = new ConcurrentHashMap<>();
   private final Map<Path, SkillCatalog> skills = new ConcurrentHashMap<>();
   private final Map<Path, AgentCatalog> agents = new ConcurrentHashMap<>();
+  private final Map<Path, com.mewcode.memory.MemoryManager> memories = new ConcurrentHashMap<>();
   private final ReentrantLock transition = new ReentrantLock();
   private Path cwd;
   private WorktreeSession session;
@@ -118,6 +119,21 @@ public final class AgentWorkspace {
     Path key = currentCwd();
     return agents.computeIfAbsent(
         key, p -> AgentCatalog.load(p, userHome, List.of(), defaultMaxTurns));
+  }
+
+  public com.mewcode.memory.MemoryManager memory(
+      boolean readOnly, java.util.function.Consumer<String> diagnostics) {
+    Path key = currentCwd();
+    return memories.computeIfAbsent(
+        key,
+        p ->
+            readOnly
+                ? com.mewcode.memory.MemoryManager.readOnly(p, userHome)
+                : new com.mewcode.memory.MemoryManager(p, userHome, diagnostics));
+  }
+
+  public void closeMemories() {
+    memories.values().forEach(com.mewcode.memory.MemoryManager::close);
   }
 
   void prepare(Path path) {

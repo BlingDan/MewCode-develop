@@ -34,6 +34,7 @@ public final class ToolResultExternalizer implements AutoCloseable {
             "工具结果完整内容保存失败，未将原文写入对话历史。";
 
     private final Path sessionDirectory;
+    private final java.util.Map<Path, ToolResultExternalizer> byRoot = new java.util.HashMap<>();
     private final boolean deleteOnClose;
     private int nextFileNumber = 1;
     private boolean closed;
@@ -64,6 +65,11 @@ public final class ToolResultExternalizer implements AutoCloseable {
      * 按单结果和整条工具结果消息的限制处理结果，返回可以正式写入 history 的副本。
      */
     public synchronized List<ToolResultBlock> externalize(List<ToolResultBlock> rawResults) {
+        return externalize(rawResults, java.util.Map.of());
+    }
+
+    /** 调用目录由执行器现场提供，整条结果消息仍共用总量限制。 */
+    public synchronized List<ToolResultBlock> externalize(List<ToolResultBlock> rawResults, java.util.Map<String, Path> callDirectories) {
         if (closed) throw new IllegalStateException("context externalizer is closed");
         Objects.requireNonNull(rawResults, "rawResults");
         if (rawResults.isEmpty()) return List.of();
@@ -75,7 +81,7 @@ public final class ToolResultExternalizer implements AutoCloseable {
             ToolResultBlock result = Objects.requireNonNull(rawResults.get(index), "tool result");
             originalLengths[index] = characterCount(result.content());
             if (originalLengths[index] > SINGLE_RESULT_LIMIT) {
-                visible.add(saveWithPreview(result, originalLengths[index]));
+                visible.add(forCall(result, callDirectories).saveWithPreview(result, originalLengths[index]));
                 spilled[index] = true;
             } else {
                 visible.add(result);
@@ -85,10 +91,15 @@ public final class ToolResultExternalizer implements AutoCloseable {
         while (aggregateLength(visible) > MESSAGE_RESULT_LIMIT) {
             int selected = largestUnspilled(originalLengths, spilled);
             if (selected < 0) break;
-            visible.set(selected, saveWithPreview(rawResults.get(selected), originalLengths[selected]));
+            visible.set(selected, forCall(rawResults.get(selected), callDirectories).saveWithPreview(rawResults.get(selected), originalLengths[selected]));
             spilled[selected] = true;
         }
         return List.copyOf(visible);
+    }
+
+    private ToolResultExternalizer forCall(ToolResultBlock result, java.util.Map<String, Path> directories) {
+        Path directory = directories.get(result.toolUseId());
+        return directory == null ? this : byRoot.computeIfAbsent(directory.toAbsolutePath().normalize(), ToolResultExternalizer::new);
     }
 
     /** 返回当前 session 目录路径；目录在首次实际外置前可能尚未创建。 */
@@ -109,6 +120,9 @@ public final class ToolResultExternalizer implements AutoCloseable {
     }
 
     private Path saveFullResult(String content) throws IOException {
+        for (Path path = sessionDirectory; path != null && !path.equals(sessionDirectory.getParent().getParent().getParent()); path = path.getParent()) {
+            if (Files.isSymbolicLink(path)) throw new IOException("结果目录不能经过软链");
+        }
         Files.createDirectories(sessionDirectory);
         Path target = sessionDirectory.resolve("result-" + String.format("%04d", nextFileNumber++)
                 + ".txt");
@@ -184,6 +198,7 @@ public final class ToolResultExternalizer implements AutoCloseable {
     public synchronized void close() {
         if (closed) return;
         closed = true;
+        byRoot.values().forEach(ToolResultExternalizer::close);
         if (!deleteOnClose) return;
         if (!Files.exists(sessionDirectory)) return;
         try (Stream<Path> paths = Files.walk(sessionDirectory)) {

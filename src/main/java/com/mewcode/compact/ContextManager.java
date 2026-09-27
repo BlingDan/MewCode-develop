@@ -123,11 +123,17 @@ public final class ContextManager implements AutoCloseable {
             ConversationManager conversation,
             List<ContentBlock> assistantContent,
             List<ToolResultBlock> rawResults) {
+        commitToolTurn(conversation, assistantContent, rawResults, java.util.Map.of());
+    }
+
+    public synchronized void commitToolTurn(ConversationManager conversation,
+            List<ContentBlock> assistantContent, List<ToolResultBlock> rawResults,
+            java.util.Map<String, Path> callDirectories) {
         ensureOpen();
         Objects.requireNonNull(conversation, "conversation");
         conversation.addToolTurn(
                 Objects.requireNonNull(assistantContent, "assistantContent"),
-                externalizer.externalize(Objects.requireNonNull(rawResults, "rawResults")));
+                externalizer.externalize(Objects.requireNonNull(rawResults, "rawResults"), callDirectories));
     }
 
     /** 记录一次 Provider 请求的真实 usage。 */

@@ -47,17 +47,30 @@ public final class MemoryManager implements AutoCloseable {
     private final MemoryStore userStore;
     private final Consumer<String> diagnostics;
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
-    private final ReentrantLock updateLock = new ReentrantLock();
+    private static final java.util.concurrent.ConcurrentMap<Path, ReentrantLock> USER_LOCKS = new java.util.concurrent.ConcurrentHashMap<>();
+    private final ReentrantLock updateLock;
+    private final boolean readOnly;
     private volatile LlmClient client;
     private volatile String model = "";
     private volatile boolean closed;
 
     public MemoryManager(Path projectRoot, Path userHome, Consumer<String> diagnostics) {
+        this(projectRoot, userHome, diagnostics, false);
+    }
+
+    public static MemoryManager readOnly(Path projectRoot, Path userHome) {
+        return new MemoryManager(projectRoot, userHome, ignored -> {}, true);
+    }
+
+    private MemoryManager(Path projectRoot, Path userHome, Consumer<String> diagnostics, boolean readOnly) {
         Path root = projectRoot.toAbsolutePath().normalize();
         Path home = userHome.toAbsolutePath().normalize();
         this.projectStore = new MemoryStore(root.resolve(".mewcode/memory"), MemoryLevel.PROJECT);
         this.userStore = new MemoryStore(home.resolve(".mewcode/memory"), MemoryLevel.USER);
         this.diagnostics = diagnostics == null ? ignored -> {} : diagnostics;
+        this.readOnly = readOnly;
+        this.updateLock = USER_LOCKS.computeIfAbsent(home.resolve(".mewcode/memory"), ignored -> new ReentrantLock());
+        if (readOnly) return;
         try {
             if (Files.isSymbolicLink(root.resolve(".mewcode"))
                     || Files.isSymbolicLink(home.resolve(".mewcode"))) {
@@ -70,6 +83,10 @@ public final class MemoryManager implements AutoCloseable {
         }
     }
 
+    private void ensureWritable() {
+        if (readOnly) throw new IllegalStateException("子任务 Memory 只读");
+    }
+
     /** 返回下一次普通请求要注入的用户级 + 项目级索引快照。 */
     public String indexText() {
         updateLock.lock();
@@ -79,7 +96,7 @@ public final class MemoryManager implements AutoCloseable {
             String combined = combineIndexes(user, project);
             if (withinBudget(combined)) return combined;
             LlmClient current = client;
-            if (current != null && !closed) {
+            if (current != null && !closed && !readOnly) {
                 try {
                     String[] pruned = requestPrunedIndexes(current, user, project);
                     combined = combineIndexes(pruned[0], pruned[1]);
@@ -107,7 +124,7 @@ public final class MemoryManager implements AutoCloseable {
     }
 
     public void attachClient(LlmClient client, String model) {
-        if (closed) return;
+        if (closed || readOnly) return;
         this.client = client;
         this.model = model == null ? "" : model;
     }
@@ -126,6 +143,7 @@ public final class MemoryManager implements AutoCloseable {
 
     /** 不调用模型，直接把用户指定内容持久化为现有 memory 笔记。 */
     public MemoryNote addManual(String typeValue, String contentValue) {
+        ensureWritable();
         MemoryType type = MemoryType.fromWire(typeValue == null ? "" : typeValue.strip());
         String content = contentValue == null ? "" : contentValue.strip();
         if (content.isEmpty()) throw new IllegalArgumentException("memory 内容不能为空。");
@@ -157,6 +175,7 @@ public final class MemoryManager implements AutoCloseable {
 
     /** 清空 user/project 两级记忆；任一级失败时恢复两边快照。 */
     public void clearAll() {
+        ensureWritable();
         updateLock.lock();
         try {
             MemoryStore.Snapshot userBefore = userStore.snapshot();
@@ -192,7 +211,7 @@ public final class MemoryManager implements AutoCloseable {
 
     /** 后台更新 memory；不会阻塞当前 Agent Loop。 */
     public synchronized void updateAsync(List<Message> completedTurn) {
-        if (closed || client == null) return;
+        if (closed || readOnly || client == null) return;
         List<Message> turn = List.copyOf(completedTurn == null ? List.of() : completedTurn);
         LlmClient currentClient = client;
         String currentModel = model;

@@ -293,6 +293,35 @@ class MemoryManagerTest {
         assertEquals("memory 更新失败，保留旧笔记和索引。", diagnostic.get());
     }
 
+    @Test
+    void readOnlyChildIndexNeverCreatesDirectoriesOrPrunes() throws Exception {
+        Path project = tempDir.resolve("child");
+        Path home = tempDir.resolve("readonly-home");
+        try (var manager = MemoryManager.readOnly(project, home)) {
+            assertEquals("", manager.indexText());
+            assertFalse(Files.exists(project));
+            assertFalse(Files.exists(home));
+            assertThrows(IllegalStateException.class, () -> manager.addManual("project_knowledge", "never"));
+        }
+    }
+
+    @Test
+    void projectManagersShareTheEntireUserUpdateLock() throws Exception {
+        Path home = tempDir.resolve("shared-home");
+        try (var first = new MemoryManager(tempDir.resolve("one"), home, ignored -> {});
+             var second = new MemoryManager(tempDir.resolve("two"), home, ignored -> {})) {
+            var start = new CountDownLatch(1);
+            try (var pool = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+                var a = pool.submit(() -> { start.await(); first.addManual("user_preference", "first preference"); return null; });
+                var b = pool.submit(() -> { start.await(); second.addManual("user_preference", "second preference"); return null; });
+                start.countDown(); a.get(3, TimeUnit.SECONDS); b.get(3, TimeUnit.SECONDS);
+            }
+            assertEquals(2, first.summary().user().size());
+            assertTrue(first.indexText().contains("first preference"));
+            assertTrue(second.indexText().contains("second preference"));
+        }
+    }
+
     private static final class BlockingMemoryClient implements LlmClient {
         private static final String RESPONSE =
                 "[{\"action\":\"create\",\"level\":\"project\",\"type\":\"project_knowledge\",\"title\":\"CI\",\"slug\":\"ci\",\"content\":\"Use GitHub Actions.\"}]";

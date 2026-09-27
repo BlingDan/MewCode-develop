@@ -57,9 +57,9 @@
 | T41 | Hook 取消后仅在实际结束时释放 | 完成 | 组合回归重跑与 Spotless 通过，见下文 |
 | T42 | 实现当前目录删除的两阶段流程 | 完成 | 同步及异步 Post Hook 两阶段测试通过 |
 | T43 | 保持工具批次的原始调用顺序 | 完成 | 先观察错误顺序，再通过协调器与 Hook 回归 |
-| T44 | 固定项目 Memory 的目标目录 | 待执行 | 尚未执行 |
-| T45 | 保护用户 Memory 并保持子任务只读 | 待执行 | 尚未执行 |
-| T46 | 按调用目录外置结果且保留预算 | 待执行 | 尚未执行 |
+| T44 | 固定项目 Memory 的目标目录 | 完成 | Memory、外置结果和上下文定向回归通过 |
+| T45 | 保护用户 Memory 并保持子任务只读 | 完成 | Memory、外置结果和上下文定向回归通过 |
+| T46 | 按调用目录外置结果且保留预算 | 完成 | Memory、外置结果和上下文定向回归通过 |
 | T47 | 解析角色的 isolation 声明 | 待执行 | 尚未执行 |
 | T48 | 在锁外固定子任务派发现场 | 待执行 | 尚未执行 |
 | T49 | 实现 AgentWorktree 轻量适配 | 待执行 | 尚未执行 |
@@ -107,3 +107,5 @@
 - T42：Post Hook 在旧 cwd 只收到 prepared 结果且执行一次，真正结束后才删除；异步 Post Hook 未结束时拒绝提交删除并保留会话。日志 /private/tmp/mewcode-ch14-t42-recheck.log，BUILD SUCCESSFUL，Spotless 通过。
 
 - T43：失败测试实测 first/last/agent，修复后 first/agent/last；协调器与 Hook 回归以及 Spotless 通过，日志 /private/tmp/mewcode-ch14-t43-green.log。
+
+- T44–T46：项目 Memory 实例绑定绝对目录并复用，两个项目并发更新用户索引不丢记录，子只读索引不建目录不修剪；大型结果按调用现场 cwd 路由。上下文及执行器回归、Spotless 通过，日志 /private/tmp/mewcode-ch14-t44-t46-green.log。

@@ -683,7 +683,13 @@ public final class AgentTurnCoordinator {
         if (contextManager == null) {
           conversation.addToolTurn(turn.blocks(), resultBlocks);
         } else {
-          contextManager.commitToolTurn(conversation, turn.blocks(), resultBlocks);
+          var callDirectories = new java.util.HashMap<String, java.nio.file.Path>();
+          for (ToolInvocationResult invocation : executed) {
+            Object cwd = invocation.result().metadata().get("cwd");
+            if (cwd instanceof String path)
+              callDirectories.put(invocation.toolUseId(), java.nio.file.Path.of(path));
+          }
+          contextManager.commitToolTurn(conversation, turn.blocks(), resultBlocks, callDirectories);
         }
         emitResults(run, turn.calls(), resultBlocks, executed);
 

@@ -27,6 +27,7 @@ public final class LinuxBubblewrapSandbox implements BashSandbox {
             List.of(
                 EXECUTABLE,
                 "--die-with-parent",
+                "--unshare-pid",
                 "--new-session",
                 "--ro-bind",
                 "/",

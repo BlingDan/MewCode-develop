@@ -48,6 +48,69 @@ class WorkspaceToolExecutionTest {
   }
 
   @Test
+  void parentReadCannotAuthorizeChildEditAndSurvivesKeepExit() throws Exception {
+    new GitRepositoryFixture(root);
+    root = root.toRealPath();
+    var manager = new WorktreeManager(root, new WorktreeConfig(), "session");
+    Path child = manager.create(root, "child", new CancellationToken()).path();
+    var cache = new FileStateCache();
+    var workspace = new AgentWorkspace(root, "session", "main", cache, manager);
+    try (var tools = new ToolExecutor(ToolRegistry.createDefault(), root, cache)) {
+      tools.configureWorkspace(workspace);
+      assertFalse(
+          tools
+              .executeSingle(
+                  new ToolCall(
+                      "parent-read",
+                      "ReadFile",
+                      Map.of("path", root.resolve("notes.txt").toString())))
+              .result()
+              .isError());
+      manager.enter(workspace, "child");
+      var edit =
+          Map.<String, Object>of(
+              "path",
+              child.resolve("notes.txt").toString(),
+              "old_string",
+              "baseline",
+              "new_string",
+              "child-edit");
+      assertTrue(
+          tools.executeSingle(new ToolCall("child-unread", "EditFile", edit)).result().isError());
+      assertEquals("baseline\n", java.nio.file.Files.readString(child.resolve("notes.txt")));
+      assertFalse(
+          tools
+              .executeSingle(
+                  new ToolCall(
+                      "child-read",
+                      "ReadFile",
+                      Map.of("path", child.resolve("notes.txt").toString())))
+              .result()
+              .isError());
+      assertFalse(
+          tools.executeSingle(new ToolCall("child-edit", "EditFile", edit)).result().isError());
+      manager.exit(workspace, false, new CancellationToken());
+      var result =
+          tools
+              .executeSingle(
+                  new ToolCall(
+                      "parent-edit",
+                      "EditFile",
+                      Map.of(
+                          "path",
+                          root.resolve("notes.txt").toString(),
+                          "old_string",
+                          "baseline",
+                          "new_string",
+                          "parent-edit")))
+              .result();
+      assertFalse(result.isError(), result.content());
+      assertEquals("parent-edit\n", java.nio.file.Files.readString(root.resolve("notes.txt")));
+      assertEquals("child-edit\n", java.nio.file.Files.readString(child.resolve("notes.txt")));
+    }
+  }
+
+  @Test
   void validationAndExecutionKeepTheCapturedDirectoryAfterKeepExit() throws Exception {
     new GitRepositoryFixture(root);
     var manager = new WorktreeManager(root, new WorktreeConfig(), "session");

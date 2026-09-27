@@ -180,9 +180,7 @@ class WorktreeManagerTest {
     var workspace =
         new AgentWorkspace(root, "session", "main", new com.mewcode.tool.FileStateCache(), manager);
     manager.enter(workspace, "child");
-    var saved = workspace.currentSession().orElseThrow();
-    manager.exit(workspace, false, new CancellationToken());
-    new WorktreeSessionStore().save(root, saved);
+    manager.detach(workspace);
     var restarted =
         new AgentWorkspace(root, "session", "main", new com.mewcode.tool.FileStateCache(), manager);
     assertTrue(manager.restore(restarted));
@@ -223,6 +221,41 @@ class WorktreeManagerTest {
       if (!holder.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)) holder.destroyForcibly();
       Files.delete(source);
     }
+  }
+
+  @Test
+  void savedSessionWithoutResourceIdentityIsRejectedWithoutChangingCwd() throws Exception {
+    new GitRepositoryFixture(root);
+    var manager = new WorktreeManager(root, new WorktreeConfig(), "session");
+    manager.create(root, "child", new CancellationToken());
+    var workspace =
+        new AgentWorkspace(root, "session", "main", new com.mewcode.tool.FileStateCache(), manager);
+    var saved = manager.enter(workspace, "child");
+    manager.detach(workspace);
+    new WorktreeSessionStore().save(root, saved);
+    assertThrows(WorktreeException.class, () -> manager.restore(workspace));
+    assertEquals(root.toRealPath(), workspace.currentCwd());
+    assertTrue(Files.isDirectory(saved.worktreePath()));
+  }
+
+  @Test
+  void oldSavedSessionCannotRestoreARecreatedResourceWithTheSameName() throws Exception {
+    new GitRepositoryFixture(root);
+    var manager = new WorktreeManager(root, new WorktreeConfig(), "session-old");
+    var workspace =
+        new AgentWorkspace(
+            root, "session-old", "main", new com.mewcode.tool.FileStateCache(), manager);
+    manager.create(root, "same", new CancellationToken());
+    manager.enter(workspace, "same");
+    manager.detach(workspace);
+    assertTrue(manager.remove("same", new CancellationToken()));
+    manager.create(root, "same", new CancellationToken());
+    var restored =
+        new AgentWorkspace(
+            root, "session-old", "main", new com.mewcode.tool.FileStateCache(), manager);
+    assertThrows(WorktreeException.class, () -> manager.restore(restored));
+    assertEquals(root.toRealPath(), restored.currentCwd());
+    assertTrue(restored.currentSession().isEmpty());
   }
 
   @Test

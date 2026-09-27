@@ -20,14 +20,20 @@ public final class PostCreationSetup {
   private List<Path> sharedDirectories = List.of();
   private String hooksPath = "";
   private String hooksMode = "NONE";
+  private final List<Path> trustedSharedSource;
 
   public PostCreationSetup(WorktreeConfig config) {
     this(config, new GitCommandRunner());
   }
 
   PostCreationSetup(WorktreeConfig config, GitCommandRunner git) {
+    this(config, git, List.of());
+  }
+
+  PostCreationSetup(WorktreeConfig config, GitCommandRunner git, List<Path> trustedSharedSource) {
     this.config = config;
     this.git = git;
+    this.trustedSharedSource = List.copyOf(trustedSharedSource);
   }
 
   List<Path> sharedDirectories() {
@@ -65,7 +71,14 @@ public final class PostCreationSetup {
       var shared = new ArrayList<Path>();
       for (String directory : config.getSymlinkDirectories()) {
         token.throwIfCancelled();
-        Path from = safe(source, directory);
+        Path from = source.resolve(directory).normalize();
+        WorktreeConfig.validatePath(directory);
+        if (Files.isSymbolicLink(from)) {
+          WorktreeSessionStore.noLinks(source, from.getParent());
+          Path actual = from.toRealPath();
+          if (!trustedSharedSource.contains(actual)) throw new IOException("共享来源软链归属不符");
+          from = actual;
+        } else from = safe(source, directory);
         if (!Files.exists(from, LinkOption.NOFOLLOW_LINKS)) {
           warnings.add("可选共享目录不存在：" + directory);
           continue;

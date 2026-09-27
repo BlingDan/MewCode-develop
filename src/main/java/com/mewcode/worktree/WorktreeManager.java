@@ -127,7 +127,7 @@ public final class WorktreeManager {
         resource.directoryPresent = "YES";
         resource.branchPresent = "YES";
         store.saveResource(root, resource);
-        var setup = new PostCreationSetup(config, git);
+        var setup = new PostCreationSetup(config, git, verifiedSharedSource(source));
         warnings.put(slug, setup.perform(source, target, token));
         resource.sharedDirectories = setup.sharedDirectories();
         resource.hooksPath = setup.hooksPath();
@@ -154,6 +154,17 @@ public final class WorktreeManager {
     } finally {
       operation.unlock();
     }
+  }
+
+  private java.util.List<Path> verifiedSharedSource(Path source) throws IOException {
+    if (!source.startsWith(root.resolve(".mewcode/worktrees"))) return java.util.List.of();
+    for (var candidate : store.resources(root)) {
+      if (candidate.path.equals(source)) {
+        store.verifyReady(root, candidate);
+        return candidate.sharedDirectories;
+      }
+    }
+    throw new IOException("来源工作树归属无法验证");
   }
 
   public String freezeHead(Path source, CancellationToken token) {
@@ -391,12 +402,14 @@ public final class WorktreeManager {
     Active slot;
     synchronized (active) {
       slot = active.get(slug);
-      if (slot == null || !slot.resource.recordId.equals(recordId)) return;
+      if (slot == null || !slot.resource.recordId.equals(recordId))
+        throw failure("进程保护", "资源身份已失效，禁止启动命令", root, null);
       slot.resource.lastError = "命令进程停止状态未知";
     }
     try {
       store.saveResource(root, slot.resource);
-    } catch (IOException ignored) {
+    } catch (IOException error) {
+      throw failure("进程保护", "无法持久化未知进程状态，禁止启动或释放资源", slot.resource.path, slot.resource.branch);
     }
   }
 
@@ -539,7 +552,7 @@ public final class WorktreeManager {
               0);
       resource.lastUsedAt = Instant.now();
       store.saveResource(root, resource);
-      store.save(root, session);
+      store.save(root, session, resource.recordId);
       workspace.bind(session, resource);
       return session;
     } catch (IOException error) {
@@ -567,7 +580,9 @@ public final class WorktreeManager {
       operation = begin(session.worktreeName());
       var resource = required(session.worktreeName());
       if (!session.worktreePath().equals(resource.path)
-          || !session.worktreeBranch().equals(resource.branch)) throw new IOException("会话资源不符");
+          || !session.worktreeBranch().equals(resource.branch)
+          || !store.savedResourceId(root, workspace.sessionId()).equals(resource.recordId))
+        throw new IOException("会话资源不符");
       store.verifyReady(root, resource);
       slot = acquireOwner(resource, workspace.agentId());
       workspace.prepare(resource.path);

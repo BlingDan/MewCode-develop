@@ -63,6 +63,7 @@ class BashSandboxTest {
         new BashSandboxRequest(
             "true", child, List.of(child), List.of(shared), projectRoot, List.of(child, shared));
     List<String> argv = LinuxBubblewrapSandbox.arguments(request);
+    assertTrue(argv.contains("--unshare-pid"));
     assertTrue(argv.indexOf("--tmpfs") < argv.indexOf("--bind"));
     assertTrue(argv.lastIndexOf("--ro-bind") > argv.indexOf("--bind"));
     assertEquals(

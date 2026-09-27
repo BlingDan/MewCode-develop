@@ -112,31 +112,57 @@ class SubAgentRuntimeTest {
     }
   }
 
-  @Test
-  void isolatedRoleReadsCommittedChildCopyAndCleansUpBeforeReturning() throws Exception {
+  @org.junit.jupiter.params.ParameterizedTest(name = "clean child: {0}")
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"success", "failure", "cancel"})
+  void isolatedRoleReadsCommittedChildCopyAndCleansUpBeforeReturning(String terminal)
+      throws Exception {
+    boolean cancelled = terminal.equals("cancel");
+    var readComplete = new java.util.concurrent.CountDownLatch(1);
     var repo = new com.mewcode.worktree.GitRepositoryFixture(projectRoot);
     java.nio.file.Files.createDirectories(projectRoot.resolve(".mewcode/agents"));
     java.nio.file.Files.writeString(
         projectRoot.resolve(".mewcode/agents/isolated.md"),
-        "---\nname: isolated\ndescription: isolated reader\nisolation: worktree\npermissionMode: dontAsk\ntools: [Bash]\n---\nRead notes.txt and return its contents.");
+        "---\nname: isolated\ndescription: isolated reader\nisolation: worktree\npermissionMode: dontAsk\ntools: [ReadFile]\n---\nRead notes.txt and return its contents.");
     repo.git("add", ".mewcode/agents");
     repo.git("commit", "-m", "role");
     repo.knownRemote();
     java.nio.file.Files.writeString(projectRoot.resolve("notes.txt"), "parent changed");
     var client = new FakeLlmClient();
-    client.enqueue(
-        new StreamEvent.ToolCallComplete("read", "Bash", Map.of("command", "cat notes.txt")),
-        new StreamEvent.StreamEnd("tool_use"));
-    client.enqueue(
-        new StreamEvent.TextDelta("child baseline"), new StreamEvent.StreamEnd("end_turn"));
     var registry = ToolRegistry.createDefault();
     var provider = provider("main", "model");
-    var router =
-        new ProviderRouter(
-            List.of(provider), provider, client, (ignored, prompt) -> client, "system");
     var manager =
         new com.mewcode.worktree.WorktreeManager(
             projectRoot, new com.mewcode.config.WorktreeConfig(), "session");
+    var readerClient =
+        new com.mewcode.llm.LlmClient() {
+          @Override
+          public com.mewcode.llm.CancellableLlmStream openStream(
+              com.mewcode.llm.PromptRequest request) {
+            if (client.requestCount() == 0)
+              client.enqueue(
+                  new StreamEvent.ToolCallComplete(
+                      "read",
+                      "ReadFile",
+                      Map.of(
+                          "path",
+                          manager.list().getFirst().path().resolve("notes.txt").toString())),
+                  new StreamEvent.StreamEnd("tool_use"));
+            else {
+              if (terminal.equals("failure"))
+                client.enqueue(new StreamEvent.Error("测试 Provider 失败"));
+              else if (cancelled) client.enqueue();
+              else
+                client.enqueue(
+                    new StreamEvent.TextDelta("child baseline"),
+                    new StreamEvent.StreamEnd("end_turn"));
+              readComplete.countDown();
+            }
+            return client.openStream(request);
+          }
+        };
+    var router =
+        new ProviderRouter(
+            List.of(provider), provider, readerClient, (ignored, prompt) -> readerClient, "system");
     var workspace =
         new com.mewcode.worktree.AgentWorkspace(
             projectRoot,
@@ -177,9 +203,17 @@ class SubAgentRuntimeTest {
       var result =
           runtime.execute(
               new SubAgentRuntime.SubAgentInvocation(
-                  "read notes", "read", "isolated", null, false, "dispatch"),
+                  "read notes", "read", "isolated", null, cancelled, "dispatch"),
               parent);
-      assertTrue(!result.isError(), result.content());
+      if (cancelled) {
+        assertTrue(readComplete.await(5, java.util.concurrent.TimeUnit.SECONDS));
+        String id = tasks.list("session").getFirst().taskId();
+        assertTrue(tasks.cancel("session", id));
+        var snapshot = awaitTerminal(tasks, id);
+        assertEquals(SubAgentTaskManager.Status.CANCELLED, snapshot.status());
+        result = com.mewcode.tool.ToolResult.error(snapshot.error());
+      }
+      assertEquals(!terminal.equals("success"), result.isError(), result.content());
       assertTrue(result.content().contains("无成果工作树已清理"), result.content());
       assertTrue(client.requests().get(1).history().toString().contains("baseline"));
       assertTrue(!client.requests().get(1).history().toString().contains("parent changed"));
@@ -190,7 +224,7 @@ class SubAgentRuntimeTest {
     }
   }
 
-  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.ParameterizedTest(name = "dirty child: {0}")
   @org.junit.jupiter.params.provider.ValueSource(strings = {"success", "failure", "cancel"})
   void dirtyChildIsRetainedAfterSuccessFailureOrCancellation(String terminal) throws Exception {
     boolean fails = terminal.equals("failure");
@@ -297,6 +331,155 @@ class SubAgentRuntimeTest {
     }
   }
 
+  @Test
+  void twoIsolatedRolesRunConcurrentlyAndEditDifferentCopiesOfTheSameFile() throws Exception {
+    var repo = new com.mewcode.worktree.GitRepositoryFixture(projectRoot);
+    java.nio.file.Files.createDirectories(projectRoot.resolve(".mewcode/agents"));
+    for (String role : List.of("one", "two"))
+      java.nio.file.Files.writeString(
+          projectRoot.resolve(".mewcode/agents/" + role + ".md"),
+          "---\nname: "
+              + role
+              + "\ndescription: isolated editor\nisolation: worktree\npermissionMode: dontAsk\ntools: [ReadFile, EditFile]\n---\nROLE_"
+              + role.toUpperCase(java.util.Locale.ROOT));
+    repo.git("add", ".mewcode/agents");
+    repo.git("commit", "-m", "两个隔离角色");
+    repo.knownRemote();
+    var manager =
+        new com.mewcode.worktree.WorktreeManager(
+            projectRoot, new com.mewcode.config.WorktreeConfig(), "session");
+    var workspace =
+        new com.mewcode.worktree.AgentWorkspace(
+            projectRoot,
+            projectRoot.resolve("test-home"),
+            "session",
+            "main",
+            new FileStateCache(),
+            manager);
+    var promptFactory = new com.mewcode.agent.PromptRequestFactory(workspace);
+    var opened = new java.util.concurrent.CountDownLatch(2);
+    var release = new java.util.concurrent.CountDownLatch(1);
+    var stages =
+        new java.util.concurrent.ConcurrentHashMap<
+            Path, java.util.concurrent.atomic.AtomicInteger>();
+    var roles = new java.util.concurrent.ConcurrentHashMap<Path, String>();
+    var client =
+        new com.mewcode.llm.LlmClient() {
+          @Override
+          public com.mewcode.llm.CancellableLlmStream openStream(
+              com.mewcode.llm.PromptRequest request) {
+            String system = request.flattenedSystemPrompt();
+            Path cwd =
+                manager.list().stream()
+                    .map(r -> r.path())
+                    .filter(p -> system.contains(p.toString()))
+                    .findFirst()
+                    .orElseThrow();
+            String role = system.contains("ROLE_ONE") ? "one" : "two";
+            roles.put(cwd, role);
+            int stage =
+                stages
+                    .computeIfAbsent(
+                        cwd, ignored -> new java.util.concurrent.atomic.AtomicInteger())
+                    .getAndIncrement();
+            if (stage == 0) {
+              opened.countDown();
+              try {
+                if (!release.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                  throw new AssertionError("并行派发超时");
+              } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(error);
+              }
+            }
+            var response = new FakeLlmClient();
+            if (stage == 0)
+              response.enqueue(
+                  new StreamEvent.ToolCallComplete(
+                      "read", "ReadFile", Map.of("path", cwd.resolve("notes.txt").toString())),
+                  new StreamEvent.StreamEnd("tool_use"));
+            else if (stage == 1)
+              response.enqueue(
+                  new StreamEvent.ToolCallComplete(
+                      "edit",
+                      "EditFile",
+                      Map.of(
+                          "path",
+                          cwd.resolve("notes.txt").toString(),
+                          "old_string",
+                          "baseline",
+                          "new_string",
+                          role + "-result")),
+                  new StreamEvent.StreamEnd("tool_use"));
+            else
+              response.enqueue(
+                  new StreamEvent.TextDelta(role + " done"), new StreamEvent.StreamEnd("end_turn"));
+            return response.openStream(request);
+          }
+        };
+    var provider = provider("main", "model");
+    var router =
+        new ProviderRouter(
+            List.of(provider), provider, client, (ignored, prompt) -> client, "system");
+    try (var tasks = new SubAgentTaskManager()) {
+      var runtime =
+          new SubAgentRuntime(
+              AgentCatalog.load(projectRoot, projectRoot, List.of(), 5),
+              tasks,
+              ToolRegistry.createDefault(),
+              projectRoot,
+              promptFactory,
+              new AgentLoopConfig(5, 3),
+              new PermissionGate(),
+              new PermissionRuleEngine(),
+              new PathAuthorizationStore(projectRoot),
+              BashSandboxFactory.create(),
+              null,
+              "session",
+              10_000,
+              router);
+      runtime.configureWorkspace(workspace);
+      var parent =
+          new SubAgentRuntime.ParentAgentSnapshot(
+              promptFactory.create(AgentMode.EXECUTE, 1, false, List.of(), List.of()),
+              List.of(),
+              com.mewcode.agent.ToolPolicy.forMode(AgentMode.EXECUTE),
+              router.main(),
+              AgentMode.EXECUTE,
+              new AgentRun(),
+              "session",
+              workspace.capture(new com.mewcode.agent.CancellationToken()));
+      try {
+        for (String role : List.of("one", "two")) {
+          var launched =
+              runtime.execute(
+                  new SubAgentRuntime.SubAgentInvocation(
+                      "edit notes", role, role, null, true, "dispatch-" + role),
+                  parent);
+          assertTrue(!launched.isError(), launched.content());
+        }
+        assertTrue(opened.await(10, java.util.concurrent.TimeUnit.SECONDS));
+        assertEquals(2, roles.size());
+        assertEquals(java.util.Set.of("one", "two"), new java.util.HashSet<>(roles.values()));
+        assertEquals(2, manager.list().stream().map(r -> r.branch()).distinct().count());
+        assertTrue(tasks.list("session").stream().allMatch(t -> t.endedAt() == null));
+      } finally {
+        release.countDown();
+      }
+      for (var task : tasks.list("session")) {
+        var finished = awaitTerminal(tasks, task.taskId());
+        assertEquals(SubAgentTaskManager.Status.COMPLETED, finished.status(), finished.error());
+        assertTrue(finished.result().contains("工作树已保留"), finished.result());
+      }
+      for (var entry : roles.entrySet())
+        assertEquals(
+            entry.getValue() + "-result\n",
+            java.nio.file.Files.readString(entry.getKey().resolve("notes.txt")));
+      assertEquals("baseline\n", java.nio.file.Files.readString(projectRoot.resolve("notes.txt")));
+      assertEquals(projectRoot.toRealPath(), workspace.currentCwd());
+    }
+  }
+
   private static List<AgentEvent> collect(AgentRun run) throws Exception {
     var events = new ArrayList<AgentEvent>();
     while (true) {
@@ -304,6 +487,17 @@ class SubAgentRuntimeTest {
       events.add(event);
       if (event instanceof AgentEvent.LoopComplete) return events;
     }
+  }
+
+  private static SubAgentTaskManager.TaskSnapshot awaitTerminal(
+      SubAgentTaskManager tasks, String id) throws Exception {
+    long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+    while (System.nanoTime() < deadline) {
+      var snapshot = tasks.get("session", id).orElseThrow();
+      if (snapshot.endedAt() != null) return snapshot;
+      Thread.sleep(10);
+    }
+    throw new AssertionError("子任务收尾超时：" + id);
   }
 
   @Test

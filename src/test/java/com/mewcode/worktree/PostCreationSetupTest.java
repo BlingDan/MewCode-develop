@@ -100,6 +100,27 @@ class PostCreationSetupTest {
   }
 
   @Test
+  void currentWorktreeCanCreateAnotherWithItsVerifiedSharedDependency() throws Exception {
+    new GitRepositoryFixture(root);
+    Files.createDirectory(root.resolve("node_modules"));
+    Files.writeString(root.resolve("node_modules/library"), "shared");
+    var config = new WorktreeConfig();
+    config.setSymlinkDirectories(java.util.List.of("node_modules"));
+    var manager = new WorktreeManager(root, config, "session");
+    Path first = manager.create(root, "first", new CancellationToken()).path();
+    Path second = manager.create(first, "second", new CancellationToken()).path();
+    assertEquals(
+        root.resolve("node_modules").toRealPath(), second.resolve("node_modules").toRealPath());
+    assertEquals("shared", Files.readString(second.resolve("node_modules/library")));
+    Files.delete(first.resolve("node_modules"));
+    Path forged = Files.createDirectory(root.resolve("forged"));
+    Files.createSymbolicLink(first.resolve("node_modules"), forged);
+    assertThrows(
+        WorktreeException.class,
+        () -> manager.create(first, "forged-child", new CancellationToken()));
+  }
+
+  @Test
   void environmentOverridePreservesEntriesAndRejectsMalformedCounts() throws Exception {
     var environment = new java.util.HashMap<String, String>();
     environment.put("GIT_CONFIG_COUNT", "1");

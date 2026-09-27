@@ -42,6 +42,7 @@ public final class CommandRunner {
         context.permissionContext() == null ? sandbox : context.permissionContext().bashSandbox();
     SandboxedProcess prepared =
         selected.prepare(sandboxRequest(command, context.projectRoot(), context, List.of()));
+    protectUncontainedLaunch(command, context, selected);
     ProcessBuilder builder =
         new ProcessBuilder(prepared.argv())
             .directory(prepared.workingDirectory().toFile())
@@ -78,6 +79,8 @@ public final class CommandRunner {
             : workingDirectory;
     SandboxedProcess prepared =
         selected.prepare(sandboxRequest(command, actualCwd, context, List.of(skillDirectory)));
+    // 任意脚本可以在内部 double-fork；仅靠调用者命令文本不能证明收口。
+    protectUncontainedLaunch(null, context, selected);
     ProcessBuilder builder =
         new ProcessBuilder(prepared.argv()).directory(prepared.workingDirectory().toFile());
     Map<String, String> environment = builder.environment();
@@ -165,6 +168,7 @@ public final class CommandRunner {
 
     Path root = workingDirectory.toAbsolutePath().normalize();
     SandboxedProcess prepared = sandbox.prepare(sandboxRequest(command, root, context, List.of()));
+    protectUncontainedLaunch(command, context, sandbox);
     ProcessBuilder builder =
         new ProcessBuilder(prepared.argv()).directory(prepared.workingDirectory().toFile());
     applyEnvironment(builder.environment(), context);
@@ -221,7 +225,32 @@ public final class CommandRunner {
 
   private static void applyEnvironment(
       Map<String, String> environment, ToolExecutionContext context) {
-    if (context.workspaceScope() != null) context.workspaceScope().applyEnvironment(environment);
+    if (context.workspaceScope() != null) {
+      if (context.workspaceScope().isolated()) {
+        // 禁止 shell 启动脚本和导出的函数覆盖内建命令，保持保守判断的前提。
+        environment
+            .keySet()
+            .removeIf(
+                key ->
+                    key.equals("BASH_ENV")
+                        || key.equals("ENV")
+                        || key.equals("SHELLOPTS")
+                        || key.equals("BASHOPTS")
+                        || key.startsWith("BASH_FUNC_"));
+      }
+      context.workspaceScope().applyEnvironment(environment);
+    }
+  }
+
+  /** Linux 使用独立 PID 命名空间；其他平台对可能启动不透明进程的调用保守保留。 */
+  private static void protectUncontainedLaunch(
+      String command, ToolExecutionContext context, BashSandbox sandbox) {
+    if (context.workspaceScope() == null
+        || !context.workspaceScope().isolated()
+        || sandbox instanceof com.mewcode.permission.LinuxBubblewrapSandbox) return;
+    // 只豁免这几个完整的无参数命令；不解析 shell 语法或推测脚本会否派生进程。
+    boolean builtinsOnly = command != null && Set.of("true", "false", "pwd", ":").contains(command);
+    if (!builtinsOnly) context.workspaceScope().markUnconfirmedProcess();
   }
 
   private record ProcessWait(boolean timedOut, boolean cancelled) {}

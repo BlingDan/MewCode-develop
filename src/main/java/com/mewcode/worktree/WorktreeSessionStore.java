@@ -54,6 +54,10 @@ public final class WorktreeSessionStore {
   }
 
   public void save(Path repoRoot, WorktreeSession session) throws IOException {
+    save(repoRoot, session, null);
+  }
+
+  void save(Path repoRoot, WorktreeSession session, String resourceId) throws IOException {
     ObjectNode node = JSON.createObjectNode();
     node.put("version", 1);
     node.put("original_cwd", session.originalCwd().toString());
@@ -65,7 +69,18 @@ public final class WorktreeSessionStore {
     node.put("session_id", session.sessionId());
     node.put("agent_id", session.agentId());
     node.put("creation_duration_ms", session.creationDurationMs());
+    if (resourceId != null) node.put("resource_id", resourceId);
     atomicWrite(sessionPath(repoRoot, session.sessionId()), node);
+  }
+
+  String savedResourceId(Path repoRoot, String sessionId) throws IOException {
+    try {
+      String id = text(read(sessionPath(repoRoot, sessionId)), "resource_id");
+      UUID.fromString(id);
+      return id;
+    } catch (RuntimeException error) {
+      throw new IOException("保存现场资源身份无效");
+    }
   }
 
   public Optional<WorktreeSession> load(Path repoRoot, String sessionId) throws IOException {

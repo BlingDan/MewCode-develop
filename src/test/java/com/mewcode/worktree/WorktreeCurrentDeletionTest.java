@@ -49,9 +49,13 @@ class WorktreeCurrentDeletionTest {
         new HookRule(
             "post",
             HookEvent.POST_TOOL_USE,
-            Optional.empty(),
-            new HookAction.Shell(
-                "mkdir -p .mewcode/hook-events; cat > .mewcode/hook-events/post; grep -q prepared .mewcode/hook-events/post"),
+            Optional.of(
+                new HookRule.HookCondition(
+                    HookRule.HookCondition.Combination.ALL_OF,
+                    List.of(
+                        new HookRule.HookCondition.FieldMatch(
+                            "status", new RuleMatcher.Exact("prepared"))))),
+            new HookAction.Shell("true"),
             false,
             false,
             Duration.ofSeconds(3),
@@ -72,6 +76,71 @@ class WorktreeCurrentDeletionTest {
       assertFalse(Files.exists(child));
       assertEquals(1, calls.get());
       assertTrue(errors.isEmpty(), errors.toString());
+    }
+  }
+
+  @Test
+  void completedPostHookCreatingResultsRefusesDeleteAndPreservesCurrentCwd() throws Exception {
+    new GitRepositoryFixture(root);
+    var manager = new WorktreeManager(root, new WorktreeConfig(), "session");
+    Path child = manager.create(root, "child", new CancellationToken()).path();
+    var workspace = new AgentWorkspace(root, "session", "main", new FileStateCache(), manager);
+    manager.enter(workspace, "child");
+    var registry = new ToolRegistry();
+    registry.register(exitTool(manager, workspace));
+    var calls = new AtomicInteger();
+    var received = new java.util.concurrent.atomic.AtomicReference<String>();
+    var server =
+        com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+    server.createContext(
+        "/post",
+        exchange -> {
+          received.set(
+              new String(
+                  exchange.getRequestBody().readAllBytes(),
+                  java.nio.charset.StandardCharsets.UTF_8));
+          Files.writeString(child.resolve("notes.txt"), "hook-result");
+          calls.incrementAndGet();
+          byte[] response = "{}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+          exchange.sendResponseHeaders(200, response.length);
+          exchange.getResponseBody().write(response);
+          exchange.close();
+        });
+    server.start();
+    var rule =
+        new HookRule(
+            "new-result",
+            HookEvent.POST_TOOL_USE,
+            Optional.empty(),
+            new HookAction.Http(
+                java.net.URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/post"),
+                "POST",
+                Map.of(),
+                Optional.empty()),
+            false,
+            false,
+            Duration.ofSeconds(3),
+            root.resolve("hooks.yaml"));
+    try (var engine =
+            new HookEngine(
+                new HookConfigLoader.LoadedHooks(List.of(rule), List.of()),
+                new CommandRunner(),
+                ignored -> {});
+        var executor = new ToolExecutor(registry, root, new FileStateCache())) {
+      executor.configureWorkspace(workspace);
+      executor.configureHooks(engine, new HookSessionState());
+      var result = executor.executeSingle(new ToolCall("exit", "Exit", Map.of())).result();
+      assertTrue(result.isError(), result.content());
+      assertTrue(result.content().contains("未提交"), result.content());
+      assertTrue(received.get().contains("prepared"), received.get());
+      assertEquals(1, calls.get());
+      assertEquals(child, workspace.currentCwd());
+      assertTrue(Files.isDirectory(child));
+      assertEquals("hook-result", Files.readString(child.resolve("notes.txt")));
+      assertEquals("baseline\n", Files.readString(root.resolve("notes.txt")));
+    } finally {
+      server.stop(0);
+      manager.exit(workspace, false, new CancellationToken());
     }
   }
 

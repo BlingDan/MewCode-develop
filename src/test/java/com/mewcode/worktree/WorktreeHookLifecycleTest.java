@@ -92,6 +92,13 @@ class WorktreeHookLifecycleTest {
       assertEquals("hook", Files.readString(child.resolve(".mewcode/hook-events/output")));
       assertFalse(Files.exists(root.resolve(".mewcode/hook-events/output")));
     }
-    assertTrue(manager.remove("child", new CancellationToken()));
+    // 实际 Hook 使用权已释放，可以重新进入；不透明命令仍须保留资源。
+    manager.enter(workspace, "child");
+    manager.exit(workspace, false, new CancellationToken());
+    var failure =
+        assertThrows(
+            WorktreeException.class, () -> manager.remove("child", new CancellationToken()));
+    assertTrue(failure.getMessage().contains("停止"), failure.getMessage());
+    assertTrue(Files.isDirectory(child));
   }
 }

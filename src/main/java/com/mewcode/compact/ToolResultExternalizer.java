@@ -120,6 +120,9 @@ public final class ToolResultExternalizer implements AutoCloseable {
     }
 
     private Path saveFullResult(String content) throws IOException {
+        Path projectRoot = sessionDirectory.getParent().getParent().getParent();
+        if (!Files.isDirectory(projectRoot, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+                || Files.isSymbolicLink(projectRoot)) throw new IOException("调用目录已删除或不可验证");
         for (Path path = sessionDirectory; path != null && !path.equals(sessionDirectory.getParent().getParent().getParent()); path = path.getParent()) {
             if (Files.isSymbolicLink(path)) throw new IOException("结果目录不能经过软链");
         }

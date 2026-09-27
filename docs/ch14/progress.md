@@ -74,13 +74,13 @@
 | T58 | 后台调度与非 Git 项目兼容 | 完成 | 持久化三层过滤、重入/关闭取消及非 Git 回归通过 |
 | T59 | 验证故障结果与凭据不泄露 | 完成 | 故障/取消/脱敏及启动失败负例通过，见最终构建证据 |
 | T60 | 验证未启用隔离的行为兼容 | 完成 | 普通流程全量回归与真实缺 Git 文件对话/请求拒绝通过 |
-| T61 | 完成构建、格式及整体回归 | 完成 | Java21 最终全量门禁通过，413 tests / 0失败错误跳过 |
+| T61 | 完成构建、格式及整体回归 | 完成 | Java21 交付门禁通过，427 tests / 0失败错误跳过 |
 | T62 | 编写配置示例与运行说明 | 完成 | 可选默认值、角色、命令、保护及 tmux 说明已对照实现 |
 | T63 | tmux 验证父子并行修改同名文件 | 完成 | E01 真实 DeepSeek：父修改后 TaskGet仍running，父子内容独立 |
 | T64 | tmux 验证主会话进入与 KEEP 退出 | 完成 | E02 真实 Worktree 工具创建进入、修改、KEEP恢复通过 |
 | T65 | tmux 验证只读子任务自动清理 | 完成 | E03 真实 wt-reader 返回前清理目录/分支，磁盘已核对 |
-| T66 | tmux 验证有成果时默认拒绝删除 | 待执行 | 尚未执行 |
-| T67 | 逐项验收并交付 | 待执行 | 尚未执行 |
+| T66 | tmux 验证有成果时默认拒绝删除 | 完成 | 最终自然语言默认拒绝/KEEP、明确 CLI 丢弃及磁盘对照通过 |
+| T67 | 逐项验收并交付 | 完成 | Checklist 53/53，实际方法与证据索引，成果与停止状态已清点 |
 
 ## 证据记录
 
@@ -125,3 +125,10 @@
 
 - T60–T62：最终命令 `compileJava compileTestJava spotlessCheck test shadowJar`（同时先 SpotlessApply 本次文件）退出 0，413 tests / 0 failures / 0 errors / 0 skipped。/private/tmp/mewcode-ch14-final-build.log；方法和结果索引 docs/ch14/verification.json。实际 macOS 共享目标写入拒绝（文件/Bash/脚本/Hook）、自己的 Git 提交通过；Linux 未实测。
 - 补充验收：含新提交和未提交修改的零 Git 恢复、1/64字名称实际创建、非法名称零 Git 零路径/引用副作用、换行名称与权限复制、初始化拒绝代码覆盖/越界链接、新提交已被远端包含仍拒绝、取消后修改保留、扫描阈值/同名临时外观手动资源/跨实例占用/未知停止保护通过。定向日志 /private/tmp/mewcode-ch14-acceptance-matrix-green.log、/private/tmp/mewcode-ch14-cancel-outcome.log。
+
+- 独立审查及修复：外置结果不重建删除 cwd；经核验的依赖软链可从工作树继续派发；恢复绑定资源 UUID；macOS 任意外部程序/脚本保守标未知，Linux 表达独立 PID 命名空间。持久化未知标记失败时禁止进程启动；Unicode 空白不能误获内建豁免。各负例先观察失败，再回归通过。
+- 补齐验收：共享依赖可执行文件实际执行、默认独立副本可写、两个隔离角色并行同名读写、无成果三终态清理、Post Hook 完成后新生成成果的拒绝删除均通过。定向日志 /private/tmp/mewcode-ch14-review-coverage-green.log。
+- T61 交付构建：/private/tmp/mewcode-ch14-delivery-build.log，compileJava compileTestJava spotlessCheck test shadowJar 退出 0，427 tests / 0 failures / 0 errors / 0 skipped；固定 JAR SHA 和生成时间见 verification.json。
+- T63～T66 最终复验：tmux mew-ch14-final、真实 deepseek-v4-flash、主会话 20260927-125732-4c65；最终 E01～E04 均通过，手动资源用 manual-final，明确丢弃用 discard-final。实际终端、对话和引用状态见 evidence/ 与 acceptance-evidence.json。
+- 验收期间曾在应用运行时重建同一 JAR，触发 ZipFile 读取错误；该轮没有作为最终门禁依据。已正常停止后用固定最终产物重新执行四场景，未再发生该错误。
+- 限制：Linux 只有参数检查，未实测执行；macOS 不透明命令即使返回也保留资源。真实 Provider 的异步 Memory 多次安全失败并保留旧笔记/索引，本次未证明真实 Memory 内容更新成功；隔离、固定目标及旧流程自动化回归通过。

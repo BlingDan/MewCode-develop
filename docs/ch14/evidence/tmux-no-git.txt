@@ -1,0 +1,57 @@
+9月 27, 2026 12:20:00 下午 org.jline.utils.Log logr
+警告: Unable to retrieve infocmp for type tmux-256color
+java.io.IOException: Cannot run program "infocmp": Exec failed, error: 2 (No such file or directory)
+	at java.base/java.lang.ProcessBuilder.start(ProcessBuilder.java:1170)
+	at java.base/java.lang.ProcessBuilder.start(ProcessBuilder.java:1089)
+	at org.jline.utils.InfoCmp.getInfoCmp(InfoCmp.java:544)
+	at org.jline.terminal.impl.AbstractTerminal.parseInfoCmp(AbstractTerminal.java:207)
+	at org.jline.terminal.impl.PosixSysTerminal.<init>(PosixSysTerminal.java:47)
+	at org.jline.terminal.impl.jni.JniTerminalProvider.posixSysTerminal(JniTerminalProvider.java:113)
+	at org.jline.terminal.impl.jni.JniTerminalProvider.sysTerminal(JniTerminalProvider.java:83)
+	at org.jline.terminal.TerminalBuilder.doBuild(TerminalBuilder.java:493)
+	at org.jline.terminal.TerminalBuilder.build(TerminalBuilder.java:427)
+	at com.mewcode.tui.tea.Program.run(Program.java:56)
+	at com.mewcode.MewCode.run(MewCode.java:127)
+	at com.mewcode.MewCode.main(MewCode.java:27)
+Caused by: java.io.IOException: Exec failed, error: 2 (No such file or directory)
+	at java.base/java.lang.ProcessImpl.forkAndExec(Native Method)
+	at java.base/java.lang.ProcessImpl.<init>(ProcessImpl.java:295)
+	at java.base/java.lang.ProcessImpl.start(ProcessImpl.java:225)
+	at java.base/java.lang.ProcessBuilder.start(ProcessBuilder.java:1126)
+	... 11 more
+
+ /\_/\    MewCode 0.1.0
+( o.o )   deepseek-v4-flash
+ > ^ <    /private/tmp/mewcode-ch14-nogit-w7uq2aed
+❯ 请用 ReadFile 读取当前项目 /private/tmp/mewcode-ch14-nogit-w7uq2aed/notes.txt，直接报告内容，不运行命令。
+● Read(/private/tmp/mewcode-ch14-nogit-w7uq2aed/notes.txt)
+  Agent 正在推进第 1 轮…
+⎿ 1 ordinary-without-git
+  Agent 正在推进第 2 轮…
+● /private/tmp/mewcode-ch14-nogit-w7uq2aed/notes.txt 的内容为：
+
+╭────────────────────╮
+│ordinary-without-git│
+╰────────────────────╯
+
+文件共 1 行，无其他内容。
+  Completed in 3.2s · Token 用量：输入 4923 · 输出 118
+● Worktree(action=create, name=no-git-demo)
+MewCode 想要执行以下操作：
+
+[Worktree] {name=no-git-demo, action=create}
+
+原因：当前权限模式要求用户确认操作
+
+允许执行？(y)是 / (n)否 / (s)本会话允许 / (a)始终允许此类操作
+已允许本次操作
+⎿ Error: 工作树 Git 失败：无法启动 Git 进程；目录=/private/tmp/mewcode-ch14-nogit-w7uq2aed
+● 工作树 Git 失败：无法启动 Git 进程；目录=/private/tmp/mewcode-ch14-nogit-w7uq2aed
+  Completed in 61.9s · Token 用量：unknown
+● Ready for conversation and tools · Execute Mode
+  目录：/private/tmp/mewcode-ch14-nogit-w7uq2aed · 未确认
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ ❯ Send a message...                                                                                                                               │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+[DEFAULT]                                                                                                                            deepseek-v4-flash
+

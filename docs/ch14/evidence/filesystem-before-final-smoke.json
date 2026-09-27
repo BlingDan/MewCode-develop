@@ -1,0 +1,40 @@
+{
+  "captured_at": "2026-09-27T12:47:01.811491+08:00",
+  "root": "/private/tmp/mewcode-ch14-e2e-yygckul6",
+  "root_notes": "parent-change\n",
+  "head": "ab3f58f815c247b34e09515d957cb201e5e9f5ad",
+  "resources": [
+    {
+      "record_id": "0f0432b1-6649-4f61-af29-c013119417c2",
+      "slug": "manual-demo",
+      "path": "/private/tmp/mewcode-ch14-e2e-yygckul6/.mewcode/worktrees/manual-demo",
+      "branch": "codex/worktree/manual-demo/task",
+      "base_commit": "ab3f58f815c247b34e09515d957cb201e5e9f5ad",
+      "state": "READY",
+      "last_error": "",
+      "directory_exists": true,
+      "notes": "manual-change\n"
+    },
+    {
+      "record_id": "0b189686-0ab5-4f51-8cad-80ab8964ecba",
+      "slug": "temp-agent-1-c334434d",
+      "path": "/private/tmp/mewcode-ch14-e2e-yygckul6/.mewcode/worktrees/temp-agent-1-c334434d",
+      "branch": "codex/worktree/temp-agent-1-c334434d/task",
+      "base_commit": "ab3f58f815c247b34e09515d957cb201e5e9f5ad",
+      "state": "READY",
+      "last_error": "",
+      "directory_exists": true,
+      "notes": "child-change\n"
+    },
+    {
+      "slug": "temp-agent-2-8d548b11",
+      "directory_exists": false,
+      "branch_exists": false
+    },
+    {
+      "slug": "temp-agent-3-38bac86d",
+      "directory_exists": false,
+      "branch_exists": false
+    }
+  ]
+}

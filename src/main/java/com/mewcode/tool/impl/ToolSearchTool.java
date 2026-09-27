@@ -51,6 +51,8 @@ public final class ToolSearchTool implements Tool {
 
   @Override
   public ToolResult execute(ToolExecutionContext context, Map<String, Object> input) {
+    if (context.workspaceScope() != null && context.workspaceScope().isolated())
+      return ToolResult.error("工作树会话不能发现无法验证 cwd 隔离的 MCP 工具。");
     String name = input == null ? null : stringValue(input.get("tool_name"));
     if (name == null || name.isBlank()) {
       return ToolResult.error("ToolSearch 需要非空的完整工具名 tool_name。");

@@ -306,6 +306,27 @@ public final class WorktreeManager {
     }
   }
 
+  public String describeResources() {
+    try {
+      var rows = new ArrayList<String>();
+      for (var resource : store.resources(root))
+        rows.add(
+            resource.slug
+                + " ["
+                + resource.state
+                + "] "
+                + (resource.temporary ? "临时" : "手动")
+                + "\n路径："
+                + resource.path
+                + "\n分支："
+                + resource.branch
+                + (resource.lastError.isBlank() ? "" : "\n保留原因：" + resource.lastError));
+      return rows.isEmpty() ? "暂无已登记工作树。" : String.join("\n", rows);
+    } catch (IOException error) {
+      throw failure("列表", "记录无法验证，未修改资源", root, null);
+    }
+  }
+
   private Active acquireOwner(WorktreeSessionStore.Resource resource, String owner)
       throws IOException {
     synchronized (active) {
@@ -588,6 +609,7 @@ public final class WorktreeManager {
     private final Active slot;
     private final boolean delete;
     private final CancellationToken token;
+    private final boolean discard;
     private final java.util.concurrent.atomic.AtomicBoolean finished =
         new java.util.concurrent.atomic.AtomicBoolean();
     private volatile boolean committing;
@@ -597,11 +619,13 @@ public final class WorktreeManager {
         WorktreeSession session,
         Active slot,
         boolean delete,
+        boolean discard,
         CancellationToken token) {
       this.workspace = workspace;
       this.session = session;
       this.slot = slot;
       this.delete = delete;
+      this.discard = discard;
       this.token = token;
     }
 
@@ -648,7 +672,7 @@ public final class WorktreeManager {
         workspace.prepare(session.originalCwd());
         if (delete) {
           try {
-            removeHeld(slot.resource, false, token);
+            removeHeld(slot.resource, discard, token);
           } finally {
             if (!Files.exists(session.worktreePath(), LinkOption.NOFOLLOW_LINKS)) {
               try {
@@ -679,6 +703,17 @@ public final class WorktreeManager {
 
   public PreparedExit prepareExit(
       AgentWorkspace workspace, boolean delete, CancellationToken token) {
+    return prepareExitInternal(workspace, delete, null, token);
+  }
+
+  public PreparedExit prepareExitFromUserCommand(
+      AgentWorkspace workspace, String recordId, CancellationToken token) {
+    if (recordId == null) throw new IllegalArgumentException("用户丢弃缺少资源身份");
+    return prepareExitInternal(workspace, true, recordId, token);
+  }
+
+  private PreparedExit prepareExitInternal(
+      AgentWorkspace workspace, boolean delete, String discardId, CancellationToken token) {
     workspace.beginTransition();
     ReentrantLock operation = null;
     try {
@@ -701,8 +736,21 @@ public final class WorktreeManager {
       }
       store.verifyReady(root, slot.resource);
       workspace.prepare(session.originalCwd());
-      if (delete) assertProtectedResults(slot.resource, token);
-      PreparedExit prepared = new PreparedExit(workspace, session, slot, delete, token);
+      if (discardId != null && !slot.resource.recordId.equals(discardId))
+        throw failure("准备退出", "丢弃授权目标已变化", slot.resource.path, slot.resource.branch);
+      if (delete) {
+        if (discardId == null) assertProtectedResults(slot.resource, token);
+        else {
+          if (slot.resource.lastError.equals("命令进程停止状态未知"))
+            throw failure("删除", "进程停止状态未知", slot.resource.path, slot.resource.branch);
+          var changes = new WorktreeChanges(git);
+          changes.countChanges(slot.resource.path, slot.resource.baseCommit, token);
+          changes.countUnpushedCommits(slot.resource.path, token);
+        }
+      }
+      // 生命周期调用自身最多持有控制与运行体两个使用权，其他使用者仍会拒绝。
+      PreparedExit prepared =
+          new PreparedExit(workspace, session, slot, delete, discardId != null, token);
       synchronized (active) {
         if (delete && slot.uses > 2)
           throw failure(

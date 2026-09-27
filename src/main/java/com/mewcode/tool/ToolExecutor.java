@@ -141,7 +141,7 @@ public final class ToolExecutor implements AutoCloseable {
       return result(
           call, ToolResult.error("未知工具：" + call.toolName() + "。请从当前可用工具列表中选择工具。"), started, null);
     }
-    if (!policy.isAllowed(tool)) {
+    if (!policy.forWorkspace(isolatedCall(token)).isAllowed(tool)) {
       return result(
           call, ToolResult.error("当前模式不允许调用工具：" + call.toolName() + "。请先切换到执行模式。"), started, tool);
     }
@@ -206,7 +206,7 @@ public final class ToolExecutor implements AutoCloseable {
       return result(
           call, ToolResult.error("未知工具：" + call.toolName() + "。请从当前可用工具列表中选择工具。"), started, null);
     }
-    if (policy == null || !policy.isAllowed(tool)) {
+    if (policy == null || !policy.forWorkspace(isolatedCall(token)).isAllowed(tool)) {
       return result(
           call, ToolResult.error("当前 Skill 或模式不允许调用工具：" + call.toolName() + "。"), started, tool);
     }
@@ -679,6 +679,11 @@ public final class ToolExecutor implements AutoCloseable {
             ? baseContext.withCancellationToken(token == null ? new CancellationToken() : token)
             : workspace.capture(token == null ? new CancellationToken() : token),
         new CallUse());
+  }
+
+  public boolean isolatedCall(CancellationToken token) {
+    var scope = capturedContext(token).workspaceScope();
+    return scope != null && scope.isolated();
   }
 
   private ToolExecutionContext capturedContext(CancellationToken token) {

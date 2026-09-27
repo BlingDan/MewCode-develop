@@ -18,6 +18,7 @@ public final class ToolPolicy {
   private final Set<String> allowedTools;
   private final boolean skillActive;
   private final boolean absolute;
+  private final boolean worktree;
 
   public static final Set<String> ALL_AGENT_DISALLOWED_TOOLS =
       Set.of(
@@ -27,7 +28,8 @@ public final class ToolPolicy {
           "TaskGet",
           "TaskCreate",
           "TaskUpdate",
-          "TaskStop");
+          "TaskStop",
+          "Worktree");
   public static final Set<String> CUSTOM_AGENT_DISALLOWED_TOOLS = Set.of();
   public static final Set<String> ASYNC_AGENT_ALLOWED_TOOLS =
       Set.of(
@@ -39,10 +41,20 @@ public final class ToolPolicy {
 
   private ToolPolicy(
       AgentMode mode, Set<String> allowedTools, boolean skillActive, boolean absolute) {
+    this(mode, allowedTools, skillActive, absolute, false);
+  }
+
+  private ToolPolicy(
+      AgentMode mode,
+      Set<String> allowedTools,
+      boolean skillActive,
+      boolean absolute,
+      boolean worktree) {
     this.mode = Objects.requireNonNull(mode, "mode");
     this.allowedTools = allowedTools == null ? Set.of() : Set.copyOf(allowedTools);
     this.skillActive = skillActive;
     this.absolute = absolute;
+    this.worktree = worktree;
   }
 
   /** 从本轮 Agent 模式创建不可变策略。 */
@@ -88,6 +100,14 @@ public final class ToolPolicy {
     return new ToolPolicy(parent.mode, allowed, false, true);
   }
 
+  public ToolPolicy forWorkspace(boolean isolated) {
+    return isolated ? new ToolPolicy(mode, allowedTools, skillActive, absolute, true) : this;
+  }
+
+  public static boolean lacksCwdIsolation(Tool tool) {
+    return tool.name().startsWith("mcp_") || "ToolSearch".equals(tool.name());
+  }
+
   public AgentMode mode() {
     return mode;
   }
@@ -95,6 +115,7 @@ public final class ToolPolicy {
   /** 判断工具是否可被当前模式声明并执行。 */
   public boolean isAllowed(Tool tool) {
     Objects.requireNonNull(tool, "tool");
+    if (worktree && lacksCwdIsolation(tool)) return false;
     if (absolute) return allowedTools.contains(tool.name());
     if (tool.isSystem()) return true;
     if (tool.isSkillTool() && !skillActive) return false;

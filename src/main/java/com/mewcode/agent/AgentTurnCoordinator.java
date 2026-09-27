@@ -538,11 +538,13 @@ public final class AgentTurnCoordinator {
       while (!run.cancellationToken().isCancelled()
           && completedRounds < config.getMaxIterations()) {
         int round = completedRounds + 1;
-        ToolPolicy policy =
+        ToolPolicy initialPolicy =
             toolPolicySupplier == null
                 ? ToolPolicy.forModeAndTools(
                     mode, skills.allowedTools(), !skills.activeSkills().isEmpty())
                 : Objects.requireNonNull(toolPolicySupplier.get(), "toolPolicySupplier result");
+        ToolPolicy policy =
+            initialPolicy.forWorkspace(executor.isolatedCall(run.cancellationToken()));
         PermissionContext permissions = createPermissionContext(run, mode, permissionSnapshot);
         ProviderRouter.Route route =
             providerRouter == null
@@ -778,7 +780,12 @@ public final class AgentTurnCoordinator {
       PromptAdditions additions,
       String requestId,
       int attemptNumber) {
-    List<String> deferredToolNames = memoryOnlyRequest ? List.of() : registry.deferredToolNames();
+    List<String> deferredToolNames =
+        memoryOnlyRequest
+            ? List.of()
+            : registry.deferredToolNames().stream()
+                .filter(name -> registry.get(name).filter(policy::isAllowed).isPresent())
+                .toList();
     List<Map<String, Object>> schemas =
         registry.toAPIFormateForModel(
             route.protocol(), tool -> memoryOnlyRequest ? tool.isSystem() : policy.isAllowed(tool));

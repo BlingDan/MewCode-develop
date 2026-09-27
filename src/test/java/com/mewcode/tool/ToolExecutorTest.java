@@ -37,6 +37,29 @@ class ToolExecutorTest {
   @TempDir Path tempDir;
 
   @Test
+  void isolatedCallsDenyMcpEvenWhenCallerUsesAnOrdinaryPolicy() throws Exception {
+    new com.mewcode.worktree.GitRepositoryFixture(tempDir);
+    var manager =
+        new com.mewcode.worktree.WorktreeManager(
+            tempDir, new com.mewcode.config.WorktreeConfig(), "session");
+    manager.create(tempDir, "child", new CancellationToken());
+    var workspace =
+        new com.mewcode.worktree.AgentWorkspace(
+            tempDir, "session", "main", new FileStateCache(), manager);
+    manager.enter(workspace, "child");
+    var counter = new AtomicInteger();
+    var registry = new ToolRegistry();
+    registry.register(new TestTool("mcp_unverified", true, counter, null, 0, null));
+    try (var executor = new ToolExecutor(registry, context())) {
+      executor.configureWorkspace(workspace);
+      var result = executor.executeSingle(new ToolCall("fake", "mcp_unverified", Map.of()));
+      assertTrue(result.result().isError());
+      assertEquals(0, counter.get());
+    }
+    manager.exit(workspace, false, new CancellationToken());
+  }
+
+  @Test
   void validatesBeforeExecutionAndReturnsStructuredError() {
     var calls = new AtomicInteger();
     var registry = new ToolRegistry();

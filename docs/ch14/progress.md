@@ -60,7 +60,7 @@
 | T44 | 固定项目 Memory 的目标目录 | 完成 | Memory、外置结果和上下文定向回归通过 |
 | T45 | 保护用户 Memory 并保持子任务只读 | 完成 | Memory、外置结果和上下文定向回归通过 |
 | T46 | 按调用目录外置结果且保留预算 | 完成 | Memory、外置结果和上下文定向回归通过 |
-| T47 | 解析角色的 isolation 声明 | 待执行 | 尚未执行 |
+| T47 | 解析角色的 isolation 声明 | 完成 | 默认 NONE、WORKTREE 与非法值和 Catalog 回归通过 |
 | T48 | 在锁外固定子任务派发现场 | 待执行 | 尚未执行 |
 | T49 | 实现 AgentWorktree 轻量适配 | 待执行 | 尚未执行 |
 | T50 | 在子目录构造独立运行资源 | 待执行 | 尚未执行 |
@@ -109,3 +109,5 @@
 - T43：失败测试实测 first/last/agent，修复后 first/agent/last；协调器与 Hook 回归以及 Spotless 通过，日志 /private/tmp/mewcode-ch14-t43-green.log。
 
 - T44–T46：项目 Memory 实例绑定绝对目录并复用，两个项目并发更新用户索引不丢记录，子只读索引不建目录不修剪；大型结果按调用现场 cwd 路由。上下文及执行器回归、Spotless 通过，日志 /private/tmp/mewcode-ch14-t44-t46-green.log。
+
+- T47：角色解析及 Catalog、Spotless 通过，日志 /private/tmp/mewcode-ch14-t47-green.log。

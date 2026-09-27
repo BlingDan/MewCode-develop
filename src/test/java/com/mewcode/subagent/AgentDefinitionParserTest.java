@@ -70,4 +70,28 @@ class AgentDefinitionParserTest {
                   10));
     }
   }
+
+  @Test
+  void acceptsOnlyExplicitWorktreeIsolationAndDefaultsToNone() {
+    String base = "---\nname: isolated\ndescription: isolated\n";
+    assertEquals(
+        SubAgentSpec.IsolationMode.NONE,
+        AgentDefinitionParser.parse(base + "---\nbody", SOURCE, SubAgentSpec.Source.PROJECT, 5)
+            .isolation());
+    assertEquals(
+        SubAgentSpec.IsolationMode.WORKTREE,
+        AgentDefinitionParser.parse(
+                base + "isolation: worktree\n---\nbody", SOURCE, SubAgentSpec.Source.PROJECT, 5)
+            .isolation());
+    for (String value : new String[] {"none", "true", "[worktree]", "Worktree"}) {
+      assertThrows(
+          AgentDefinitionParser.ParseException.class,
+          () ->
+              AgentDefinitionParser.parse(
+                  base + "isolation: " + value + "\n---\nbody",
+                  SOURCE,
+                  SubAgentSpec.Source.PROJECT,
+                  5));
+    }
+  }
 }

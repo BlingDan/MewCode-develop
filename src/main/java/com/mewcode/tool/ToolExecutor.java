@@ -673,7 +673,8 @@ public final class ToolExecutor implements AutoCloseable {
         token == null ? new CancellationToken() : token,
         workspace == null
             ? baseContext.withCancellationToken(token == null ? new CancellationToken() : token)
-            : workspace.capture(token == null ? new CancellationToken() : token));
+            : workspace.capture(token == null ? new CancellationToken() : token),
+        new CallUse());
   }
 
   private ToolExecutionContext capturedContext(CancellationToken token) {
@@ -700,10 +701,9 @@ public final class ToolExecutor implements AutoCloseable {
       ToolCall call,
       HookContext context,
       java.util.function.Supplier<ToolInvocationResult> action) {
-    AutoCloseable use = null;
     try {
       if (context.executionContext().workspaceScope() != null)
-        use = context.executionContext().workspaceScope().retain();
+        context.callUse().use = context.executionContext().workspaceScope().retain();
       return action.get();
     } catch (com.mewcode.worktree.WorktreeException error) {
       return withHookContext(
@@ -715,7 +715,7 @@ public final class ToolExecutor implements AutoCloseable {
                   System.nanoTime(),
                   registry.get(call.toolName()).orElse(null)));
     } finally {
-      closeUse(use);
+      context.callUse().close();
     }
   }
 
@@ -871,6 +871,29 @@ public final class ToolExecutor implements AutoCloseable {
             call.toolUseId(), new ToolResult(raw.content(), raw.isError(), metadata));
     HookContext context = hookContext.get();
     if (context != null) publishPostHook(call, result, context);
+    Object finalization = raw.metadata().get(com.mewcode.worktree.WorktreeManager.FINALIZATION_KEY);
+    if (finalization instanceof com.mewcode.worktree.WorktreeManager.PreparedExit prepared) {
+      prepared.beginCommit();
+      if (context != null) context.callUse().close();
+      ToolResult actual;
+      try {
+        prepared.commit();
+        actual =
+            ToolResult.success(
+                prepared.deletesDirectory()
+                    ? "已退出并删除工作树：" + prepared.target()
+                    : "已保留工作树并退出：" + prepared.target());
+      } catch (RuntimeException error) {
+        actual = ToolResult.error(safeMessage(error));
+      }
+      metadata.remove(com.mewcode.worktree.WorktreeManager.FINALIZATION_KEY);
+      metadata.put("status", actual.isError() ? "error" : "success");
+      metadata.put("cwd", prepared.currentCwd().toString());
+      metadata.put("durationMs", Duration.ofNanos(System.nanoTime() - started).toMillis());
+      result =
+          new ToolInvocationResult(
+              call.toolUseId(), new ToolResult(actual.content(), actual.isError(), metadata));
+    }
     return result;
   }
 
@@ -910,5 +933,16 @@ public final class ToolExecutor implements AutoCloseable {
       String requestId,
       AgentMode mode,
       CancellationToken token,
-      ToolExecutionContext executionContext) {}
+      ToolExecutionContext executionContext,
+      CallUse callUse) {}
+
+  private static final class CallUse {
+    AutoCloseable use;
+    final java.util.concurrent.atomic.AtomicBoolean closed =
+        new java.util.concurrent.atomic.AtomicBoolean();
+
+    void close() {
+      if (closed.compareAndSet(false, true)) closeUse(use);
+    }
+  }
 }

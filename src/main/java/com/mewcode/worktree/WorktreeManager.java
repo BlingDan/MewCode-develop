@@ -231,6 +231,15 @@ public final class WorktreeManager {
   }
 
   ReentrantLock begin(String slug) {
+    synchronized (active) {
+      Active slot = active.get(slug);
+      if (slot != null && slot.prepared != null)
+        throw failure("占用", "当前目录生命周期动作尚未提交", slot.resource.path, slot.resource.branch);
+    }
+    return beginReserved(slug);
+  }
+
+  private ReentrantLock beginReserved(String slug) {
     SlugValidator.validate(slug);
     ReentrantLock lock = operations.computeIfAbsent(slug, ignored -> new ReentrantLock());
     if (!lock.tryLock()) throw failure("占用", "资源正有其他操作", null, SlugValidator.branch(slug));
@@ -283,6 +292,7 @@ public final class WorktreeManager {
     int uses;
     boolean ownerPresent = true;
     boolean deleting;
+    PreparedExit prepared;
 
     Active(
         WorktreeSessionStore.Resource resource,
@@ -371,6 +381,8 @@ public final class WorktreeManager {
       boolean close;
       synchronized (active) {
         slot.uses--;
+        if (slot.uses == 0 && slot.prepared != null && !slot.prepared.committing)
+          slot.prepared = null;
         close = !slot.ownerPresent && slot.uses == 0;
         if (close) {
           slot.deleting = true;
@@ -508,9 +520,12 @@ public final class WorktreeManager {
           removeHeld(slot.resource, false, token);
         } finally {
           if (!Files.exists(session.worktreePath(), LinkOption.NOFOLLOW_LINKS)) {
-            store.clear(root, workspace.sessionId());
-            workspace.restore(session.originalCwd());
-            releaseOwner(slot);
+            try {
+              store.clear(root, workspace.sessionId());
+            } finally {
+              workspace.restore(session.originalCwd());
+              releaseOwner(slot);
+            }
           } else
             synchronized (active) {
               slot.deleting = false;
@@ -535,6 +550,156 @@ public final class WorktreeManager {
         throw failure("删除", "仍有工具或 Hook 尚未实际结束", slot.resource.path, slot.resource.branch);
       slot.deleting = true;
     }
+  }
+
+  /** 结果中的内部对象只由受信工具构造，模型的 JSON 参数不能构造或授权此对象。 */
+  public static final String FINALIZATION_KEY = "worktree_finalization";
+
+  public final class PreparedExit {
+    private final AgentWorkspace workspace;
+    private final WorktreeSession session;
+    private final Active slot;
+    private final boolean delete;
+    private final CancellationToken token;
+    private final java.util.concurrent.atomic.AtomicBoolean finished =
+        new java.util.concurrent.atomic.AtomicBoolean();
+    private volatile boolean committing;
+
+    private PreparedExit(
+        AgentWorkspace workspace,
+        WorktreeSession session,
+        Active slot,
+        boolean delete,
+        CancellationToken token) {
+      this.workspace = workspace;
+      this.session = session;
+      this.slot = slot;
+      this.delete = delete;
+      this.token = token;
+    }
+
+    public boolean deletesDirectory() {
+      return delete;
+    }
+
+    public Path currentCwd() {
+      return workspace.currentCwd();
+    }
+
+    public Path target() {
+      return session.worktreePath();
+    }
+
+    public void beginCommit() {
+      committing = true;
+    }
+
+    public void commit() {
+      if (!finished.compareAndSet(false, true))
+        throw failure("提交", "生命周期动作已结束", session.worktreePath(), session.worktreeBranch());
+      ReentrantLock operation = null;
+      boolean transitionHeld = false;
+      try {
+        workspace.beginTransition();
+        transitionHeld = true;
+        operation = beginReserved(session.worktreeName());
+        if (token.isCancelled())
+          throw failure("提交", "操作已取消，保留目录", session.worktreePath(), session.worktreeBranch());
+        if (!workspace.currentSession().filter(session::equals).isPresent())
+          throw failure("提交", "当前会话已变化", session.worktreePath(), session.worktreeBranch());
+        synchronized (active) {
+          if (slot.prepared != this || !slot.ownerPresent || slot.deleting)
+            throw failure("提交", "生命周期准备状态无效", session.worktreePath(), session.worktreeBranch());
+          if (delete && slot.uses != 0)
+            throw failure(
+                "删除",
+                "Post Hook 或其他调用尚未实际结束，须保留",
+                session.worktreePath(),
+                session.worktreeBranch());
+          if (delete) slot.deleting = true;
+        }
+        workspace.prepare(session.originalCwd());
+        if (delete) {
+          try {
+            removeHeld(slot.resource, false, token);
+          } finally {
+            if (!Files.exists(session.worktreePath(), LinkOption.NOFOLLOW_LINKS)) {
+              try {
+                store.clear(root, workspace.sessionId());
+              } finally {
+                workspace.restore(session.originalCwd());
+                releaseOwner(slot);
+              }
+            }
+          }
+        } else {
+          store.clear(root, workspace.sessionId());
+          workspace.restore(session.originalCwd());
+          releaseOwner(slot);
+        }
+      } catch (IOException error) {
+        throw failure("提交", "现场记录操作失败；以实际目录状态为准", session.worktreePath(), session.worktreeBranch());
+      } finally {
+        synchronized (active) {
+          if (slot.prepared == this) slot.prepared = null;
+          slot.deleting = false;
+        }
+        if (operation != null) operation.unlock();
+        if (transitionHeld) workspace.endTransition();
+      }
+    }
+  }
+
+  public PreparedExit prepareExit(
+      AgentWorkspace workspace, boolean delete, CancellationToken token) {
+    workspace.beginTransition();
+    ReentrantLock operation = null;
+    try {
+      var session =
+          workspace
+              .currentSession()
+              .orElseThrow(() -> failure("准备退出", "当前未进入工作树", workspace.currentCwd(), null));
+      operation = begin(session.worktreeName());
+      Active slot;
+      synchronized (active) {
+        slot = active.get(session.worktreeName());
+        if (slot == null
+            || !slot.owner.equals(workspace.agentId())
+            || !slot.ownerPresent
+            || slot.deleting)
+          throw failure("准备退出", "当前使用者无法验证", session.worktreePath(), session.worktreeBranch());
+        if (delete && slot.uses > 2)
+          throw failure(
+              "删除", "仍有其他调用或 Hook 使用目录", session.worktreePath(), session.worktreeBranch());
+      }
+      store.verifyReady(root, slot.resource);
+      workspace.prepare(session.originalCwd());
+      if (delete) assertProtectedResults(slot.resource, token);
+      PreparedExit prepared = new PreparedExit(workspace, session, slot, delete, token);
+      synchronized (active) {
+        if (delete && slot.uses > 2)
+          throw failure(
+              "删除", "仍有其他调用或 Hook 使用目录", session.worktreePath(), session.worktreeBranch());
+        slot.prepared = prepared;
+      }
+      return prepared;
+    } catch (IOException error) {
+      throw failure("准备退出", "资源身份无法验证", workspace.currentCwd(), null);
+    } finally {
+      if (operation != null) operation.unlock();
+      workspace.endTransition();
+    }
+  }
+
+  private void assertProtectedResults(
+      WorktreeSessionStore.Resource resource, CancellationToken token) {
+    if (resource.lastError.equals("命令进程停止状态未知"))
+      throw failure("删除", "无法确认此前命令停止，须保留目录", resource.path, resource.branch);
+    var changes = new WorktreeChanges(git);
+    var summary = changes.countChanges(resource.path, resource.baseCommit, token);
+    int unpushed = changes.countUnpushedCommits(resource.path, token);
+    if (summary.changedFiles() > 0 || summary.commits() > 0 || unpushed > 0)
+      throw failure("删除", "有文件修改或新增提交，须保留", resource.path, resource.branch);
   }
 
   public boolean remove(String slug, CancellationToken token) {

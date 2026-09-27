@@ -46,16 +46,16 @@
 | T30 | 默认受保护删除 | 完成 | 生命周期真实 Git 定向测试通过 |
 | T31 | 绑定可信的用户丢弃授权 | 完成 | 生命周期真实 Git 定向测试通过 |
 | T32 | 记录部分删除并安全处理初始化失败 | 完成 | 生命周期真实 Git 定向测试通过 |
-| T33 | 在应用层落实不可扩大的路径范围 | 完成 | 隔离与 Hook 定向测试通过 |
-| T34 | 排除父目录搜索中的其他副本 | 完成 | 隔离与 Hook 定向测试通过 |
-| T35 | 推导命令沙箱的读写范围 | 完成 | 隔离与 Hook 定向测试通过 |
-| T36 | 在 macOS 沙箱中执行隔离范围 | 完成 | 隔离与 Hook 定向测试通过 |
-| T37 | 在 Linux 沙箱中表达隔离范围 | 完成 | 隔离与 Hook 定向测试通过 |
-| T38 | 命令携带固定 cwd 与 Hooks 环境 | 完成 | 隔离与 Hook 定向测试通过 |
-| T39 | 隔离 Skill 脚本的执行目录 | 完成 | 隔离与 Hook 定向测试通过 |
-| T40 | Hook 入队前固定目录与使用权 | 完成 | 隔离与 Hook 定向测试通过 |
-| T41 | Hook 取消后仅在实际结束时释放 | 完成 | 隔离与 Hook 定向测试通过 |
-| T42 | 实现当前目录删除的两阶段流程 | 待执行 | 尚未执行 |
+| T33 | 在应用层落实不可扩大的路径范围 | 完成 | 组合回归重跑与 Spotless 通过，见下文 |
+| T34 | 排除父目录搜索中的其他副本 | 完成 | 组合回归重跑与 Spotless 通过，见下文 |
+| T35 | 推导命令沙箱的读写范围 | 完成 | 组合回归重跑与 Spotless 通过，见下文 |
+| T36 | 在 macOS 沙箱中执行隔离范围 | 完成 | 组合回归重跑与 Spotless 通过，见下文 |
+| T37 | 在 Linux 沙箱中表达隔离范围 | 完成 | 组合回归重跑与 Spotless 通过，见下文 |
+| T38 | 命令携带固定 cwd 与 Hooks 环境 | 完成 | 组合回归重跑与 Spotless 通过，见下文 |
+| T39 | 隔离 Skill 脚本的执行目录 | 完成 | 组合回归重跑与 Spotless 通过，见下文 |
+| T40 | Hook 入队前固定目录与使用权 | 完成 | 组合回归重跑与 Spotless 通过，见下文 |
+| T41 | Hook 取消后仅在实际结束时释放 | 完成 | 组合回归重跑与 Spotless 通过，见下文 |
+| T42 | 实现当前目录删除的两阶段流程 | 完成 | 同步及异步 Post Hook 两阶段测试通过 |
 | T43 | 保持工具批次的原始调用顺序 | 待执行 | 尚未执行 |
 | T44 | 固定项目 Memory 的目标目录 | 待执行 | 尚未执行 |
 | T45 | 保护用户 Memory 并保持子任务只读 | 待执行 | 尚未执行 |
@@ -101,4 +101,7 @@
 - T35–T39：本机真实 Seatbelt 验证自己的 Git 提交成功，父文件/共享依赖/共享 config/其他分支写入及父源码读取拒绝；环境模式 Hooks 在子目录触发，Skill 资产可读且相对输出写到子目录。根因修复：Git 需要父目录元数据查询，内容读取仍禁止。
 - T37：Linux 挂载参数的遮蔽及只读覆盖顺序测试通过；本机 macOS 未运行真实 bubblewrap，不将参数检查记为 Linux 实测。
 - T40–T41：阻塞异步 Hook 后 KEEP 退出，cancel(true) 仍保留实际运行体的资源使用权；真实结束后释放，落点保持旧 cwd，随后无成果资源可删除。
-- 定向整体验证日志 /private/tmp/mewcode-ch14-isolation-hooks-green.log；入口、子任务收尾及两阶段当前目录删除尚在后续任务，端到端未验收。
+- 独立定向测试曾通过；组合回归 /private/tmp/mewcode-ch14-isolation-hooks-green.log 实际 77 tests / 1 failure，待修复重跑；入口、子任务收尾及两阶段当前目录删除尚在后续任务，端到端未验收。
+
+- T33–T41 复验：原失败仅发生在夹具的 git init，尚未进入产品逻辑；单例与同一组合分别重跑通过，日志 /private/tmp/mewcode-ch14-init-timeout-recheck.log、/private/tmp/mewcode-ch14-isolation-hooks-recheck.log。未放宽产品超时。
+- T42：Post Hook 在旧 cwd 只收到 prepared 结果且执行一次，真正结束后才删除；异步 Post Hook 未结束时拒绝提交删除并保留会话。日志 /private/tmp/mewcode-ch14-t42-recheck.log，BUILD SUCCESSFUL，Spotless 通过。

@@ -1,0 +1,2567 @@
+{
+  "environment": "macOS / Java 21.0.12.1 / Git 2.50.1 / tmux 3.7c",
+  "build_log": "/private/tmp/mewcode-ch14-final-build.log",
+  "summary": {
+    "tests": 413,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "suites": [
+    {
+      "class": "com.mewcode.agent.PromptRequestFactoryTest",
+      "cases": [
+        {
+          "name": "appendsHookRemindersAfterExistingReminderWithoutChangingHistory()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "modeSwitchCanForceTheNextReminderToBeCompleteWithoutChangingHistory()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "injectsCatalogSummaryWithoutBodiesAndPinsActiveSopLast()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "reusesStableSystemSegmentsAndSchedulesReminderEveryFourRounds()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "createsContextRequestWithoutPersistingConversationHistory()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.agent.AgentTurnCoordinatorTest",
+      "cases": [
+        {
+          "name": "parseFailureStillEmitsToolUseWithEmptyArguments()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "keepsLoopingWhenTheNextResponseRequestsAnotherTool()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "sendsAssistantToolUsesAndAllToolResultsInSinglePairedMessages()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.config.ConfigLoaderTest",
+      "cases": [
+        {
+          "name": "rejectsEmptyProviders()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "loadsConfiguredAgentLoopLimitsWithHyphenatedKeys()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rejectsInvalidWorktreeConfigurationWithoutPrintingValues()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "loadsAgentLoopDefaultsWhenAgentSectionIsMissing()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rejectsUnknownProtocolDuplicateNameAndBadUrl()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "acceptsDeepSeekAsAnOpenAiCompatibleProtocol()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rejectsNonPositiveAgentLoopLimits()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "loadsProvidersAndDefaultsThinkingToFalse()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "treatsNonPositiveProviderContextWindowAsTheDefault()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rejectsInvalidYamlWithoutEchoingSecret()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rejectsMissingFileWithoutStackDetails()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "bindsMcpServersFromTheMainConfig()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "loadsAndValidatesSubagentBackgroundThreshold()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "loadsProviderContextWindowAndUsesTheDefaultWhenOmitted()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "acceptsOptionalWorktreeConfiguration()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rejectsMissingRequiredFieldsWithoutLeakingKey()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.worktree.WorktreeManagerTest",
+      "cases": [
+        {
+          "name": "branchDeleteFailurePersistsActualPartialResidue()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "necessaryInitializationFailureRollsBackOnlyItsNewCleanResource()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "[1] untracked",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "[2] pushed",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "[3] unknown-remote",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "frozenBaseSurvivesLaterParentCommitsAndCurrentChildCanBeTheSource()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "dirtyExitDeletePreservesSessionAndTrustedDiscardRequiresCurrentIdentity()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "invalidRecoveryDoesNotRewriteResourceMetadata()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "worktreeConfigExtensionOnlyChangesChildConfig()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "trackedOrUnignoredManagementRegionsAreRejected()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "restartRestoresOnlyTheSavedSessionAndHonorsAnotherProcessLock()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "branchConflictDoesNotMoveExistingBranch()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "invalidCreationNamesHaveNoGitOrFilesystemSideEffectsAndBoundariesCreate()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "simultaneousSameNameRequestsHaveOnlyOneCreator()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "foreignOrPartiallyInitializedDirectoriesAreRejected()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "createsIndependentCommittedCopiesAndRecoversWithoutGitOrWrites()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.tool.ToolRegistryTest",
+      "cases": [
+        {
+          "name": "replacesSkillToolsAsOneGroupWithoutOverwritingOrdinaryTools()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "apiDescriptionsRepeatTheCriticalToolRulesWithoutChangingSchemas()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "replacingByNameKeepsRegistrationSlot()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "toolResultMetadataIsAnImmutableLocalSnapshot()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "registersSixToolsAndBuildsBothProviderFormats()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "exposesPermissionMetadataAndConcurrencyPolicy()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.agent.AgentProtocolIntegrationTest",
+      "cases": [
+        {
+          "name": "openAiAndDeepSeekOpenAiCompatibleEndpointsCompleteTheSameLoop()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "anthropicAndDeepSeekAnthropicCompatibleEndpointsCompleteTheSameLoop()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.conversation.ConversationManagerTest",
+      "cases": [
+        {
+          "name": "preservesOrderAndMultilineContent()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "replacesHistoryWithAnIndependentSnapshot()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "commitsAssistantToolTurnAndResultsAsOneHistoryOperation()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "notifiesPersistenceListenerWithAtomicMutationKinds()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "returnsImmutableIndependentSnapshots()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "appendsForkSummaryAsOneAtomicExchange()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.subagent.AgentDefinitionParserTest",
+      "cases": [
+        {
+          "name": "bindsAllFieldsAndKeepsMissingWhitelistDistinctFromEmptyWhitelist()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "acceptsOnlyExplicitWorktreeIsolationAndDefaultsToNone()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "usesDefaultTurnsAndRejectsInvalidMetadata()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.worktree.WorktreeHookLifecycleTest",
+      "cases": [
+        {
+          "name": "cancellationDoesNotReleaseAStillRunningHookAndItsCwdStaysFixed()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.worktree.GitCommandRunnerTest",
+      "cases": [
+        {
+          "name": "fixtureCreatesCommittedFileAndKnownLocalRemote()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "runnerUsesExplicitDirectoryAndTreatsArgumentsLiterally()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "timeoutStopsTheStartedProcess()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "failureDoesNotExposeRawStderrOrLauncherDetails()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "cancellationStopsAnAlreadyStartedProcessWithinTheBound()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.instructions.InstructionLoaderTest",
+      "cases": [
+        {
+          "name": "loadsInstructionLayersInPriorityOrder()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "missingIncludeLeavesHtmlMarkerAndContinues()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rejectsCycleDepthAndBoundaryWhileKeepingOtherLayers()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.config.PermissionConfigLoaderTest",
+      "cases": [
+        {
+          "name": "loadsStructuredMatcherRules()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rejectsMixedAndInvalidStructuredRules()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rejectsInvalidRuleFileInsteadOfIgnoringIt()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "loadsLocalRulesBeforeProjectRulesAndParsesMode()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.subagent.AgentCatalogTest",
+      "cases": [
+        {
+          "name": "appliesPluginBuiltinUserProjectPriorityAndFallsBackFromInvalidVersion()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "returnsStableSummaryAndUnknownToolDiagnostics()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.tui.ToolDisplayFormatterTest",
+      "cases": [
+        {
+          "name": "summarizesSuccessErrorEmptyAndLongResultsWithoutMetadata()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "removesControlSequencesAndTruncatesByDisplayWidth()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "fallsBackWhenArgumentFormattingThrows()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "formatsBuiltInToolNamesAndKeyArguments()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "formatsUnknownArgumentsInStableKeyOrder()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "truncatesLongResultAndRemovesAnsi()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.agent.TokenUsageAccumulatorTest",
+      "cases": [
+        {
+          "name": "replacesDuplicateRoundUsageAndSumsDifferentRounds()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "missingRoundDimensionRemainsUnknown()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.skill.ScriptToolTest",
+      "cases": [
+        {
+          "name": "turnsInvalidOutputAndCancellationIntoSafeErrors()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "validatesInputAndExecutesJsonProtocol()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.compact.ConversationCompactorTest",
+      "cases": [
+        {
+          "name": "keepsToolCallWithTailResultAtCompactionBoundary()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "summarizesOldAssistantAndToolContentWhilePreservingUsersAndTail()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "passesManualFocusOnlyToTheSummaryInstruction()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "keepsOriginalHistoryWhenSummaryStructureIsInvalid()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "reportsNoCompactionWhenHistoryHasNoOldAssistantOrToolContent()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.agent.AgentLoopTest",
+      "cases": [
+        {
+          "name": "forwardsTheCurrentModePromptToEachProviderRequest()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "planModeFiltersRequestsAndRejectsAWriteRequestedByTheModel()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "stopsAfterThreeRoundsWithoutAnExecutableKnownTool()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "cancellingDuringToolExecutionPairsTheToolResultAndStopsNextRequest()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "stopsAtConfiguredMaximumWithoutMakingAnotherModelRequest()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "continuesReActRoundsUntilModelStopsRequestingTools()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.agent.AgentTurnCoordinatorHookTest",
+      "cases": [
+        {
+          "name": "sendsLifecycleEventsAndConsumesHookReminderOnTheNextRequest()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "agentDispatchStaysBetweenItsAdjacentParentWrites()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.prompt.SystemPromptBundleTest",
+      "cases": [
+        {
+          "name": "sortsModulesSkipsBlankContentAndKeepsEnvironmentSeparate()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rendersAttributeOrderDeterministically()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.worktree.WorktreePathIsolationTest",
+      "cases": [
+        {
+          "name": "externalAuthorizationCannotGrantParentSharedOrMetadataWrites()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "parentSearchExcludesManagedCopiesWhileEnteredSearchSeesOwnCode()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.permission.PermissionRuleEngineTest",
+      "cases": [
+        {
+          "name": "preservesOldLeadingOperatorCharactersAsGlobLiterals()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "matchesStructuredMatchersWithoutChangingRuleOrder()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "normalizesFilePathsAndIncludesGrepSearchScope()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rejectsMalformedRulesAndUnknownDecisions()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "preservesTheMoreLocalOrderProvidedByTheLoader()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "matchesExactAndGlobTargets()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "derivedRuleEngineSharesSessionGrantsButCopiesRules()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.skill.SkillRunTest",
+      "cases": [
+        {
+          "name": "rendersArgumentsAndCombinesActiveSkillsForOneRequest()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.tool.impl.AgentToolTest",
+      "cases": [
+        {
+          "name": "keepsAStableSchemaAndRejectsDirectExecution()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.tool.impl.WorktreeToolTest",
+      "cases": [
+        {
+          "name": "createsSeparatelyThenEntersAndKeepsThenDeletes()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "trustedDiscardCannotBeReusedAfterTheSameNameIsRecreated()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rejectsModelDiscardIntentAndInvalidParameters()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.permission.BashSandboxTest",
+      "cases": [
+        {
+          "name": "buildsAParameterizedProcessAndKeepsTheCommandAsOneArgument()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "linuxMasksMissingProtectedRegionsRatherThanLeavingThemWritable()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "unavailableSandboxFailsClosed()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "linuxMountsReadOnlyOverlaysAfterWritableDirectories()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "factorySelectsTheCurrentPlatformAdapter()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.definition.MarkdownFrontmatterTest",
+      "cases": [
+        {
+          "name": "normalizesCrLfAndReturnsImmutableMetadata()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rejectsUnsafeOrIncompleteDocuments()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.worktree.SlugValidatorTest",
+      "cases": [
+        {
+          "name": "acceptsSafeNestedNamesAndLengthBoundaries()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rejectsTraversalAndInvalidGitNames()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rejectsLinkedManagementParentsAndTargets()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.tool.impl.WriteFileToolTest",
+      "cases": [
+        {
+          "name": "existingFileRequiresReadAndUnchangedModificationTime()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "createsParentDirectoriesAndUsesStandardPosixPermissions()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "acceptsAnEmptyFileContent()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.worktree.AgentWorkspaceTest",
+      "cases": [
+        {
+          "name": "projectMemoryInstancesRemainBoundToTheirAbsoluteDirectories()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "promptAndFileCacheAreIsolatedByAbsoluteDirectoryAndAgent()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "keepExitPreservesOldSnapshotAndUsageUntilActualCompletion()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.tool.impl.TaskToolsTest",
+      "cases": [
+        {
+          "name": "createsListsGetsAndUpdatesManualTasks()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.tool.ToolPromptRulesTest",
+      "cases": [
+        {
+          "name": "strengthensOnlyTheDescriptionAndKeepsExistingText()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.prompt.PromptBuilderTest",
+      "cases": [
+        {
+          "name": "describesTheActualRootAndHowToResolveRelativeUserPaths()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "exposesSevenFixedModulesInPriorityOrderAndThreeEmptySlots()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "planModeExplainsReadOnlyPlanningAndLoopPromptHasNoOneRoundLimit()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.mcp.McpHttpTransportIntegrationTest",
+      "cases": [
+        {
+          "name": "usesStreamableHttpSessionHeadersAndCallsTheTool()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.llm.PromptRequestTest",
+      "cases": [
+        {
+          "name": "takesImmutableSnapshotsAndKeepsReminderSeparateFromHistory()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.worktree.AgentWorktreeTest",
+      "cases": [
+        {
+          "name": "freezesBaselineAndProtectsChildChangesWithoutChangingParent()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "removesOnlyAnIdleChildWithKnownRemoteAndNoResults()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.skill.SkillExecutorTest",
+      "cases": [
+        {
+          "name": "selectsNoneRecentAndFullWithoutSplittingToolTurns()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "runsTemporaryAgentAndReturnsOnlyItsFinalAssistantText()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.tool.impl.ReadFileToolTest",
+      "cases": [
+        {
+          "name": "readsRequestedLineRangeWithLineNumberPrefix()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rejectsRelativeMissingAndBinaryPathsWithActionableErrors()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "readsTheRepositorySkillFileWhenGivenItsAbsolutePath()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.permission.PermissionBrokerTest",
+      "cases": [
+        {
+          "name": "cancellationEndsTheWaitAsARejection()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "publishesAndResolvesARequestById()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.command.CommandRegistryTest",
+      "cases": [
+        {
+          "name": "dynamicallyAddsReviewSkillAndPlanStillTogglesThroughUiOnly()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "createsStaticCommandsIncludingWorktreeAndLeavesReviewForSkills()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "compactClearAndStatusUseOnlyTheirDeclaredCapabilities()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "permissionAddTakesTheEffectFromTheEndAndKeepsSpacesInRule()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "parsesCaseInsensitiveNameAtFirstAsciiSpaceAndKeepsArguments()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "searchesVisibleCanonicalCommandsByNameOrAliasWithoutDuplicates()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rejectsEveryNormalizedNameAndAliasCollisionBeforeDispatch()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "hooksIsReadOnlyAndRejectsArguments()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "worktreeCommandRequiresExplicitDeleteBeforeDiscard()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "helpListsAliasesAndUsageAndAliasDetailMatchesCanonicalDetail()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.tool.impl.EditFileToolTest",
+      "cases": [
+        {
+          "name": "replacesOnlyAnExactlyOnceMatchingString()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "leavesFileUntouchedWhenMatchIsMissingOrAmbiguous()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rejectsAnUnreadOrStaleFileBeforeLookingForReplacement()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.agent.AgentTurnCoordinatorPromptTest",
+      "cases": [
+        {
+          "name": "sendsStructuredRequestsWithoutPersistingReminderMessages()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "providerFailureDoesNotNotifyTheMemoryCompletionListener()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "preparesContextBeforeSendingAndRebuildsRequestAfterCompaction()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "routesRememberRequestsToMemoryInsteadOfProjectInstructionFiles()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "commonMemoryPhrasesDoNotExposeFileTools()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "memoryOnlyRequestsRejectAProviderToolCallBeforeItCanWriteFiles()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "investigatingARecordInTheCodebaseStillKeepsToolsAvailable()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "recordingToARegularFileIsNotMistakenForAMemoryRequest()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "injectsDynamicPromptAdditionsAndNotifiesAfterCompletedTurn()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "explicitFileMutationKeepsToolsAvailableEvenWhenTheRequestSaysRemember()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "memoryOnlyRequestsDoNotExposeFileTools()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "doesNotRetryWhenTheCompactedRequestIsStillTooLong()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "manualCompactionRunsWithoutAddingAUserMessageOrAgentRound()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "forceCompactsAndRetriesPromptTooLongOnlyOnce()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.permission.PermissionRuntimeTest",
+      "cases": [
+        {
+          "name": "modeChangesRejectPlanAndResetRestoresStartupState()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "snapshotsShareSessionGrantsWithTheConfiguredEngine()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "temporaryRulesLeadConfiguredRulesAndSnapshotsStayIsolated()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.skill.SkillCatalogTest",
+      "cases": [
+        {
+          "name": "hotRefreshDropsScriptToolConflictsAndFallsBack()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "appliesThreeLevelOverrideAndFallsBackAfterHotRefresh()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "reportsUnknownToolsAndKeepsOnlySummaryInCatalogPrompt()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.llm.ToolCallAccumulatorTest",
+      "cases": [
+        {
+          "name": "accumulatesInterleavedJsonFragmentsIndependentlyById()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "reportsMalformedJsonWithoutThrowingAndFinishesOtherCalls()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.compact.AutoCompactFuseTest",
+      "cases": [
+        {
+          "name": "tripsAfterThreeAutomaticFailures()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "ignoresEmergencyFailuresAndManualSuccessResetsTheFuse()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.config.HookConfigLoaderTest",
+      "cases": [
+        {
+          "name": "skipsInvalidFilesAndRulesWithoutBlockingOtherSources()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "loadsValidRulesWithDefaultsAndStructuredConditions()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "duplicateKeysAndInvalidConditionShapesAreRejected()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "mergesProjectBeforeUserAndOnlyLegalNamesReserveConflicts()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.worktree.WorkspaceToolExecutionTest",
+      "cases": [
+        {
+          "name": "readEnterReadBatchUsesTheDirectoryAtEachBarrier()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "validationAndExecutionKeepTheCapturedDirectoryAfterKeepExit()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.tool.impl.LoadSkillToolTest",
+      "cases": [
+        {
+          "name": "isSystemToolWithNameAndOptionalArgumentsSchema()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.permission.RuleMatcherTest",
+      "cases": [
+        {
+          "name": "globPreservesWildcardAndDotAllSemantics()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rejectsMalformedStructuredDefinitions()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "regexUsesSearchUntilTheExpressionAddsAnchors()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "exactMatchesTheWholeCaseSensitiveValue()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "notWrapsAnotherMatcherAndCanBeNested()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.agent.AgentRunTest",
+      "cases": [
+        {
+          "name": "publishesEventsInOrderAndClosesAfterCompletion()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "hookAddedAfterCancellationRunsImmediately()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "cancellationIsIdempotentAndRunsHooksOnlyOnce()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.llm.CancellableLlmStreamTest",
+      "cases": [
+        {
+          "name": "closeIsIdempotentAndInvokesProviderCloseOnce()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.compact.ContextManagerTest",
+      "cases": [
+        {
+          "name": "opensTheAutomaticFuseAfterThreeFailuresAndSkipsTheFourthSummaryCall()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "forceCompactRunsBelowAutomaticThresholdAndCommitsExternalizedToolResult()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "doesNotCallSummaryWhenCurrentRequestIsUnderAutomaticBudget()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "externalizedLargeResultDoesNotTriggerCumulativeCompactionByItself()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "automaticallyCompactsWhenEstimatedRequestReachesBudget()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "manualCompactionUsesTheNarrowerThreeThousandTokenSafetyMargin()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "resetForSessionBindsExternalizedResultsToSessionDirectory()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "estimatesManualRequestWithoutCallingProvider()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "manySmallToolResultsTriggerCumulativeCompactionWithoutExternalizing()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.permission.PermissionGateTest",
+      "cases": [
+        {
+          "name": "dangerousCommandIsDeniedBeforeModeAndRules()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "pathBoundaryAskSurvivesBypassMode()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "explicitDenyWinsOverBypassAndLocalRuleWinsByOrder()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "appliesDefaultModeAndBypassOnlyToOrdinaryOperations()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.worktree.PostCreationSetupTest",
+      "cases": [
+        {
+          "name": "configuredHookRunsInTheChildWithoutChangingTheParent()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "environmentOverridePreservesEntriesAndRejectsMalformedCounts()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "copiesIgnoredRuntimeFilesAndUsesGitIncludeNegation()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "hooksDoNotChangeSharedConfigWhenWorktreeExtensionIsDisabled()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "initializationCannotOverwriteCommittedCodeOrFollowRuntimeLinks()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.tool.PermissionToolExecutorTest",
+      "cases": [
+        {
+          "name": "hardDeniesDangerousBashWithoutPublishingAConfirmation()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "asksBeforeWritingAndExecutesAfterOneTimeApproval()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "asksForAnOutsideReadEvenInBypassModeAndUsesTheApprovedPath()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "preToolHookRejectsBeforePermissionAndToolExecution()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rejectsSkillWhitelistViolationsBeforePermissionEvaluation()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.llm.OpenAiClientTest",
+      "cases": [
+        {
+          "name": "streamsChatCompletionsThroughCustomBaseUrl()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "classifiesPromptTooLongAsContextLengthError()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "serializesStructuredSystemSegmentsToolsHistoryAndReminderSeparately()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "deepSeekUsesTheSameRootAwareOpenAiRequest()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rateLimitIsNotRetried()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "preservesDeepSeekReasoningContentForTheNextRequest()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "streamsToolUseAndSendsProviderToolDefinitions()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "authenticationErrorIsSafeAndNotRetried()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.tool.impl.GlobAndGrepToolTest",
+      "cases": [
+        {
+          "name": "globRecursesReturnsRelativePathsAndSkipsNoiseDirectories()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "grepReturnsRelativePathLineAndSkipsBinaryFiles()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "capsGlobAndGrepResultsAtTwoHundred()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.compact.ToolResultExternalizerTest",
+      "cases": [
+        {
+          "name": "closeRemovesOnlyTheCurrentSessionDirectory()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "keepsExactlyFiftyThousandCharactersInHistory()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "doesNotPutOriginalContentBackWhenWritingTheExternalFileFails()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "routesLargeResultsToTheirCapturedDirectories()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "externalizesLargestUnprocessedResultUntilAggregateFits()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "externalizesLargeResultWithPreviewAndReadableFullFile()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "existingReadFileToolCanReadBackTheExternalizedPath()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.permission.PathSandboxTest",
+      "cases": [
+        {
+          "name": "resolvesExistingSymlinkBeforeCheckingTheProjectBoundary()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "distinguishesAdjacentProjectNamesAndMissingChildren()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.skill.SkillParserTest",
+      "cases": [
+        {
+          "name": "rejectsInvalidMetadataWithoutEchoingBody()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "parsesSingleFileDefaultsAndDirectoryTool()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rejectsInvalidToolSchemaDuringParsing()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.skill.ProviderRouterTest",
+      "cases": [
+        {
+          "name": "selectsConfiguredProviderCachesClientAndFallsBackWhenMissing()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.tool.ToolExecutorTest",
+      "cases": [
+        {
+          "name": "isolatedCallsDenyMcpEvenWhenCallerUsesAnOrdinaryPolicy()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "cancellationReturnsWithoutWaitingForToolTimeout()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rejectsToolDisabledByPlanPolicyBeforeExecution()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "duplicateIdsAndUnknownToolsRemainPairedWithTheirCalls()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "validatesBeforeExecutionAndReturnsStructuredError()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "serialToolsNeverOverlap()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "runsSafeCallsConcurrentlyAndPreservesInputOrder()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "batchRunsPreAndPostHooksOnceInInputOrder()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "validatesRelativePathsAgainstTheSharedRootBeforeAnyToolRuns()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.subagent.SubAgentTaskManagerTest",
+      "cases": [
+        {
+          "name": "foregroundTaskBecomesVisibleWhenPublishedAndCanBeCancelled()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "cancelsAnUnpublishedForegroundTaskThroughTheParentHook()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "tracksCompletionAndPublishesOneSafeNotification()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "completionWaitsForCleanupWithoutBlockingOtherTasks()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "keepsOnlyTheFinalTextAfterACompletedToolRound()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.memory.MemoryStoreTest",
+      "cases": [
+        {
+          "name": "stagesNoteWithFrontmatterAndBuildsIndex()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rejectsMissingContentAndCrossLevelNotesBeforeCommit()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "validatesAllCommitTargetsBeforeWritingAnyFile()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.config.McpConfigLoaderTest",
+      "cases": [
+        {
+          "name": "invalidServerDoesNotBlockAnotherAndDoesNotLeakValues()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "invalidValueTypeOnlyInvalidatesCurrentServer()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "mergesUserAndProjectServersWithProjectEntryReplacement()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "keepsEnvironmentAndHeaderValuesFromConfigLiteral()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.tui.MewCodeModelTest",
+      "cases": [
+        {
+          "name": "planTogglesLocallyAndRetiredDoDoesNotReachProvider()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "keepsStreamingViewWithinViewportForLongResponses()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "multipleProvidersCanSelectSecondEntry()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "compactCommandDoesNotBecomeANormalUserRequest()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "loadsProjectInstructionsBeforeCreatingProvider()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "providerSelectionDoesNotWaitForMcpInitialization()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "editsMultilineInputAtTheCursor()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "lifecycleHooksRunOnceInOrderAndCloseIsIdempotent()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "tabCompletesUniqueCommandAndOffersDeduplicatedMultipleChoices()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "singleProviderGoesDirectlyToChat()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "escapeCancelsTheActiveLoopAndReturnsToIdle()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rendersToolCallResultAndFinalTextInOrderWithoutChangingHistory()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "promptTooLongRecoveryDropsPartialResponseBeforeRetry()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "altEnterSubmitsMultilineAndLocksSecondSubmit()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "memoryClearRendersOnlyTheConfirmation()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "unknownSlashInputStaysLocalAndPartialErrorIsNotAssistantHistory()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "compactCommandShowsCompletionAndDoesNotCreateANormalRound()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "sessionListCommandListsStoredSessionsWithoutCallingProvider()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "usesTheExplicitRootForPromptAndBanner()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "ctrlCQuitsWhenIdleButCancelsTheActiveLoop()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "memoryRequestUpdatesProjectStoreWithoutChangingInstructionOrSession()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "helpIsLocalAndReviewRunsTheBuiltinForkSkill()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rendersMultipleToolRowsInAssistantOrderAndKeepsStreamingText()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "worktreeCommandsUseTheSharedPipelineWithoutProviderCalls()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "userPromptHookCanRejectBeforeHistoryAndProvider()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "resumeCommandLoadsHistoryIntoTheNextProviderRequest()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rendersToolErrorSummaryAndRecoversInput()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "errorRecoversAndAllowsAnotherRequest()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "thinkingIsHiddenTextStreamsAndCompletionCommitsAssistant()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rendersCumulativeUsageWhileStreaming()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "memorySummaryShowsPinnedTitlesWithoutCallingProvider()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "compactCommandShowsFailureAndReturnsToIdle()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "projectSharedSkillHotLoadsFromSlashAndPinsRenderedSop()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "clearStartsANewSessionAndEmitsTerminalClearWithoutCallingProvider()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "permissionPromptIsRenderedOnlyOnce()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.agent.AgentTurnCoordinatorLazyToolTest",
+      "cases": [
+        {
+          "name": "searchesLocallyThenExposesToolInTheNextRound()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.prompt.SystemReminderFactoryTest",
+      "cases": [
+        {
+          "name": "preservesTagsForEmptyMultilineAndSpecialContent()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "forceFullOverridesTheNormalCompactRound()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "createsAUserMessageWithOneTaggedTextBlock()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "repeatsFullyOnFirstRoundOfEachFourRoundPeriod()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.mcp.McpManagerTest",
+      "cases": [
+        {
+          "name": "rejectsIncompatibleServerWithoutAffectingAnotherServer()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "completesOneHandshakeDiscoversPagesAndReusesSessionForCalls()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.worktree.WorktreeCommandIsolationTest",
+      "cases": [
+        {
+          "name": "hooksEnvironmentAndSkillAssetsUseTheCapturedChildDirectory()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "actualMacSandboxAllowsOwnCommitButRejectsParentDependencyAndSharedConfigWrites()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "parentCommandsCannotWriteIntoManagedCopies()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.tool.FileStateCacheTest",
+      "cases": [
+        {
+          "name": "recordsReadStateAndDetectsExternalModification()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.memory.MemoryManagerTest",
+      "cases": [
+        {
+          "name": "executesUpdateAndDeleteOperationsAgainstTheSameNote()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "emptyOperationArrayDoesNotChangeExistingMemory()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "readOnlyChildIndexNeverCreatesDirectoriesOrPrunes()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "asynchronouslyCreatesProjectNoteWithoutTools()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "submittedMemoryUpdatePinsItsOriginalWorktreeAcrossKeepExit()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "acceptsFencedJsonWhenCreatingUserPreference()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "prunesOversizedIndexesBeforeReturningTheRequestSnapshot()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "routesUserAndProjectOperationsToTheirOwnStores()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "closeWaitsForInFlightUpdate()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "invalidResponseKeepsExistingMemoryAndReportsOnlyASafeDiagnostic()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "manuallyAddsListsAndClearsBothMemoryLevelsWithoutCallingLlm()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "projectManagersShareTheEntireUserUpdateLock()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.subagent.SubAgentRuntimeTest",
+      "cases": [
+        {
+          "name": "isolatedRoleReadsCommittedChildCopyAndCleansUpBeforeReturning()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "failedIsolationInitializationNeverCallsProviderOrTouchesParentAndHidesConfig()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "[1] success",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "[2] failure",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "[3] cancel",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "definitionUsesCleanContextAndReturnsFinalTextToParent()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.tool.BashSandboxIntegrationTest",
+      "cases": [
+        {
+          "name": "allowsCommandsToWriteToTheStandardNullDevice()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "allowsProjectWritesButRejectsWritesOutsideTheSandbox()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.hook.HookActionExecutorTest",
+      "cases": [
+        {
+          "name": "nonZeroShellAndMissingTemplateAreFailuresNotRejections()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "hookShellReceivesJsonOnStdinAndKeepsStreamsSeparate()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "hookShellTimeoutDoesNotWaitForBlockedProcess()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "eventValuesRemainDataWhenPassedToShellStdin()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "httpSendsTemplatedBodyAndAcceptsOnlyValidBlockResponse()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "subagentIsLoggedAsSkippedWithoutStartingAnotherAgent()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "executorUsesShellRejectionProtocolAndQueuesPrompt()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.llm.ProviderMessageNormalizerTest",
+      "cases": [
+        {
+          "name": "mergesCompatibleAdjacentRolesWithoutChangingProviderIndependentHistory()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "keepsAdjacentToolResultMessagesSeparateToPreserveToolProtocolOrdering()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.compact.TokenEstimatorTest",
+      "cases": [
+        {
+          "name": "anchorsOnAllProviderUsageDimensionsAndAddsOnlyNewCharacters()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "estimatesCurrentContentByCharactersWhenThereIsNoUsageAnchor()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "countsSystemToolsReminderAndHistoryInRequestCharacters()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rejectsNegativeUsageDimensions()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "fallsBackToCompleteApproximationAfterHistoryReplacement()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.worktree.StaleCleanupTest",
+      "cases": [
+        {
+          "name": "scansPersistentTemporaryProvenanceThenExpiryUsageAndResults()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "idleNonGitDirectoryNeedsNoGitDuringAnEmptyScan()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "concurrentScanIsSkippedAndCloseCancelsTheActiveScan()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.tui.MarkdownRendererTest",
+      "cases": [
+        {
+          "name": "handlesNarrowAndEmptyInput()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rendersCommonMarkdownWithoutLosingText()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.llm.AnthropicClientTest",
+      "cases": [
+        {
+          "name": "classifiesPromptTooLongAsContextLengthError()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "serializesStructuredSystemSegmentsAndAppendsReminderToLastUserMessage()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rateLimitIsNotRetried()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "streamsToolUseAndSendsAnthropicToolDefinitions()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "streamsThinkingTextAndCompleteInOrder()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "authenticationErrorIsSafeAndNotRetried()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.permission.DangerousCommandBlocklistTest",
+      "cases": [
+        {
+          "name": "usesTheRequiredHardDenyMessage()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "doesNotTreatOrdinaryCommandsAsDangerous()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "blocksDangerousRootRemovalAndEquivalentFlagSpacing()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.tool.impl.ToolSearchToolTest",
+      "cases": [
+        {
+          "name": "failedSearchDoesNotChangeState()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "discoversExactDeferredToolAndMakesItVisibleFromNextSnapshot()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.agent.TurnStreamCollectorTest",
+      "cases": [
+        {
+          "name": "keepsAllUsageDimensionsForContextEstimation()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "forwardsTextAndToolUseWhileReturningACompleteTurn()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "deduplicatesUsageUpdatesAndMarksMissingUsageUnknown()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "preservesContextLengthErrorKindWithoutCommittingPartialTurn()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "dropsIncompleteTurnWhenCancellationArrives()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.session.SessionManagerTest",
+      "cases": [
+        {
+          "name": "startsAnEmptySessionWithoutDeletingThePreviousOne()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "createsNewSessionAndContinuesAppendingAfterResume()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "fallsBackToTheFirstUserMessageWhenTitleRequestFails()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "preparesSwitchWithoutChangingCurrentSessionUntilCommit()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "marksSessionStaleAfterTwentyFourHours()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "failedResumePreparationLeavesCurrentHistoryUntouched()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.llm.ContextLengthErrorDetectorTest",
+      "cases": [
+        {
+          "name": "recognizesProviderContextLengthCodesAndMessages()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.agent.AgentTurnCoordinatorSkillTest",
+      "cases": [
+        {
+          "name": "fallsBackOnceToMainProviderWithoutCommittingPartialText()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "loadsFullSopOnDemandAndClearsItAfterTheRequest()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.agent.AgentEventTest",
+      "cases": [
+        {
+          "name": "makesToolInputImmutableAndCanRepresentUnknownUsage()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.agent.ToolPolicyTest",
+      "cases": [
+        {
+          "name": "subagentPolicyUsesAnAbsoluteIntersectionAndBlocksTaskRecursion()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "planModeAllowsAllSafeReadOnlyToolsAndExecuteModeAllowsAllTools()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "worktreePolicyHidesUnverifiedDiscoveryEvenForSystemTools()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "activeSkillIntersectsWhitelistWithModeButAlwaysAllowsSystemTools()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.worktree.WorktreeSessionStoreTest",
+      "cases": [
+        {
+          "name": "recoveryValidatesGitPointersWithoutChangingFiles()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "verifiesPackedBaselineWithFilesystemReadsOnly()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "unsafeManagementPathsAreRejected()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rejectsMissingBaselineObjectWithoutExecutingGit()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "damagedOrLinkedRecordsAreNotTrusted()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "sessionsAreAtomicAndIndependent()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "rejectsCorruptLooseBaselineObject()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.session.HistoryStoreTest",
+      "cases": [
+        {
+          "name": "appendsJsonlAndLoadsMessagesAfterLastCompactBoundary()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "persistsToolFieldsAndScansOnlyValidRecentSessions()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "skipsMalformedLinesAndDoesNotRestoreOrphanedToolCall()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.MewCodeTest",
+      "cases": [
+        {
+          "name": "blocksStartupForReferencedMcpToolsOnly()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.worktree.WorktreeCurrentDeletionTest",
+      "cases": [
+        {
+          "name": "unfinishedAsyncPostHookRefusesCommitAndPreservesCurrentSession()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "postHookObservesPreparedStateBeforeActualDeleteAndRunsOnlyOnce()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.tool.support.PathGuardTest",
+      "cases": [
+        {
+          "name": "externalAbsolutePathIsRejectedWithoutRewriting()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "relativeFilePathReportsRootAndAbsoluteSuggestion()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "symlinkEscapingRootIsRejectedAtExecutionValidation()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "relativeGlobReportsRootAndAbsoluteSuggestion()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "externalAbsoluteGlobAndParentEscapeAreRejected()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.worktree.WorktreeChangesTest",
+      "cases": [
+        {
+          "name": "failedOrCancelledDetectionRetainsResources()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "countsDirtyUntrackedAndCommitsEvenWhenLocallyKnownAsPushed()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.hook.HookEngineTest",
+      "cases": [
+        {
+          "name": "parsesFixedEventNamesAndOnlyBlockingEventsCanReject()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "onceActionIsConsumedAfterFailureAndAsyncDispatchDoesNotBlock()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "conditionsReadNestedScalarFieldsAndDoNotNegateMissingValues()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "onceStateAllowsOnlyOneConcurrentStarter()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "dispatchesRulesInOrderContinuesFailuresAndStopsAfterRejection()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "validatesActionDataAndCopiesHttpHeaders()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "invocationKeepsARecursiveSnapshotAndAddsCommonFields()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "cancellingSessionStopsAsyncWorkAndClosingPreventsNewDispatch()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "onceStateAndReminderBatchesAreSessionScoped()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.tui.PermissionPromptFormatterTest",
+      "cases": [
+        {
+          "name": "rendersTheBashOperationAndDecisionOptions()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    },
+    {
+      "class": "com.mewcode.tool.impl.BashToolTest",
+      "cases": [
+        {
+          "name": "appliesCommandSpecificExitCodeSemanticsAndTimeout()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "mergesOutputAndReportsExitCodeWithDestructiveMetadata()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "runsInTheSameProjectRootAsFileTools()",
+          "skipped": false,
+          "failure": false
+        },
+        {
+          "name": "truncatesLongOutputAndKeepsTheLeadingPart()",
+          "skipped": false,
+          "failure": false
+        }
+      ]
+    }
+  ]
+}

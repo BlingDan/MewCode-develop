@@ -18,6 +18,9 @@ class StaleCleanupTest {
   void scansPersistentTemporaryProvenanceThenExpiryUsageAndResults() throws Exception {
     new GitRepositoryFixture(root);
     var config = new WorktreeConfig();
+    assertEquals(30, config.getCleanupIntervalMinutes());
+    assertEquals(24, config.getStaleCutoffHours());
+    config.setStaleCutoffHours(2);
     var manager = new WorktreeManager(root, config, "session");
     var token = new CancellationToken();
     String head = manager.freezeHead(root, token);
@@ -28,21 +31,48 @@ class StaleCleanupTest {
     var modified = manager.createResource(root, dirty, head, true, "agent-2-12345678", token);
     manager.createResource(root, recent, head, true, "agent-3-12345678", token);
     manager.create(root, "manual", token);
+    manager.create(root, "temp-agent-100-12345678", token);
+    var inUse =
+        manager.createResource(
+            root, "temp-agent-4-12345678", head, true, "agent-4-12345678", token);
+    var workspace =
+        new AgentWorkspace(root, "session", "main", new com.mewcode.tool.FileStateCache(), manager);
+    manager.enter(workspace, inUse.slug);
+    var callUse = workspace.capture(token).workspaceScope().retain();
+    manager.exit(workspace, false, token);
+    var unknown =
+        manager.createResource(
+            root, "temp-agent-5-12345678", head, true, "agent-5-12345678", token);
+    var unknownWorkspace =
+        new AgentWorkspace(
+            root, "unknown-session", "main", new com.mewcode.tool.FileStateCache(), manager);
+    manager.enter(unknownWorkspace, unknown.slug);
+    unknownWorkspace.capture(token).workspaceScope().markUnconfirmedProcess();
+    manager.exit(unknownWorkspace, false, token);
     Files.writeString(modified.path.resolve("notes.txt"), "keep");
-    Instant now = Instant.now().plus(Duration.ofHours(25));
+    Instant now = Instant.now().plus(Duration.ofHours(3));
     var last = manager.store.loadResource(root, recent).orElseThrow();
     last.lastUsedAt = now;
     manager.store.saveResource(root, last);
     Files.writeString(root.resolve(".mewcode/worktree-state/resources/corrupt.json"), "broken");
-    // 模拟新进程扫描已有记录；不依靠本进程创建列表。
-    var restarted = new WorktreeManager(root, config, "session-next");
-    try (var cleanup = new StaleCleanup(restarted, config, ignored -> {})) {
-      assertEquals(1, cleanup.cleanup(now, new CancellationToken()));
+    try (var beforeCutoff = new StaleCleanup(manager, config, ignored -> {})) {
+      assertEquals(0, beforeCutoff.cleanup(Instant.now().plus(Duration.ofHours(1)), token));
+      assertEquals(1, beforeCutoff.cleanup(now, token));
+      // 模拟新进程扫描已有记录；不依靠本进程创建列表，仍须保护跨进程锁。
+      var restarted = new WorktreeManager(root, config, "session-next");
+      try (var cleanup = new StaleCleanup(restarted, config, ignored -> {})) {
+        assertEquals(0, cleanup.cleanup(now, new CancellationToken()));
+      }
+    } finally {
+      callUse.close();
     }
     assertFalse(Files.exists(root.resolve(".mewcode/worktrees/" + good)));
     assertTrue(Files.exists(modified.path));
     assertTrue(Files.exists(last.path));
     assertTrue(Files.exists(root.resolve(".mewcode/worktrees/manual")));
+    assertTrue(Files.exists(root.resolve(".mewcode/worktrees/temp-agent-100-12345678")));
+    assertTrue(Files.exists(inUse.path));
+    assertTrue(Files.exists(unknown.path));
   }
 
   @Test

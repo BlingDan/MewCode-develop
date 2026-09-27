@@ -34,6 +34,10 @@ class WorktreeManagerTest {
     assertEquals(base, repo.gitAt(first.path(), "rev-parse", "HEAD"));
     assertEquals("parent dirty", Files.readString(root.resolve("notes.txt")));
     Files.writeString(first.path().resolve("notes.txt"), "child dirty");
+    repo.gitAt(first.path(), "add", "notes.txt");
+    repo.gitAt(first.path(), "commit", "-m", "恢复须保留的新提交");
+    String childCommit = repo.gitAt(first.path(), "rev-parse", "HEAD");
+    Files.writeString(first.path().resolve("notes.txt"), "child dirty again");
     Path record = root.resolve(".mewcode/worktree-state/resources/one+task.json");
     var modified = Files.getLastModifiedTime(record);
     int calls = count.get();
@@ -41,9 +45,64 @@ class WorktreeManagerTest {
     assertEquals(first, recovered);
     assertEquals(calls, count.get());
     assertEquals(modified, Files.getLastModifiedTime(record));
-    assertEquals("child dirty", Files.readString(first.path().resolve("notes.txt")));
+    assertEquals("child dirty again", Files.readString(first.path().resolve("notes.txt")));
+    assertEquals(childCommit, repo.gitAt(first.path(), "rev-parse", "HEAD"));
+    assertEquals(base, manager.store.loadResource(root, "one/task").orElseThrow().baseCommit);
     assertFalse(repo.git("status", "--porcelain").contains("worktrees"));
     assertEquals(2, manager.list().size());
+  }
+
+  @Test
+  void invalidCreationNamesHaveNoGitOrFilesystemSideEffectsAndBoundariesCreate() throws Exception {
+    var repo = new GitRepositoryFixture(root);
+    var runner =
+        new GitCommandRunner(
+            java.time.Duration.ofSeconds(2),
+            builder -> {
+              fail("非法名称不应启动 Git");
+              return builder.start();
+            });
+    var manager = new WorktreeManager(root, new WorktreeConfig(), "session", runner);
+    String refs = repo.git("show-ref");
+    for (String name :
+        new String[] {
+          "", ".", "..", "a/../b", "a//b", "/absolute", "a.lock", "a+b", "x;touch", "a".repeat(65)
+        }) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> manager.create(root, name, new CancellationToken()),
+          name);
+    }
+    assertFalse(Files.exists(root.resolve(".mewcode")));
+    assertEquals(refs, repo.git("show-ref"));
+    var actual = new WorktreeManager(root, new WorktreeConfig(), "session");
+    assertTrue(Files.isDirectory(actual.create(root, "a", new CancellationToken()).path()));
+    assertTrue(
+        Files.isDirectory(actual.create(root, "a".repeat(64), new CancellationToken()).path()));
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"untracked", "pushed", "unknown-remote"})
+  void defaultRemovalProtectsUntrackedPushedAndUnknownRemote(String kind) throws Exception {
+    var repo = new GitRepositoryFixture(root);
+    var manager = new WorktreeManager(root, new WorktreeConfig(), "session");
+    Path child = manager.create(root, "protected", new CancellationToken()).path();
+    var workspace =
+        new AgentWorkspace(root, "session", "main", new com.mewcode.tool.FileStateCache(), manager);
+    manager.enter(workspace, "protected");
+    if (kind.equals("untracked")) Files.writeString(child.resolve("untracked file"), "result");
+    if (kind.equals("pushed")) {
+      repo.gitAt(child, "commit", "--allow-empty", "-m", "即使已推送也保留");
+      repo.git("update-ref", "refs/remotes/fixture/main", repo.gitAt(child, "rev-parse", "HEAD"));
+    }
+    if (kind.equals("unknown-remote")) repo.git("update-ref", "-d", "refs/remotes/fixture/main");
+    assertThrows(
+        WorktreeException.class, () -> manager.exit(workspace, true, new CancellationToken()));
+    assertEquals(child, workspace.currentCwd());
+    assertTrue(Files.exists(child));
+    assertEquals(SlugValidator.branch("protected"), repo.gitAt(child, "branch", "--show-current"));
+    manager.exit(workspace, false, new CancellationToken());
   }
 
   @Test

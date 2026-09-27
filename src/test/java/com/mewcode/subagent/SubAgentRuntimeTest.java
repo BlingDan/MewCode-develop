@@ -191,8 +191,10 @@ class SubAgentRuntimeTest {
   }
 
   @org.junit.jupiter.params.ParameterizedTest
-  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
-  void dirtyChildIsRetainedAfterSuccessOrProviderFailure(boolean fails) throws Exception {
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"success", "failure", "cancel"})
+  void dirtyChildIsRetainedAfterSuccessFailureOrCancellation(String terminal) throws Exception {
+    boolean fails = terminal.equals("failure");
+    boolean cancelled = terminal.equals("cancel");
     var repo = new com.mewcode.worktree.GitRepositoryFixture(projectRoot);
     java.nio.file.Files.createDirectories(projectRoot.resolve(".mewcode/agents"));
     java.nio.file.Files.writeString(
@@ -204,10 +206,14 @@ class SubAgentRuntimeTest {
     var client = new FakeLlmClient();
     client.enqueue(
         new StreamEvent.ToolCallComplete(
-            "write", "Bash", Map.of("command", "printf 'child result' > notes.txt")),
+            "write",
+            "Bash",
+            Map.of(
+                "command",
+                "printf 'child result' > notes.txt" + (cancelled ? "; exec sleep 10" : ""))),
         new StreamEvent.StreamEnd("tool_use"));
     if (fails) client.enqueue(new StreamEvent.Error("provider test failure"));
-    else
+    else if (!cancelled)
       client.enqueue(
           new StreamEvent.TextDelta("done editing"), new StreamEvent.StreamEnd("end_turn"));
     var registry = ToolRegistry.createDefault();
@@ -258,9 +264,31 @@ class SubAgentRuntimeTest {
       var result =
           runtime.execute(
               new SubAgentRuntime.SubAgentInvocation(
-                  "edit", "edit", "editor", null, false, "dispatch"),
+                  "edit", "edit", "editor", null, cancelled, "dispatch"),
               parent);
-      assertEquals(fails, result.isError(), result.content());
+      if (cancelled) {
+        String id = tasks.list("session").getFirst().taskId();
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        while (System.nanoTime() < deadline) {
+          var copies = manager.list();
+          if (!copies.isEmpty()
+              && java.nio.file.Files.readString(copies.getFirst().path().resolve("notes.txt"))
+                  .equals("child result")) break;
+          Thread.sleep(10);
+        }
+        assertEquals(
+            "child result",
+            java.nio.file.Files.readString(manager.list().getFirst().path().resolve("notes.txt")));
+        assertTrue(tasks.cancel("session", id));
+        deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        while (tasks.get("session", id).orElseThrow().status()
+                != SubAgentTaskManager.Status.CANCELLED
+            && System.nanoTime() < deadline) Thread.sleep(10);
+        var snapshot = tasks.get("session", id).orElseThrow();
+        assertEquals(SubAgentTaskManager.Status.CANCELLED, snapshot.status());
+        result = com.mewcode.tool.ToolResult.error(snapshot.error());
+      }
+      assertEquals(fails || cancelled, result.isError(), result.content());
       assertTrue(result.content().contains("工作树已保留"), result.content());
       var child = manager.list().getFirst();
       assertEquals(

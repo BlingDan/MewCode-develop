@@ -26,6 +26,16 @@ class PostCreationSetupTest {
     Files.createDirectories(root.resolve("runtime"));
     Files.writeString(root.resolve("runtime/a file.txt"), "needed");
     Files.writeString(root.resolve("runtime/private.txt"), "excluded");
+    Files.createDirectories(root.resolve("runtime/deep"));
+    Files.writeString(root.resolve("runtime/deep/line\nbreak.txt"), "nested-special");
+    Files.createDirectories(root.resolve(".mewcode/sessions"));
+    Files.writeString(root.resolve(".mewcode/sessions/private.jsonl"), "private-history");
+    Files.writeString(
+        root.resolve(".worktreeinclude"),
+        "runtime/**\n!runtime/private.txt\n.mewcode/sessions/**\n");
+    Files.setPosixFilePermissions(
+        root.resolve(".mewcode/config.yaml"),
+        java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));
     Files.createDirectory(root.resolve("node_modules"));
     var config = new WorktreeConfig();
     config.setSymlinkDirectories(java.util.List.of("node_modules"));
@@ -34,8 +44,42 @@ class PostCreationSetupTest {
     assertEquals("private-local-config", Files.readString(child.resolve(".mewcode/config.yaml")));
     assertEquals("needed", Files.readString(child.resolve("runtime/a file.txt")));
     assertFalse(Files.exists(child.resolve("runtime/private.txt")));
+    assertEquals("nested-special", Files.readString(child.resolve("runtime/deep/line\nbreak.txt")));
+    assertFalse(Files.exists(child.resolve(".mewcode/sessions/private.jsonl")));
+    assertEquals(
+        Files.getPosixFilePermissions(root.resolve(".mewcode/config.yaml")),
+        Files.getPosixFilePermissions(child.resolve(".mewcode/config.yaml")));
     assertEquals(
         root.resolve("node_modules").toRealPath(), child.resolve("node_modules").toRealPath());
+  }
+
+  @Test
+  void initializationCannotOverwriteCommittedCodeOrFollowRuntimeLinks() throws Exception {
+    new GitRepositoryFixture(root);
+    var config = new WorktreeConfig();
+    config.setRequiredFiles(java.util.List.of("notes.txt"));
+    Files.writeString(root.resolve("notes.txt"), "uncommitted-code");
+    var manager = new WorktreeManager(root, config, "session");
+    assertThrows(
+        WorktreeException.class, () -> manager.create(root, "overwrite", new CancellationToken()));
+    assertEquals("uncommitted-code", Files.readString(root.resolve("notes.txt")));
+    Path outside = Files.createTempDirectory("mew-worktree-outside");
+    try {
+      Files.writeString(outside.resolve("config"), "fake-linked-secret");
+      Files.createSymbolicLink(root.resolve("runtime"), outside);
+      config.setRequiredFiles(java.util.List.of("runtime/config"));
+      var error =
+          assertThrows(
+              WorktreeException.class,
+              () ->
+                  new WorktreeManager(root, config, "session")
+                      .create(root, "linked", new CancellationToken()));
+      assertFalse(error.toString().contains("fake-linked-secret"));
+      assertEquals("fake-linked-secret", Files.readString(outside.resolve("config")));
+    } finally {
+      Files.deleteIfExists(outside.resolve("config"));
+      Files.delete(outside);
+    }
   }
 
   @Test

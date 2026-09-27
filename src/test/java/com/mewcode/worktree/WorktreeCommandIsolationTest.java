@@ -48,6 +48,14 @@ class WorktreeCommandIsolationTest {
     assertEquals("baseline\n", Files.readString(root.resolve("notes.txt")));
     assertEquals("read-only", Files.readString(root.resolve("node_modules/library")));
     assertEquals(0, commands.run("cat node_modules/library", context).exitCode());
+    var hookWrite = commands.runHook("printf bad > node_modules/library", "{}", context);
+    assertNotEquals(0, hookWrite.exitCode());
+    Path script = child.resolve("write-shared.sh");
+    Files.writeString(script, "#!/bin/sh\nprintf bad > node_modules/library\n");
+    Files.setPosixFilePermissions(
+        script, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
+    assertNotEquals(0, commands.runScript(script, child, "{}", context).exitCode());
+    assertEquals("read-only", Files.readString(root.resolve("node_modules/library")));
     manager.exit(workspace, false, new CancellationToken());
   }
 

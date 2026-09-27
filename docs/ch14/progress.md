@@ -73,12 +73,12 @@
 | T57 | 实现临时资源的三层清理 | 完成 | 持久化三层过滤、重入/关闭取消及非 Git 回归通过 |
 | T58 | 后台调度与非 Git 项目兼容 | 完成 | 持久化三层过滤、重入/关闭取消及非 Git 回归通过 |
 | T59 | 验证故障结果与凭据不泄露 | 完成 | 故障/取消/脱敏及启动失败负例通过，见最终构建证据 |
-| T60 | 验证未启用隔离的行为兼容 | 待执行 | 尚未执行 |
-| T61 | 完成构建、格式及整体回归 | 待执行 | 尚未执行 |
-| T62 | 编写配置示例与运行说明 | 待执行 | 尚未执行 |
-| T63 | tmux 验证父子并行修改同名文件 | 待执行 | 尚未执行 |
-| T64 | tmux 验证主会话进入与 KEEP 退出 | 待执行 | 尚未执行 |
-| T65 | tmux 验证只读子任务自动清理 | 待执行 | 尚未执行 |
+| T60 | 验证未启用隔离的行为兼容 | 完成 | 普通流程全量回归与真实缺 Git 文件对话/请求拒绝通过 |
+| T61 | 完成构建、格式及整体回归 | 完成 | Java21 最终全量门禁通过，413 tests / 0失败错误跳过 |
+| T62 | 编写配置示例与运行说明 | 完成 | 可选默认值、角色、命令、保护及 tmux 说明已对照实现 |
+| T63 | tmux 验证父子并行修改同名文件 | 完成 | E01 真实 DeepSeek：父修改后 TaskGet仍running，父子内容独立 |
+| T64 | tmux 验证主会话进入与 KEEP 退出 | 完成 | E02 真实 Worktree 工具创建进入、修改、KEEP恢复通过 |
+| T65 | tmux 验证只读子任务自动清理 | 完成 | E03 真实 wt-reader 返回前清理目录/分支，磁盘已核对 |
 | T66 | tmux 验证有成果时默认拒绝删除 | 待执行 | 尚未执行 |
 | T67 | 逐项验收并交付 | 待执行 | 尚未执行 |
 
@@ -122,3 +122,6 @@
 
 - T59：拒绝 YAML 路径类型强制转换、缺失/损坏基线与非法 SHA 长度，恢复包含 pack 索引只读检查；取消实际 Git 进程有界停止，非零 stderr 和启动异常不泄露测试凭据。隔离初始化失败未调用 Provider、未改变父源码且没有就绪残留。读→进入→读批次按各自目录执行。
 - T59：定向日志 /private/tmp/mewcode-ch14-t59-green.log 退出 0；最终全量日志 /private/tmp/mewcode-ch14-full-build.log 退出 0，407 tests / 0 failures / 0 errors / 0 skipped，新增启动失败场景亦通过。Linux 对尚不存在的保护区域使用只读遮蔽，参数负例通过；Linux 实际执行仍未验证。
+
+- T60–T62：最终命令 `compileJava compileTestJava spotlessCheck test shadowJar`（同时先 SpotlessApply 本次文件）退出 0，413 tests / 0 failures / 0 errors / 0 skipped。/private/tmp/mewcode-ch14-final-build.log；方法和结果索引 docs/ch14/verification.json。实际 macOS 共享目标写入拒绝（文件/Bash/脚本/Hook）、自己的 Git 提交通过；Linux 未实测。
+- 补充验收：含新提交和未提交修改的零 Git 恢复、1/64字名称实际创建、非法名称零 Git 零路径/引用副作用、换行名称与权限复制、初始化拒绝代码覆盖/越界链接、新提交已被远端包含仍拒绝、取消后修改保留、扫描阈值/同名临时外观手动资源/跨实例占用/未知停止保护通过。定向日志 /private/tmp/mewcode-ch14-acceptance-matrix-green.log、/private/tmp/mewcode-ch14-cancel-outcome.log。

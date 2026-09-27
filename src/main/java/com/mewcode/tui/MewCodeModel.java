@@ -112,6 +112,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   private final java.util.Map<String, com.mewcode.worktree.AgentWorkspace> workspaces =
       new java.util.concurrent.ConcurrentHashMap<>();
   private SubAgentRuntime subAgentRuntime;
+  private com.mewcode.worktree.StaleCleanup staleCleanup;
   private String pendingWorktreeCommand;
   private String lastWorktreeMessage = "";
   private final AgentCatalog agentCatalog;
@@ -328,6 +329,9 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
             new com.mewcode.config.WorktreeConfig(),
             sessionManager.currentSessionId());
     this.workspace = workspaceForSession();
+    this.staleCleanup =
+        new com.mewcode.worktree.StaleCleanup(
+            worktreeManager, new com.mewcode.config.WorktreeConfig(), this::recordDiagnostic);
     this.memoryManager = workspace.memory(false, this::recordDiagnostic);
     this.loadedHooks =
         HookConfigLoader.load(this.projectRoot, this.userHome, this::recordDiagnostic);
@@ -360,10 +364,13 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     if (ready || client != null) throw new IllegalStateException("Provider 已开始初始化");
     workspaces.values().forEach(com.mewcode.worktree.AgentWorkspace::closeMemories);
     workspaces.clear();
+    staleCleanup.close();
     worktreeManager =
         new com.mewcode.worktree.WorktreeManager(
             projectRoot, config, sessionManager.currentSessionId());
     workspace = workspaceForSession();
+    staleCleanup =
+        new com.mewcode.worktree.StaleCleanup(worktreeManager, config, this::recordDiagnostic);
   }
 
   public Path workingDirectory() {
@@ -433,6 +440,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
       width = Math.max(size.width(), 1);
       height = Math.max(size.height(), 3);
       ready = true;
+      staleCleanup.start();
       if (singleProviderPending) {
         singleProviderPending = false;
         initializeProvider();
@@ -685,6 +693,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   public void close() {
     if (closed) return;
     closed = true;
+    staleCleanup.close();
     if (activeRun != null) activeRun.cancel();
     taskManager.cancelAll();
     if (sessionStarted) {

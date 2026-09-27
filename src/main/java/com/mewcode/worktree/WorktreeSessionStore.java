@@ -181,6 +181,40 @@ public final class WorktreeSessionStore {
     return List.copyOf(resources);
   }
 
+  List<Resource> cleanupCandidates(Path repoRoot, java.util.function.Consumer<String> diagnostics)
+      throws IOException {
+    Path directory = SlugValidator.safePath(repoRoot, ".mewcode/worktree-state/resources");
+    if (!Files.exists(directory)) return List.of();
+    var result = new ArrayList<Resource>();
+    try (var files = Files.list(directory)) {
+      for (Path file : files.sorted().toList()) {
+        if (!file.getFileName().toString().endsWith(".json")) continue;
+        try {
+          var node = read(file);
+          String slug = text(node, "slug");
+          if (!file.equals(resourcePath(repoRoot, slug))) throw new IOException("资源文件归属不符");
+          result.add(loadResource(repoRoot, slug).orElseThrow());
+        } catch (IOException | RuntimeException error) {
+          diagnostics.accept("过期扫描保留无法验证的资源记录。");
+        }
+      }
+    }
+    return List.copyOf(result);
+  }
+
+  boolean hasSavedSession(Path repoRoot, Path target) throws IOException {
+    Path directory = SlugValidator.safePath(repoRoot, ".mewcode/worktree-state/sessions");
+    if (!Files.exists(directory)) return false;
+    try (var files = Files.list(directory)) {
+      for (Path file : files.toList()) {
+        if (!file.getFileName().toString().endsWith(".json")) continue;
+        var session = load(repoRoot, text(read(file), "session_id")).orElseThrow();
+        if (session.worktreePath().equals(target)) return true;
+      }
+    }
+    return false;
+  }
+
   void clearResource(Path repoRoot, String slug) throws IOException {
     Files.deleteIfExists(resourcePath(repoRoot, slug));
   }

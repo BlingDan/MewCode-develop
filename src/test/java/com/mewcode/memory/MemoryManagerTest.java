@@ -322,6 +322,29 @@ class MemoryManagerTest {
         }
     }
 
+    @Test
+    void submittedMemoryUpdatePinsItsOriginalWorktreeAcrossKeepExit() throws Exception {
+        Path root = Files.createDirectories(tempDir.resolve("repo"));
+        new com.mewcode.worktree.GitRepositoryFixture(root);
+        var manager = new com.mewcode.worktree.WorktreeManager(root, new com.mewcode.config.WorktreeConfig(), "session");
+        var token = new com.mewcode.agent.CancellationToken();
+        Path child = manager.create(root, "memory", token).path();
+        var workspace = new com.mewcode.worktree.AgentWorkspace(root, tempDir.resolve("home"), "session", "main", new com.mewcode.tool.FileStateCache(), manager);
+        manager.enter(workspace, "memory");
+        var client = new BlockingMemoryClient();
+        var memory = workspace.memory(false, ignored -> {}); memory.attachClient(client, "test");
+        memory.updateAsync(List.of(new Message("user", "remember CI")));
+        assertTrue(client.started.await(2, TimeUnit.SECONDS));
+        try {
+            manager.exit(workspace, false, new com.mewcode.agent.CancellationToken());
+            assertThrows(com.mewcode.worktree.WorktreeException.class, () -> manager.remove("memory", new com.mewcode.agent.CancellationToken()));
+        } finally { client.release.countDown(); }
+        memory.close();
+        assertTrue(Files.exists(child.resolve(".mewcode/memory/project_knowledge_ci.md")));
+        assertFalse(Files.exists(root.resolve(".mewcode/memory/project_knowledge_ci.md")));
+        assertTrue(manager.remove("memory", new com.mewcode.agent.CancellationToken()));
+    }
+
     private static final class BlockingMemoryClient implements LlmClient {
         private static final String RESPONSE =
                 "[{\"action\":\"create\",\"level\":\"project\",\"type\":\"project_knowledge\",\"title\":\"CI\",\"slug\":\"ci\",\"content\":\"Use GitHub Actions.\"}]";

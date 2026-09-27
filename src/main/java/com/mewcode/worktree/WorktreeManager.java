@@ -811,6 +811,37 @@ public final class WorktreeManager {
       throw failure("删除", "有文件修改或新增提交，须保留", resource.path, resource.branch);
   }
 
+  boolean cleanupTemporary(
+      WorktreeSessionStore.Resource candidate,
+      Instant now,
+      java.time.Duration cutoff,
+      CancellationToken token) {
+    ReentrantLock operation = begin(candidate.slug);
+    Active slot = null;
+    try {
+      var resource = required(candidate.slug);
+      if (!resource.recordId.equals(candidate.recordId)
+          || !resource.temporary
+          || !resource.createdByAgentId.matches("agent-[0-9]+-[0-9a-f]{8}")
+          || !resource.slug.equals("temp-" + resource.createdByAgentId)
+          || resource.state != WorktreeSessionStore.State.READY
+          || resource.lastUsedAt.plus(cutoff).isAfter(now)) return false;
+      synchronized (active) {
+        if (active.containsKey(resource.slug)) return false;
+      }
+      if (store.hasSavedSession(root, resource.path)) return false;
+      store.verifyReady(root, resource);
+      slot = acquireOwner(resource, "stale-cleanup");
+      reserveDelete(slot);
+      return removeHeld(resource, false, token);
+    } catch (IOException error) {
+      throw failure("过期清理", "资源归属、现场或占用无法验证，已保留", candidate.path, candidate.branch);
+    } finally {
+      if (slot != null) releaseOwner(slot);
+      operation.unlock();
+    }
+  }
+
   public boolean remove(String slug, CancellationToken token) {
     return removeInternal(slug, null, null, token);
   }

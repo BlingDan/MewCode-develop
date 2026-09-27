@@ -32,6 +32,7 @@ public final class AgentWorkspace {
   private Path cwd;
   private WorktreeSession session;
   private WorktreeSessionStore.Resource resource;
+  private Scope inheritedScope;
   private Duration timeout = ToolExecutionContext.DEFAULT_TIMEOUT;
 
   public AgentWorkspace(
@@ -81,6 +82,10 @@ public final class AgentWorkspace {
     return agentId;
   }
 
+  public Path userHome() {
+    return userHome;
+  }
+
   public Path initialCwd() {
     return initialCwd;
   }
@@ -97,7 +102,18 @@ public final class AgentWorkspace {
         token,
         null,
         false,
-        new Scope(manager, manager.repositoryRoot(), cwd, agentId, resource));
+        inheritedScope == null
+            ? new Scope(manager, manager.repositoryRoot(), cwd, agentId, resource)
+            : inheritedScope);
+  }
+
+  /** 未额外隔离的子任务继承派发范围和使用权，但拥有自己的文件缓存与目录资源。 */
+  public AgentWorkspace forkForChild(ToolExecutionContext context, String childId) {
+    var child =
+        new AgentWorkspace(
+            context.projectRoot(), userHome, sessionId, childId, new FileStateCache(), manager);
+    child.inheritedScope = context.workspaceScope();
+    return child;
   }
 
   public SystemPromptBundle systemPrompt() {

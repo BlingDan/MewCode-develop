@@ -28,10 +28,22 @@ public final class SubAgentTaskManager implements AutoCloseable {
   private final ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
   private boolean closed;
 
-  public synchronized TaskHandle start(TaskRequest request) {
+  public String allocateTaskId() {
+    return "agent-"
+        + sequence.incrementAndGet()
+        + "-"
+        + java.util.UUID.randomUUID().toString().substring(0, 8);
+  }
+
+  public TaskHandle start(TaskRequest request) {
+    return start(allocateTaskId(), request);
+  }
+
+  public synchronized TaskHandle start(String id, TaskRequest request) {
     Objects.requireNonNull(request, "request");
     if (closed) throw new IllegalStateException("任务管理器已关闭");
-    String id = "agent-" + sequence.incrementAndGet();
+    if (!id.matches("agent-[0-9]+-[0-9a-f]{8}") || tasks.containsKey(id))
+      throw new IllegalArgumentException("任务标识无效");
     var entry = new TaskEntry(id, request);
     entry.published = request.publishImmediately();
     tasks.put(id, entry);
@@ -98,10 +110,9 @@ public final class SubAgentTaskManager implements AutoCloseable {
       return UpdateResult.rejected(update.taskId(), "运行中的子 Agent 只允许请求取消。");
     }
     entry.cancelRequested = true;
+    entry.startupCancellation.cancel();
     if (entry.run != null) {
       entry.run.cancel();
-    } else {
-      finish(entry, Status.CANCELLED, "任务已取消。", "任务在启动前被取消。", true);
     }
     return UpdateResult.accepted(entry.snapshot());
   }
@@ -111,10 +122,9 @@ public final class SubAgentTaskManager implements AutoCloseable {
     TaskEntry entry = findOwned(sessionId, taskId).orElse(null);
     if (entry == null || isTerminal(entry.status)) return false;
     entry.cancelRequested = true;
+    entry.startupCancellation.cancel();
     if (entry.run != null) {
       entry.run.cancel();
-    } else {
-      finish(entry, Status.CANCELLED, "任务已取消。", "任务在启动前被取消。", entry.published);
     }
     return true;
   }
@@ -139,8 +149,8 @@ public final class SubAgentTaskManager implements AutoCloseable {
     for (TaskEntry entry : tasks.values()) {
       if (!entry.sessionId.equals(sessionId) || isTerminal(entry.status)) continue;
       entry.cancelRequested = true;
+      entry.startupCancellation.cancel();
       if (entry.run != null) entry.run.cancel();
-      else finish(entry, Status.CANCELLED, "任务已取消。", "任务在启动前被取消。", false);
     }
     notifications.remove(sessionId);
   }
@@ -159,12 +169,12 @@ public final class SubAgentTaskManager implements AutoCloseable {
     for (TaskEntry entry : tasks.values()) {
       if (!isTerminal(entry.status)) {
         entry.cancelRequested = true;
+        entry.startupCancellation.cancel();
         if (entry.run != null) entry.run.cancel();
-        else finish(entry, Status.CANCELLED, "任务已取消。", "任务在关闭时被取消。", false);
       }
     }
     notifications.clear();
-    workers.shutdownNow();
+    workers.shutdown();
   }
 
   private void run(TaskEntry entry) {
@@ -181,7 +191,11 @@ public final class SubAgentTaskManager implements AutoCloseable {
       AgentRun run = entry.starter.get();
       synchronized (this) {
         entry.run = run;
-        if (entry.published && entry.denyPermissionsWhenBackground) run.permissionBroker().close();
+        if (run != null) {
+          if (entry.published && entry.denyPermissionsWhenBackground)
+            run.permissionBroker().close();
+          if (entry.cancelRequested) run.cancel();
+        }
       }
       if (run == null) {
         synchronized (this) {
@@ -278,31 +292,42 @@ public final class SubAgentTaskManager implements AutoCloseable {
     return UpdateResult.accepted(entry.snapshot());
   }
 
+  /** 只在短锁内认领终态，实际收尾在锁外执行，完成结果最后发布。 */
   private void finish(TaskEntry entry, Status status, String result, String error, boolean notify) {
-    if (isTerminal(entry.status)) return;
-    entry.status = status;
-    entry.resultText = result == null ? "" : result;
-    entry.error = error == null ? "" : safeResult(error);
-    entry.endedAt = Instant.now();
-    entry.lastActivity = entry.endedAt;
-    if (notify
-        && entry.published
-        && entry.type != TaskType.MANUAL
-        && !entry.notificationPublished) {
-      entry.notificationPublished = true;
-      notifications
-          .computeIfAbsent(entry.sessionId, ignored -> new ArrayList<>())
-          .add(new TaskNotification(entry.id, entry.status, notificationXml(entry)));
-    }
-    entry.completion.complete(entry.snapshot());
-    if (!entry.cleanupCalled && entry.onFinished != null) {
-      entry.cleanupCalled = true;
-      try {
-        entry.onFinished.run();
-      } catch (RuntimeException ignored) {
-        // 资源清理失败不能改变已经发布的终态。
-      }
-    }
+    if (isTerminal(entry.status) || entry.finishing) return;
+    entry.finishing = true;
+    Thread.startVirtualThread(
+        () -> {
+          String notice = "";
+          try {
+            if (entry.onFinished != null) entry.onFinished.run();
+            if (entry.finishNotice != null)
+              notice = Objects.requireNonNullElse(entry.finishNotice.get(), "");
+          } catch (RuntimeException failure) {
+            notice = "收尾失败，相关资源已保留。";
+          }
+          synchronized (this) {
+            entry.status = status;
+            entry.resultText =
+                (result == null ? "" : result) + (notice.isBlank() ? "" : "\n" + notice);
+            entry.error =
+                (error == null ? "" : safeResult(error))
+                    + (status == Status.COMPLETED || notice.isBlank() ? "" : "\n" + notice);
+            entry.endedAt = Instant.now();
+            entry.lastActivity = entry.endedAt;
+            if (notify
+                && entry.published
+                && entry.type != TaskType.MANUAL
+                && !entry.notificationPublished
+                && !closed) {
+              entry.notificationPublished = true;
+              notifications
+                  .computeIfAbsent(entry.sessionId, ignored -> new ArrayList<>())
+                  .add(new TaskNotification(entry.id, entry.status, notificationXml(entry)));
+            }
+            entry.completion.complete(entry.snapshot());
+          }
+        });
   }
 
   private Optional<TaskEntry> findOwned(String sessionId, String taskId) {
@@ -399,13 +424,69 @@ public final class SubAgentTaskManager implements AutoCloseable {
       Supplier<AgentRun> starter,
       Runnable onPublished,
       Runnable onFinished,
-      Consumer<AgentEvent> onEvent) {
+      Consumer<AgentEvent> onEvent,
+      Supplier<String> finishNotice,
+      com.mewcode.agent.CancellationToken startupCancellation) {
+    public TaskRequest(
+        String sessionId,
+        TaskType type,
+        String subject,
+        String description,
+        boolean publishImmediately,
+        boolean denyPermissionsWhenBackground,
+        Supplier<AgentRun> starter,
+        Runnable onPublished,
+        Runnable onFinished,
+        Consumer<AgentEvent> onEvent) {
+      this(
+          sessionId,
+          type,
+          subject,
+          description,
+          publishImmediately,
+          denyPermissionsWhenBackground,
+          starter,
+          onPublished,
+          onFinished,
+          onEvent,
+          null,
+          new com.mewcode.agent.CancellationToken());
+    }
+
+    public TaskRequest(
+        String sessionId,
+        TaskType type,
+        String subject,
+        String description,
+        boolean publishImmediately,
+        boolean denyPermissionsWhenBackground,
+        Supplier<AgentRun> starter,
+        Runnable onPublished,
+        Runnable onFinished,
+        Consumer<AgentEvent> onEvent,
+        Supplier<String> finishNotice) {
+      this(
+          sessionId,
+          type,
+          subject,
+          description,
+          publishImmediately,
+          denyPermissionsWhenBackground,
+          starter,
+          onPublished,
+          onFinished,
+          onEvent,
+          finishNotice,
+          new com.mewcode.agent.CancellationToken());
+    }
+
     public TaskRequest {
       sessionId = requireText(sessionId, "sessionId");
       type = Objects.requireNonNull(type, "type");
       subject = requireText(subject, "subject");
       description = requireText(description, "description");
       starter = Objects.requireNonNull(starter, "starter");
+      startupCancellation = Objects.requireNonNull(startupCancellation, "startupCancellation");
     }
   }
 
@@ -470,7 +551,9 @@ public final class SubAgentTaskManager implements AutoCloseable {
     private boolean published;
     private boolean cancelRequested;
     private boolean notificationPublished;
-    private boolean cleanupCalled;
+    private boolean finishing;
+    private final Supplier<String> finishNotice;
+    private final com.mewcode.agent.CancellationToken startupCancellation;
     private AgentRun run;
     private Instant startedAt;
     private Instant endedAt;
@@ -495,6 +578,8 @@ public final class SubAgentTaskManager implements AutoCloseable {
       this.denyPermissionsWhenBackground = request.denyPermissionsWhenBackground();
       this.onPublished = request.onPublished();
       this.onFinished = request.onFinished();
+      this.finishNotice = request.finishNotice();
+      this.startupCancellation = request.startupCancellation();
       this.onEvent = request.onEvent();
     }
 

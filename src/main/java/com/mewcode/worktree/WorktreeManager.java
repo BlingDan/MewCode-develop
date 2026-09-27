@@ -424,6 +424,33 @@ public final class WorktreeManager {
     }
   }
 
+  void bindChild(AgentWorkspace workspace, WorktreeSessionStore.Resource resource) {
+    Active slot = null;
+    try {
+      store.verifyReady(root, resource);
+      workspace.prepare(resource.path);
+      slot = acquireOwner(resource, workspace.agentId());
+      workspace.bindChild(resource);
+    } catch (IOException | RuntimeException error) {
+      if (slot != null) releaseOwner(slot);
+      throw failure("子任务启动", "子目录资源加载或占用失败", resource.path, resource.branch);
+    }
+  }
+
+  void releaseChild(String slug, String recordId, String owner) {
+    Active slot;
+    synchronized (active) {
+      slot = active.get(slug);
+      if (slot == null || !slot.resource.recordId.equals(recordId) || !slot.owner.equals(owner))
+        return;
+    }
+    releaseOwner(slot);
+  }
+
+  boolean removeKnown(String slug, String recordId, CancellationToken token) {
+    return removeInternal(slug, null, recordId, token);
+  }
+
   public WorktreeSession enter(AgentWorkspace workspace, String slug) {
     workspace.beginTransition();
     ReentrantLock operation = null;
@@ -703,13 +730,13 @@ public final class WorktreeManager {
   }
 
   public boolean remove(String slug, CancellationToken token) {
-    return removeInternal(slug, null, token);
+    return removeInternal(slug, null, null, token);
   }
 
   /** 仅供明确用户命令调用；授权必须绑定当前资源身份，工具模型参数不得调用此入口。 */
   public boolean discardFromUserCommand(String slug, String recordId, CancellationToken token) {
     if (recordId == null) throw new IllegalArgumentException("用户丢弃请求缺少资源身份");
-    return removeInternal(slug, recordId, token);
+    return removeInternal(slug, recordId, recordId, token);
   }
 
   public String resourceIdentityForUserCommand(String slug) {
@@ -720,12 +747,15 @@ public final class WorktreeManager {
     }
   }
 
-  private boolean removeInternal(String slug, String discardId, CancellationToken token) {
+  private boolean removeInternal(
+      String slug, String discardId, String expectedId, CancellationToken token) {
     ReentrantLock operation = begin(slug);
     Active slot = null;
     try {
       var resource = required(slug);
       store.verifyReady(root, resource);
+      if (expectedId != null && !resource.recordId.equals(expectedId))
+        throw failure("删除", "资源身份已变化", resource.path, resource.branch);
       boolean discard = discardId != null;
       if (discard && !resource.recordId.equals(discardId))
         throw failure("删除", "丢弃授权已过期或目标不符", resource.path, resource.branch);

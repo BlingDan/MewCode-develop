@@ -346,10 +346,15 @@ public final class AgentTurnCoordinator {
 
   /** 启动带预激活 Skill 的请求；主要供动态斜杠命令使用。 */
   public AgentRun startRun(String userText, AgentMode mode, SkillRun skills) {
+    return startRunWithCancellation(userText, mode, skills, new CancellationToken());
+  }
+
+  public AgentRun startRunWithCancellation(
+      String userText, AgentMode mode, SkillRun skills, CancellationToken startupToken) {
     Objects.requireNonNull(userText, "userText");
     SkillRun runSkills = Objects.requireNonNull(skills, "skills");
     AgentMode effectiveMode = mode == null ? AgentMode.EXECUTE : mode;
-    var run = new AgentRun();
+    var run = new AgentRun(startupToken);
     run.setPermissionPublisher(
         request -> run.events().publish(new AgentEvent.PermissionRequested(request)));
     try {
@@ -1099,7 +1104,8 @@ public final class AgentTurnCoordinator {
                       route,
                       mode,
                       parentRun,
-                      hookSessionId == null ? requestId : hookSessionId));
+                      hookSessionId == null ? requestId : hookSessionId,
+                      executor.captureForDispatch(parentRun.cancellationToken())));
         } catch (RuntimeException error) {
           result =
               ToolResult.error("SubAgent 执行失败：" + safeMessage(error))

@@ -84,6 +84,10 @@ public final class ToolExecutor implements AutoCloseable {
     return workspace == null ? baseContext.projectRoot() : workspace.currentCwd();
   }
 
+  public ToolExecutionContext captureForDispatch(CancellationToken token) {
+    return capturedContext(token);
+  }
+
   /** 绑定所属 Agent 的工作区，之后每次提交捕获独立上下文。 */
   public void configureWorkspace(com.mewcode.worktree.AgentWorkspace workspace) {
     this.workspace = java.util.Objects.requireNonNull(workspace);
@@ -930,7 +934,14 @@ public final class ToolExecutor implements AutoCloseable {
   /** 关闭虚拟线程执行器，应用退出时释放仍在等待的工具任务。 */
   @Override
   public void close() {
-    executor.close();
+    executor.shutdownNow();
+    try {
+      executor.awaitTermination(2, TimeUnit.SECONDS);
+    } catch (InterruptedException error) {
+      Thread.currentThread().interrupt();
+    }
+    // 未结束的运行体继续持有目录使用权，删除入口会拒绝。
+
   }
 
   private record HookContext(

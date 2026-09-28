@@ -25,12 +25,24 @@ java -version
 
 `./gradlew --version` 中的 `Daemon JVM` 应显示兼容 Java 21。系统默认的 `java -version` 即使仍是其他版本，也不影响 Gradle 按项目配置选择 Java 21。
 
-## 常用操作
+## 配置与运行
+
+1. 参考 [配置示例](../.mewcode/config.yaml.example) 创建项目根目录下的 `.mewcode/config.yaml`。保留至少一个实际使用的 Provider，并填写它的 `name`、`protocol`、`model` 和 `api_key`；按服务需要填写 `base_url`。删除示例中不用的 Provider 和 MCP Server。该本地配置已被 `.gitignore` 忽略。
+2. 构建并从项目根目录启动：
 
 ```bash
-./gradlew spotlessApply
-./gradlew build
+./gradlew shadowJar
 java -jar build/libs/mewcode.jar
 ```
+
+启动 JAR 的 `java` 也需要 Java 21 或更新版本。代码入口和各模块说明见 [架构与文档导航](architecture.md)。
+
+## 开发验证
+
+```bash
+./gradlew spotlessCheck test shadowJar
+```
+
+功能开发完成后，在 tmux 中运行构建出的 JAR，输入真实对话，检查工具调用和回复，再按对应章节的 `checklist.md` 验收；章节入口见 [架构与文档导航](architecture.md)。
 
 如果出现找不到匹配 Toolchain 的错误，请先确认本机已安装并能被 IDE/Gradle 探测到 JDK 21；不要把本机的绝对 JDK 路径写入项目配置。

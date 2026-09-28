@@ -1,6 +1,12 @@
 # MewCode
 
-我正在构建一个终端 AI 编程助手（类似 Claude Code），项目名叫 MewCode，使用 Java实现。
+MewCode 是使用 Java 21 实现的终端 AI 编程助手。
+
+## 按任务阅读
+
+- 了解项目能力和启动方式：读 [README.md](README.md)。
+- 定位代码、梳理运行链路或查找功能文档：读 [架构与文档导航](docs/architecture.md)，再进入相关源码或章节。
+- 配置 JDK、构建或本地运行：读 [开发环境准备](docs/development-environment.md)。
 
 ## 语言
 中文回答，中文注释。

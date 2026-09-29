@@ -15,7 +15,7 @@ class PathGuardTest {
     @Test
     void relativeFilePathReportsRootAndAbsoluteSuggestion() {
         String error = PathGuard.validatePathArgument(
-                ".trae/skills/mew-spec/SKILL.md", projectRoot);
+                ".trae/skills/mew-spec/SKILL.md", projectRoot, false);
 
         assertNotNull(error);
         assertTrue(error.contains("必须是绝对路径"), error);
@@ -26,7 +26,7 @@ class PathGuardTest {
 
     @Test
     void relativeGlobReportsRootAndAbsoluteSuggestion() {
-        String error = PathGuard.validatePatternArgument("**/*.java", projectRoot);
+        String error = PathGuard.validatePatternArgument("**/*.java", projectRoot, false);
 
         assertNotNull(error);
         assertTrue(error.contains("pattern"), error);
@@ -38,7 +38,7 @@ class PathGuardTest {
     @Test
     void externalAbsolutePathIsRejectedWithoutRewriting() {
         Path outside = projectRoot.resolveSibling("outside-file.txt").toAbsolutePath().normalize();
-        String error = PathGuard.validatePathArgument(outside.toString(), projectRoot);
+        String error = PathGuard.validatePathArgument(outside.toString(), projectRoot, false);
 
         assertNotNull(error);
         assertTrue(error.contains(outside.toString()), error);
@@ -49,9 +49,9 @@ class PathGuardTest {
     @Test
     void externalAbsoluteGlobAndParentEscapeAreRejected() {
         Path outside = projectRoot.resolveSibling("outside").toAbsolutePath().normalize();
-        String patternError = PathGuard.validatePatternArgument(outside.resolve("**/*.java").toString(), projectRoot);
+        String patternError = PathGuard.validatePatternArgument(outside.resolve("**/*.java").toString(), projectRoot, false);
         String parentError = PathGuard.validatePathArgument(
-                projectRoot.resolve("../outside/file.txt").toString(), projectRoot);
+                projectRoot.resolve("../outside/file.txt").toString(), projectRoot, false);
 
         assertNotNull(patternError);
         assertTrue(patternError.contains("项目根目录之外"), patternError);
@@ -69,7 +69,7 @@ class PathGuardTest {
         } catch (UnsupportedOperationException | java.nio.file.FileSystemException error) {
             return;
         }
-        String error = PathGuard.validatePath(link.resolve("file.txt").toString(), projectRoot, false);
+        String error = PathGuard.validatePath(link.resolve("file.txt").toString(), projectRoot, false, false);
 
         assertNotNull(error);
         assertTrue(error.contains("符号链接") || error.contains("父目录"), error);

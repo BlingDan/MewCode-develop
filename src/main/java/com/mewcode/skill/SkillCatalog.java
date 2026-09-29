@@ -234,10 +234,7 @@ public final class SkillCatalog {
   private static Map<String, SkillDefinition> selectWinners(
       Map<String, List<SkillDefinition>> candidates) {
     var selected = new LinkedHashMap<String, SkillDefinition>();
-    candidates.forEach(
-        (name, versions) -> {
-          if (!versions.isEmpty()) selected.put(name, versions.getLast());
-        });
+    candidates.forEach((name, versions) -> selected.put(name, versions.getLast()));
     return selected;
   }
 

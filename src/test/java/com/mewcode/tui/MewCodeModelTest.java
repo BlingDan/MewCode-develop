@@ -15,7 +15,6 @@ import com.mewcode.llm.LlmClient;
 import com.mewcode.llm.PromptRequest;
 import com.mewcode.llm.StreamEvent;
 import com.mewcode.permission.BashSandbox;
-import com.mewcode.permission.BashSandboxFactory;
 import com.mewcode.permission.BashSandboxRequest;
 import com.mewcode.permission.PathAuthorizationStore;
 import com.mewcode.permission.PermissionMode;
@@ -56,7 +55,7 @@ class MewCodeModelTest {
         new MewCodeModel(
             List.of(provider("one", "model-one")),
             projectRoot,
-            (provider, prompt) -> client,
+            provider -> client,
             new AgentLoopConfig(),
             PermissionMode.BYPASS_PERMISSIONS,
             new PermissionRuleEngine(),
@@ -238,8 +237,8 @@ class MewCodeModelTest {
     type(model, "/review 特别注意并发安全");
     model.update(key("enter"));
     awaitCalls(client, 1);
-    assertTrue(client.lastRequest.get().flattenedSystemPrompt().contains("检查当前 Git diff"));
-    assertTrue(client.lastRequest.get().flattenedSystemPrompt().contains("特别注意并发安全"));
+    assertTrue(client.lastRequest.get().systemSegments().toString().contains("检查当前 Git diff"));
+    assertTrue(client.lastRequest.get().systemSegments().toString().contains("特别注意并发安全"));
     assertTrue(client.lastMessages.get().getLast().textContent().startsWith("/review"));
     awaitIdle(model);
   }
@@ -279,7 +278,7 @@ class MewCodeModelTest {
         new MewCodeModel(
             List.of(provider("one", "model-one")),
             projectRoot,
-            (provider, prompt) -> client,
+            provider -> client,
             new AgentLoopConfig(),
             PermissionMode.DEFAULT,
             new PermissionRuleEngine(),
@@ -454,16 +453,12 @@ class MewCodeModelTest {
   }
 
   @Test
-  void usesTheExplicitRootForPromptAndBanner() {
-    var prompt = new AtomicReference<String>();
+  void usesTheExplicitRootForBanner() {
     var model =
         new MewCodeModel(
             List.of(provider("one", "model-one")),
             projectRoot,
-            (provider, systemPrompt) -> {
-              prompt.set(systemPrompt);
-              return new QueueClient();
-            },
+            provider -> new QueueClient(),
             projectRoot.resolve("test-home"));
 
     var update = model.update(new WindowSizeMessage(100, 30));
@@ -472,29 +467,28 @@ class MewCodeModelTest {
     String root = projectRoot.toAbsolutePath().normalize().toString();
 
     assertTrue(printed.stream().anyMatch(line -> line.contains(root)), printed.toString());
-    assertNotNull(prompt.get());
-    assertTrue(prompt.get().contains("The current project root is: " + root));
-    assertTrue(prompt.get().contains(root + "/.trae/skills/mew-spec/SKILL.md"));
+    model.close();
   }
 
   @Test
   void loadsProjectInstructionsBeforeCreatingProvider() throws Exception {
     Files.writeString(projectRoot.resolve("MEWCODE.md"), "项目必须先读取相关文件。", StandardCharsets.UTF_8);
-    var prompt = new AtomicReference<String>();
+    var client =
+        new QueueClient(
+            response(new StreamEvent.TextDelta("done"), new StreamEvent.StreamEnd("end_turn")));
     var model =
         new MewCodeModel(
             List.of(provider("one", "model-one")),
             projectRoot,
-            (provider, systemPrompt) -> {
-              prompt.set(systemPrompt);
-              return new QueueClient();
-            },
+            provider -> client,
             projectRoot.resolve("test-home"));
 
     model.update(new WindowSizeMessage(80, 24));
+    type(model, "hello");
+    model.update(key("enter"));
+    pollUntilIdleCollect(model, client, 1);
 
-    assertNotNull(prompt.get());
-    assertTrue(prompt.get().contains("项目必须先读取相关文件。"));
+    assertTrue(client.lastRequest.get().systemSegments().toString().contains("项目必须先读取相关文件。"));
     model.close();
   }
 
@@ -544,7 +538,7 @@ class MewCodeModelTest {
         new MewCodeModel(
             List.of(provider("one", "model-one")),
             projectRoot,
-            (provider, prompt) -> client,
+            provider -> client,
             projectRoot.resolve("test-home"));
     model.update(new WindowSizeMessage(80, 24));
 
@@ -574,7 +568,7 @@ class MewCodeModelTest {
         new MewCodeModel(
             List.of(provider("one", "model-one")),
             projectRoot,
-            (provider, prompt) -> client,
+            provider -> client,
             projectRoot.resolve("test-home"));
     model.update(new WindowSizeMessage(80, 24));
 
@@ -627,12 +621,12 @@ class MewCodeModelTest {
         new MewCodeModel(
             List.of(provider("one", "model-one"), provider("two", "model-two")),
             projectRoot,
-            (provider, prompt) -> new QueueClient(),
+            provider -> new QueueClient(),
             new AgentLoopConfig(),
             PermissionMode.DEFAULT,
             new PermissionRuleEngine(),
             new PathAuthorizationStore(projectRoot),
-            BashSandboxFactory.create(),
+            BashSandbox.create(),
             List.of(slowMcp));
     try {
       model.update(new WindowSizeMessage(80, 24));
@@ -934,7 +928,7 @@ class MewCodeModelTest {
 
   private MewCodeModel model(List<ProviderConfig> providers, LlmClient client) {
     return new MewCodeModel(
-        providers, projectRoot, (provider, prompt) -> client, projectRoot.resolve("test-home"));
+        providers, projectRoot, provider -> client, projectRoot.resolve("test-home"));
   }
 
   private static ProviderConfig provider(String name, String model) {
@@ -1160,7 +1154,7 @@ class MewCodeModelTest {
     @Override
     public synchronized CancellableLlmStream openStream(PromptRequest request) {
       requests.add(request);
-      String system = request.flattenedSystemPrompt();
+      String system = request.systemSegments().toString();
       if (system.contains("会话标题生成器")) return new CancellableLlmStream(response("记忆测试"), () -> {});
       if (system.contains("长期记忆整理器")) {
         return new CancellableLlmStream(response(MEMORY_RESPONSE), () -> {});
@@ -1170,7 +1164,7 @@ class MewCodeModelTest {
 
     private synchronized List<PromptRequest> memoryRequests() {
       return requests.stream()
-          .filter(request -> request.flattenedSystemPrompt().contains("长期记忆整理器"))
+          .filter(request -> request.systemSegments().toString().contains("长期记忆整理器"))
           .toList();
     }
   }
@@ -1188,18 +1182,11 @@ class MewCodeModelTest {
     }
 
     @Override
-    public BlockingQueue<StreamEvent> stream(ConversationManager conversation) {
-      calls.incrementAndGet();
-      lastConversation.set(conversation);
-      lastMessages.set(conversation.getMessages());
-      return queues.isEmpty() ? new LinkedBlockingQueue<>() : queues.removeFirst();
-    }
-
-    @Override
     public synchronized CancellableLlmStream openStream(PromptRequest request) {
       if (isBackgroundRequest(request)) {
         return new CancellableLlmStream(
-            response(request.flattenedSystemPrompt().contains("会话标题生成器") ? "标题" : "[]"), () -> {});
+            response(request.systemSegments().toString().contains("会话标题生成器") ? "标题" : "[]"),
+            () -> {});
       }
       calls.incrementAndGet();
       lastRequest.set(request);
@@ -1213,7 +1200,7 @@ class MewCodeModelTest {
     }
 
     private static boolean isBackgroundRequest(PromptRequest request) {
-      String system = request.flattenedSystemPrompt();
+      String system = request.systemSegments().toString();
       return system.contains("长期记忆整理器")
           || system.contains("会话标题生成器")
           || system.contains("memory 索引裁剪器");

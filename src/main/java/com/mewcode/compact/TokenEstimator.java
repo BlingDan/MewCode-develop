@@ -6,6 +6,7 @@ import com.mewcode.conversation.TextBlock;
 import com.mewcode.conversation.ThinkingBlock;
 import com.mewcode.conversation.ToolResultBlock;
 import com.mewcode.conversation.ToolUseBlock;
+import com.mewcode.llm.PromptRequest;
 import com.mewcode.llm.StreamEvent;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -26,7 +27,7 @@ public final class TokenEstimator {
 
     /** 估算当前请求将消耗的 Token。 */
     public synchronized long estimate(
-            ContextRequest request, List<Message> history) {
+            PromptRequest request, List<Message> history) {
         long characters = requestCharacters(request, history);
         if (anchor.baselineValid() && characters >= anchor.requestCharacters()) {
             return anchor.totalTokens()
@@ -37,7 +38,7 @@ public final class TokenEstimator {
 
     /** 统计请求快照的稳定字符数。 */
     public long requestCharacters(
-            ContextRequest request, List<Message> history) {
+            PromptRequest request, List<Message> history) {
         Objects.requireNonNull(request, "request");
         Objects.requireNonNull(history, "history");
         long total = 0;
@@ -60,7 +61,7 @@ public final class TokenEstimator {
     public synchronized void recordUsage(
             StreamEvent.Usage usage,
             List<Message> sentHistory,
-            ContextRequest request) {
+            PromptRequest request) {
         Objects.requireNonNull(usage, "usage");
         long characters = requestCharacters(request, sentHistory);
         OptionalLong input = usage.inputTokens();

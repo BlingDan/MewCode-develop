@@ -67,7 +67,7 @@ public final class WorktreeTool implements Tool {
   }
 
   @Override
-  public String validateInput(Map<String, Object> input) {
+  public String validateInput(ToolExecutionContext context, Map<String, Object> input) {
     if (input == null
         || !(input.get("action") instanceof String action)
         || !Set.of("create", "enter", "exit", "list", "delete").contains(action))
@@ -104,7 +104,7 @@ public final class WorktreeTool implements Tool {
 
   @Override
   public ToolResult execute(ToolExecutionContext context, Map<String, Object> input) {
-    String invalid = validateInput(input);
+    String invalid = validateInput(context, input);
     if (invalid != null) return ToolResult.error(invalid);
     String action = (String) input.get("action");
     String name = (String) input.get("name");
@@ -168,7 +168,7 @@ public final class WorktreeTool implements Tool {
           else manager.discardFromUserCommand(name, discardId, context.cancellationToken());
           yield ToolResult.success("已删除工作树及分支：" + name);
         }
-        default -> throw new IllegalStateException();
+        default -> ToolResult.error("未知 Worktree action：" + action);
       };
     } catch (WorktreeException error) {
       return ToolResult.error(error.getMessage());

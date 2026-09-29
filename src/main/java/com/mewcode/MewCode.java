@@ -104,12 +104,12 @@ public final class MewCode {
           new MewCodeModel(
               config.getProviders(),
               projectRoot,
-              com.mewcode.llm.LlmClients::create,
+              com.mewcode.llm.LlmClient::create,
               config.getAgent().getLoop(),
               permissions.mode(),
               permissions.ruleEngine(),
               permissions.pathAuthorizationStore(),
-              com.mewcode.permission.BashSandboxFactory.create(),
+              com.mewcode.permission.BashSandbox.create(),
               mcp.servers());
       model.configureWorktree(config.getWorktree());
       model.configureSubAgents(config.getAgent().getSubagent());

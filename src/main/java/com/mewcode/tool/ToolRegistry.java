@@ -42,8 +42,8 @@ public final class ToolRegistry {
     var names = new java.util.LinkedHashSet<String>();
     var conflicts = new ArrayList<String>();
     for (Tool tool : incoming) {
-      if (tool == null || !names.add(tool.name())) {
-        if (tool != null) conflicts.add(tool.name());
+      if (!names.add(tool.name())) {
+        conflicts.add(tool.name());
         continue;
       }
       if (tools.containsKey(tool.name()) && !skillTools.contains(tool.name())) {

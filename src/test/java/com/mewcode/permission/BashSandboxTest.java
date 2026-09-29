@@ -51,7 +51,7 @@ class BashSandboxTest {
 
   @Test
   void factorySelectsTheCurrentPlatformAdapter() {
-    BashSandbox sandbox = BashSandboxFactory.create();
+    BashSandbox sandbox = BashSandbox.create();
     assertTrue(sandbox != null);
   }
 

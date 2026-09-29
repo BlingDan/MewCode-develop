@@ -11,10 +11,10 @@ import com.mewcode.agent.PromptRequestFactory;
 import com.mewcode.command.CommandContext;
 import com.mewcode.command.CommandRegistry;
 import com.mewcode.compact.ContextManager;
+import com.mewcode.config.AppConfig.SubAgentConfig;
 import com.mewcode.config.HookConfigLoader;
 import com.mewcode.config.McpServerConfig;
 import com.mewcode.config.ProviderConfig;
-import com.mewcode.config.SubAgentConfig;
 import com.mewcode.conversation.ConversationManager;
 import com.mewcode.hook.HookEngine;
 import com.mewcode.hook.HookEvent;
@@ -24,11 +24,9 @@ import com.mewcode.hook.HookSessionState;
 import com.mewcode.instructions.InstructionLoadResult;
 import com.mewcode.instructions.InstructionLoader;
 import com.mewcode.llm.LlmClient;
-import com.mewcode.llm.LlmClients;
 import com.mewcode.mcp.McpManager;
 import com.mewcode.memory.MemoryManager;
 import com.mewcode.permission.BashSandbox;
-import com.mewcode.permission.BashSandboxFactory;
 import com.mewcode.permission.PathAuthorizationStore;
 import com.mewcode.permission.PermissionGate;
 import com.mewcode.permission.PermissionMode;
@@ -36,8 +34,6 @@ import com.mewcode.permission.PermissionRequest;
 import com.mewcode.permission.PermissionResponse;
 import com.mewcode.permission.PermissionRuleEngine;
 import com.mewcode.permission.PermissionRuntime;
-import com.mewcode.prompt.PromptBuilder;
-import com.mewcode.prompt.SystemPromptBundle;
 import com.mewcode.session.HistoryStore;
 import com.mewcode.session.ResumeResult;
 import com.mewcode.session.SessionInfo;
@@ -60,13 +56,16 @@ import com.mewcode.tool.impl.AgentTool;
 import com.mewcode.tool.impl.LoadSkillTool;
 import com.mewcode.tool.impl.TaskTools;
 import com.mewcode.tool.support.CommandRunner;
+import com.mewcode.tui.tea.ANSI256Color;
 import com.mewcode.tui.tea.Command;
 import com.mewcode.tui.tea.KeyPressMessage;
 import com.mewcode.tui.tea.Message;
 import com.mewcode.tui.tea.Model;
 import com.mewcode.tui.tea.QuitMessage;
+import com.mewcode.tui.tea.Style;
 import com.mewcode.tui.tea.UpdateResult;
 import com.mewcode.tui.tea.WindowSizeMessage;
+import com.mewcode.util.Closeables;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -75,8 +74,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
-import java.util.function.BiFunction;
+import java.util.function.Function;
 
 /**
  * MewCode 终端交互模型，负责把 AgentEvent 投影为可重绘的 UI 状态。
@@ -89,13 +89,31 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   public static final String VERSION = "0.1.0";
   private static final Duration POLL_INTERVAL = Duration.ofMillis(50);
   private static final String[] SPINNER = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
+  private static final List<String> SPINNER_VERBS = List.of("Imagining", "Thinking", "Composing");
+  private static final Style BANNER = Style.newStyle().foreground(new ANSI256Color(80)).bold(true);
+  private static final Style DIM = Style.newStyle().foreground(new ANSI256Color(242));
+  private static final Style PROMPT = Style.newStyle().foreground(new ANSI256Color(80)).bold(true);
+  private static final Style ASSISTANT = Style.newStyle().foreground(new ANSI256Color(99));
+  private static final Style TOOL = Style.newStyle().foreground(new ANSI256Color(81)).bold(true);
+  private static final Style TOOL_RESULT = Style.newStyle().foreground(new ANSI256Color(242));
+  private static final Style ERROR = Style.newStyle().foreground(new ANSI256Color(203)).bold(true);
+  private static final Style SELECTED =
+      Style.newStyle().foreground(new ANSI256Color(80)).bold(true);
+  private static final Style STATUS = Style.newStyle().foreground(new ANSI256Color(245));
+  private static final Style SEPARATOR = Style.newStyle().foreground(new ANSI256Color(239));
   // streaming view 还要保留状态栏、输入框和 spinner，正文只能占剩余行数。
   private static final int STREAMING_FIXED_LINES = 11;
 
+  private enum AppState {
+    PROVIDER_SELECT,
+    CHAT
+  }
+
+  private record ChatMessage(String role, String content, double elapsedSeconds) {}
+
   private final List<ProviderConfig> providers;
   private final Path projectRoot;
-  private final SystemPromptBundle systemPromptBundle;
-  private final BiFunction<ProviderConfig, String, LlmClient> clientFactory;
+  private final Function<ProviderConfig, LlmClient> clientFactory;
   private final AgentLoopConfig loopConfig;
   private final List<McpServerConfig> mcpServerConfigs;
   private final PermissionRuntime permissionRuntime;
@@ -181,29 +199,28 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   public record PromptCheckPollMessage() implements Message {}
 
   public MewCodeModel(List<ProviderConfig> providers) {
-    this(providers, currentProjectRoot(), LlmClients::create);
+    this(providers, currentProjectRoot(), LlmClient::create);
   }
 
   public MewCodeModel(List<ProviderConfig> providers, Path projectRoot) {
-    this(providers, projectRoot, LlmClients::create);
+    this(providers, projectRoot, LlmClient::create);
   }
 
-  MewCodeModel(
-      List<ProviderConfig> providers, BiFunction<ProviderConfig, String, LlmClient> clientFactory) {
+  MewCodeModel(List<ProviderConfig> providers, Function<ProviderConfig, LlmClient> clientFactory) {
     this(providers, currentProjectRoot(), clientFactory, new AgentLoopConfig());
   }
 
   MewCodeModel(
       List<ProviderConfig> providers,
       Path projectRoot,
-      BiFunction<ProviderConfig, String, LlmClient> clientFactory) {
+      Function<ProviderConfig, LlmClient> clientFactory) {
     this(providers, projectRoot, clientFactory, new AgentLoopConfig());
   }
 
   MewCodeModel(
       List<ProviderConfig> providers,
       Path projectRoot,
-      BiFunction<ProviderConfig, String, LlmClient> clientFactory,
+      Function<ProviderConfig, LlmClient> clientFactory,
       Path userHome) {
     this(
         providers,
@@ -213,7 +230,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
         PermissionMode.DEFAULT,
         new PermissionRuleEngine(),
         new PathAuthorizationStore(projectRoot),
-        BashSandboxFactory.create(),
+        BashSandbox.create(),
         List.of(),
         userHome);
   }
@@ -221,7 +238,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   public MewCodeModel(
       List<ProviderConfig> providers,
       Path projectRoot,
-      BiFunction<ProviderConfig, String, LlmClient> clientFactory,
+      Function<ProviderConfig, LlmClient> clientFactory,
       AgentLoopConfig loopConfig) {
     this(
         providers,
@@ -231,14 +248,14 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
         PermissionMode.DEFAULT,
         new PermissionRuleEngine(),
         new PathAuthorizationStore(projectRoot),
-        BashSandboxFactory.create(),
+        BashSandbox.create(),
         List.of());
   }
 
   public MewCodeModel(
       List<ProviderConfig> providers,
       Path projectRoot,
-      BiFunction<ProviderConfig, String, LlmClient> clientFactory,
+      Function<ProviderConfig, LlmClient> clientFactory,
       AgentLoopConfig loopConfig,
       PermissionMode permissionMode,
       PermissionRuleEngine permissionRuleEngine,
@@ -260,7 +277,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   public MewCodeModel(
       List<ProviderConfig> providers,
       Path projectRoot,
-      BiFunction<ProviderConfig, String, LlmClient> clientFactory,
+      Function<ProviderConfig, LlmClient> clientFactory,
       AgentLoopConfig loopConfig,
       PermissionMode permissionMode,
       PermissionRuleEngine permissionRuleEngine,
@@ -283,7 +300,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   MewCodeModel(
       List<ProviderConfig> providers,
       Path projectRoot,
-      BiFunction<ProviderConfig, String, LlmClient> clientFactory,
+      Function<ProviderConfig, LlmClient> clientFactory,
       AgentLoopConfig loopConfig,
       PermissionMode permissionMode,
       PermissionRuleEngine permissionRuleEngine,
@@ -297,7 +314,6 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     this.userHome = Objects.requireNonNull(userHome, "userHome").toAbsolutePath().normalize();
     InstructionLoadResult instructions =
         new InstructionLoader(this.projectRoot, this.userHome).load();
-    this.systemPromptBundle = PromptBuilder.buildBundle(this.projectRoot, instructions.text());
     this.clientFactory = Objects.requireNonNull(clientFactory, "clientFactory");
     this.loopConfig = Objects.requireNonNull(loopConfig, "loopConfig").copy();
     this.agentCatalog =
@@ -509,14 +525,8 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     closeContextManager();
     closeToolExecutor();
     try {
-      client = clientFactory.apply(selectedProvider, systemPromptBundle.flattenedText());
-      providerRouter =
-          new ProviderRouter(
-              providers,
-              selectedProvider,
-              client,
-              clientFactory,
-              systemPromptBundle.flattenedText());
+      client = clientFactory.apply(selectedProvider);
+      providerRouter = new ProviderRouter(providers, selectedProvider, client, clientFactory);
       sessionManager.attachTitleClient(client, selectedProvider.getModel());
       currentMemory().attachClient(client, selectedProvider.getModel());
       if (toolRegistry == null) {
@@ -770,12 +780,12 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
       confirmationAction = null;
       confirmationText = null;
       action.run();
-      return UpdateResult.from(this, Command.println(Styles.DIM.render("操作已确认")));
+      return UpdateResult.from(this, Command.println(DIM.render("操作已确认")));
     }
     if ("n".equalsIgnoreCase(message.key())) {
       confirmationAction = null;
       confirmationText = null;
-      return UpdateResult.from(this, Command.println(Styles.DIM.render("操作已取消")));
+      return UpdateResult.from(this, Command.println(DIM.render("操作已取消")));
     }
     return UpdateResult.from(this);
   }
@@ -835,7 +845,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
           case DENY -> "已拒绝本次操作";
         };
     pendingPermission = null;
-    return UpdateResult.from(this, Command.println(Styles.DIM.render(messageText)));
+    return UpdateResult.from(this, Command.println(DIM.render(messageText)));
   }
 
   private UpdateResult<MewCodeModel> insertCharacters(KeyPressMessage message) {
@@ -921,7 +931,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
       String message =
           "Hook [" + result.rejection().hookName() + "] 拒绝用户输入：" + result.rejection().reason();
       backgroundDiagnostic = message;
-      return UpdateResult.from(this, Command.println(Styles.ERROR.render(message)));
+      return UpdateResult.from(this, Command.println(ERROR.render(message)));
     }
     inputBuffer.setLength(0);
     inputCursor = 0;
@@ -934,7 +944,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     pending.token().cancel();
     pendingPromptCheck = null;
     completedPromptCheck = null;
-    return UpdateResult.from(this, Command.println(Styles.DIM.render("已取消输入检查")));
+    return UpdateResult.from(this, Command.println(DIM.render("已取消输入检查")));
   }
 
   private UpdateResult<MewCodeModel> dispatchCommand(String text) {
@@ -942,7 +952,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     var call = commandRegistry.parse(text);
     if (call.isEmpty()) {
       return UpdateResult.from(
-          this, Command.println(Styles.DIM.render("未知命令：" + text.strip() + "，输入 /help 查看可用命令")));
+          this, Command.println(DIM.render("未知命令：" + text.strip() + "，输入 /help 查看可用命令")));
     }
     if (call.get().command().type() == com.mewcode.command.Command.CommandType.SKILL) {
       return startSkillRequest(text, call.get());
@@ -958,7 +968,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     var commands = new ArrayList<Command>();
     if (pendingUiCommand != null) commands.add(pendingUiCommand);
     if (output != null && !output.isBlank()) {
-      commands.add(Command.println(Styles.DIM.render(output)));
+      commands.add(Command.println(DIM.render(output)));
     }
     return UpdateResult.from(this, sequence(commands));
   }
@@ -1081,7 +1091,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     chatMessages.add(new ChatMessage("user", text, 0));
     streamBuffer.setLength(0);
     requestStartMillis = System.currentTimeMillis();
-    spinnerVerb = SpinnerVerbs.random();
+    spinnerVerb = randomSpinnerVerb();
     spinnerFrame = 0;
     currentIteration = 0;
     pendingStreamError = null;
@@ -1115,7 +1125,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
       String original, CommandRegistry.CommandCall call) {
     SkillDefinition skill = skillCatalog.find(call.command().name()).orElse(null);
     if (skill == null) {
-      return UpdateResult.from(this, Command.println(Styles.DIM.render("Skill 已被删除或更新，请重新补全后再试。")));
+      return UpdateResult.from(this, Command.println(DIM.render("Skill 已被删除或更新，请重新补全后再试。")));
     }
     if (skill.meta().mode() == SkillDefinition.Mode.FORK) {
       return startForkRequest(original, skill, call.args());
@@ -1233,7 +1243,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
               temporary,
               providerRouter.main().protocol(),
               loopConfig,
-              new PromptRequestFactory(forkWorkspace),
+              new PromptRequestFactory(forkWorkspace::systemPrompt),
               temporaryContext,
               permissionGate,
               permissionRuntime,
@@ -1243,7 +1253,11 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
           () ->
               new PromptAdditions(
                   forkWorkspace.memory(true, ignored -> {}).indexText(),
-                  java.util.Optional.empty()));
+                  java.util.Optional.empty(),
+                  "",
+                  "",
+                  List.of(),
+                  ""));
       child.setToolPolicySupplier(
           () ->
               com.mewcode.agent.ToolPolicy.forSubAgent(
@@ -1279,10 +1293,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
       forkToolExecutor.close();
       temporaryContext.close();
       forkWorkspace.closeMemories();
-      try {
-        parentUse.close();
-      } catch (Exception ignored) {
-      }
+      Closeables.closeQuietly(parentUse);
     }
   }
 
@@ -1294,8 +1305,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
       return UpdateResult.from(this, Command.println(renderError(message, 0)));
     }
     if (coordinator.estimateManualCompactionTokens(agentMode) < 5_000) {
-      return UpdateResult.from(
-          this, Command.println(Styles.DIM.render("当前上下文不足 5000 token，无需压缩。")));
+      return UpdateResult.from(this, Command.println(DIM.render("当前上下文不足 5000 token，无需压缩。")));
     }
 
     streamBuffer.setLength(0);
@@ -1557,7 +1567,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
 
   @Override
   public void addSystemMessage(String text) {
-    pendingUiCommand = Command.println(Styles.DIM.render(text));
+    pendingUiCommand = Command.println(DIM.render(text));
   }
 
   @Override
@@ -1640,29 +1650,27 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
           case AgentEvent.PermissionRequested request -> {
             pendingPermission = request.request();
             printCommands.add(
-                Command.println(
-                    Styles.ERROR.render(PermissionPromptFormatter.format(pendingPermission))));
+                Command.println(ERROR.render(PermissionPromptFormatter.format(pendingPermission))));
           }
           case AgentEvent.TurnComplete turn -> {
             currentIteration = turn.round();
             printCommands.add(
-                Command.println(Styles.DIM.render("  Agent 正在推进第 %d 轮…".formatted(turn.round()))));
+                Command.println(DIM.render("  Agent 正在推进第 %d 轮…".formatted(turn.round()))));
           }
           case AgentEvent.Usage usage -> usageLabel = formatUsage(usage);
           case AgentEvent.CompactionStarted started -> {
             if (started.trigger() == com.mewcode.compact.ContextTrigger.EMERGENCY) {
               streamBuffer.setLength(0);
             }
-            printCommands.add(Command.println(Styles.DIM.render(compactionStartedText(started))));
+            printCommands.add(Command.println(DIM.render(compactionStartedText(started))));
           }
           case AgentEvent.CompactionComplete complete ->
-              printCommands.add(
-                  Command.println(Styles.DIM.render(compactionCompleteText(complete))));
+              printCommands.add(Command.println(DIM.render(compactionCompleteText(complete))));
           case AgentEvent.ProviderFallback fallback -> {
             streamBuffer.setLength(0);
             printCommands.add(
                 Command.println(
-                    Styles.DIM.render(
+                    DIM.render(
                         "  Provider %s 不可用，已回退到 %s。".formatted(fallback.from(), fallback.to()))));
           }
           case AgentEvent.LoopComplete ignored -> {
@@ -1687,7 +1695,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
           case AgentEvent.SubAgentBackgrounded backgrounded -> {
             pendingPermission = null;
             printCommands.add(
-                Command.println(Styles.DIM.render("  子 Agent 已转入后台：" + backgrounded.taskId())));
+                Command.println(DIM.render("  子 Agent 已转入后台：" + backgrounded.taskId())));
           }
         }
       }
@@ -1705,7 +1713,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
       conversation.addUserMessage(notification.content());
       commands.add(
           Command.println(
-              Styles.DIM.render(
+              DIM.render(
                   "  后台任务 %s 已%s。"
                       .formatted(
                           notification.taskId(),
@@ -1738,7 +1746,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
   private Command renderToolStarted(AgentEvent.ToolUse event) {
     String line =
         ToolDisplayFormatter.invocation(event.toolName(), event.input(), toolDisplayColumns());
-    return Command.println(Styles.TOOL.render(line));
+    return Command.println(TOOL.render(line));
   }
 
   private Command renderToolCompleted(AgentEvent.ToolResult event) {
@@ -1749,7 +1757,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
                 event.isError(),
                 java.util.Map.of("durationMs", event.durationMillis())),
             toolDisplayColumns());
-    var style = summary.isError() ? Styles.ERROR : Styles.TOOL_RESULT;
+    var style = summary.isError() ? ERROR : TOOL_RESULT;
     return Command.println(style.render(summary.text()));
   }
 
@@ -1787,10 +1795,10 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     String rendered = MarkdownRenderer.render(rawText, Math.max(width - 4, 20));
     resetStream();
     String output =
-        Styles.ASSISTANT.render("● ")
+        ASSISTANT.render("● ")
             + rendered.stripTrailing()
             + "\n"
-            + Styles.DIM.render("  Completed in %.1fs · %s".formatted(elapsed, finalUsage));
+            + DIM.render("  Completed in %.1fs · %s".formatted(elapsed, finalUsage));
     return UpdateResult.from(this, Command.println(output));
   }
 
@@ -1817,14 +1825,13 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     var output = new StringBuilder();
     if (!streamBuffer.isEmpty()) {
       output
-          .append(Styles.ASSISTANT.render("● "))
+          .append(ASSISTANT.render("● "))
           .append(safeTerminalText(streamBuffer.toString()))
           .append("\n")
-          .append(Styles.DIM.render("  本轮已取消，部分响应未写入历史"))
+          .append(DIM.render("  本轮已取消，部分响应未写入历史"))
           .append("\n");
     }
-    output.append(
-        Styles.DIM.render("  已取消本轮 Agent Loop（耗时 %.1fs · %s）".formatted(elapsed, finalUsage)));
+    output.append(DIM.render("  已取消本轮 Agent Loop（耗时 %.1fs · %s）".formatted(elapsed, finalUsage)));
     resetStream();
     return withTaskPolling(UpdateResult.from(this, Command.println(output.toString())));
   }
@@ -1836,15 +1843,15 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     var output = new StringBuilder();
     if (!streamBuffer.isEmpty()) {
       output
-          .append(Styles.ASSISTANT.render("● "))
+          .append(ASSISTANT.render("● "))
           .append(safeTerminalText(streamBuffer.toString()))
           .append("\n")
-          .append(Styles.DIM.render("  Partial response (not added to history)"))
+          .append(DIM.render("  Partial response (not added to history)"))
           .append("\n");
     }
     chatMessages.add(new ChatMessage("error", safeMessage, elapsed));
     output.append(renderError(safeMessage, elapsed));
-    output.append("\n").append(Styles.DIM.render("  " + finalUsage));
+    output.append("\n").append(DIM.render("  " + finalUsage));
     resetStream();
     return withTaskPolling(UpdateResult.from(this, Command.println(output.toString())));
   }
@@ -1869,25 +1876,25 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     var view =
         new StringBuilder(renderBanner())
             .append("\n\n")
-            .append(Styles.SELECTED.render("Select a provider"))
+            .append(SELECTED.render("Select a provider"))
             .append("\n\n");
     for (int i = 0; i < providers.size(); i++) {
       ProviderConfig provider = providers.get(i);
       String label = provider.getName() + " (" + provider.getModel() + ")";
-      view.append(i == providerCursor ? Styles.SELECTED.render("  ❯ " + label) : "    " + label);
+      view.append(i == providerCursor ? SELECTED.render("  ❯ " + label) : "    " + label);
       view.append('\n');
     }
-    view.append('\n').append(Styles.DIM.render("↑/↓ select · Enter confirm · Ctrl+C quit"));
+    view.append('\n').append(DIM.render("↑/↓ select · Enter confirm · Ctrl+C quit"));
     return view.toString();
   }
 
   /** 渲染聊天态；动态区和输入框必须保持有界，避免终端 scrollback 重复追加。 */
   private String viewChat() {
     var view = new StringBuilder();
-    view.append(Styles.DIM.render("● Ready for conversation and tools · " + modeLabel()));
+    view.append(DIM.render("● Ready for conversation and tools · " + modeLabel()));
     view.append('\n');
     view.append(
-            Styles.DIM.render(
+            DIM.render(
                 "  目录："
                     + tailCharacters(
                         workingDirectory()
@@ -1899,36 +1906,33 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
 
     if (streaming) {
       if (!streamBuffer.isEmpty()) {
-        view.append('\n')
-            .append(Styles.ASSISTANT.render("● "))
-            .append(streamingPreview())
-            .append('\n');
+        view.append('\n').append(ASSISTANT.render("● ")).append(streamingPreview()).append('\n');
       }
       String frame = SPINNER[spinnerFrame % SPINNER.length];
       String iteration = currentIteration == 0 ? "准备第 1 轮" : "第 %d 轮".formatted(currentIteration);
       view.append('\n')
           .append(
-              Styles.DIM.render(
+              DIM.render(
                   "%s %s… · %s · (%.0fs)"
                       .formatted(frame, spinnerVerb, iteration, elapsedSeconds())));
-      view.append('\n').append(Styles.DIM.render("  " + usageLabel));
+      view.append('\n').append(DIM.render("  " + usageLabel));
       view.append('\n');
     } else if (mcpInitializing) {
-      view.append('\n').append(Styles.DIM.render("  MCP 正在连接…")).append('\n');
+      view.append('\n').append(DIM.render("  MCP 正在连接…")).append('\n');
     } else if (initializationError != null) {
-      view.append('\n').append(Styles.ERROR.render("✖ " + initializationError)).append('\n');
+      view.append('\n').append(ERROR.render("✖ " + initializationError)).append('\n');
     }
     if (pendingPromptCheck != null) {
-      view.append('\n').append(Styles.DIM.render("  正在检查输入…")).append('\n');
+      view.append('\n').append(DIM.render("  正在检查输入…")).append('\n');
     }
     if (!streaming && backgroundDiagnostic != null) {
       view.append('\n')
-          .append(Styles.ERROR.render("✖ " + safeTerminalText(backgroundDiagnostic)))
+          .append(ERROR.render("✖ " + safeTerminalText(backgroundDiagnostic)))
           .append('\n');
     }
     if (confirmationText != null) {
       view.append('\n')
-          .append(Styles.ERROR.render("  " + safeTerminalText(confirmationText) + "（y 确认 / n 取消）"))
+          .append(ERROR.render("  " + safeTerminalText(confirmationText) + "（y 确认 / n 取消）"))
           .append('\n');
     }
     if (!completionCandidates.isEmpty()) {
@@ -1936,30 +1940,28 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
       for (int index = 0; index < completionCandidates.size(); index++) {
         var candidate = completionCandidates.get(index);
         String line = "  /" + candidate.name() + "  " + candidate.description();
-        view.append(index == completionCursor ? Styles.SELECTED.render("❯" + line) : " " + line)
+        view.append(index == completionCursor ? SELECTED.render("❯" + line) : " " + line)
             .append('\n');
       }
     }
 
     int boxWidth = Math.max(width - 2, 20);
     String border = "─".repeat(boxWidth);
-    view.append(Styles.SEPARATOR.render("╭" + border + "╮")).append('\n');
+    view.append(SEPARATOR.render("╭" + border + "╮")).append('\n');
     if (streaming) {
-      view.append("│ ").append(Styles.DIM.render("Waiting for response…"));
+      view.append("│ ").append(DIM.render("Waiting for response…"));
       view.append(" ".repeat(Math.max(boxWidth - 21, 0))).append("│\n");
     } else {
       appendInput(view);
     }
-    view.append(Styles.SEPARATOR.render("╰" + border + "╯")).append('\n');
+    view.append(SEPARATOR.render("╰" + border + "╯")).append('\n');
     view.append(renderStatusBar());
     return view.toString();
   }
 
   private void appendInput(StringBuilder view) {
     if (inputBuffer.isEmpty()) {
-      view.append("│ ")
-          .append(Styles.PROMPT.render("❯ "))
-          .append(Styles.DIM.render("Send a message..."));
+      view.append("│ ").append(PROMPT.render("❯ ")).append(DIM.render("Send a message..."));
       int used = 2 + 2 + "Send a message...".length();
       view.append(" ".repeat(Math.max(Math.max(width - 2, 20) - used, 0))).append("│\n");
       return;
@@ -1970,7 +1972,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     String[] lines = withCursor.split("\n", -1);
     for (int i = 0; i < lines.length; i++) {
       view.append("│ ");
-      if (i == 0) view.append(Styles.PROMPT.render("❯ "));
+      if (i == 0) view.append(PROMPT.render("❯ "));
       else view.append("  ");
       view.append(lines[i]);
       int used = 2 + 2 + com.mewcode.tui.tea.Program.displayWidth(lines[i]);
@@ -1982,7 +1984,7 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     String left = agentMode == AgentMode.PLAN ? "[PLAN]" : "[DEFAULT]";
     String right = selectedProvider == null ? "" : selectedProvider.getModel();
     int spaces = Math.max(width - left.length() - right.length(), 1);
-    return Styles.STATUS.render(left + " ".repeat(spaces) + right);
+    return STATUS.render(left + " ".repeat(spaces) + right);
   }
 
   private String modeLabel() {
@@ -2079,15 +2081,19 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
 
   private String renderBanner() {
     String model = selectedProvider == null ? "" : selectedProvider.getModel();
-    return Styles.BANNER.render(" /\\_/\\    MewCode " + VERSION)
+    return BANNER.render(" /\\_/\\    MewCode " + VERSION)
         + "\n"
-        + Styles.BANNER.render("( o.o )   " + model)
+        + BANNER.render("( o.o )   " + model)
         + "\n"
-        + Styles.BANNER.render(" > ^ <    " + workingDirectory());
+        + BANNER.render(" > ^ <    " + workingDirectory());
   }
 
   private static Path currentProjectRoot() {
     return Path.of(".").toAbsolutePath().normalize();
+  }
+
+  private static String randomSpinnerVerb() {
+    return SPINNER_VERBS.get(ThreadLocalRandom.current().nextInt(SPINNER_VERBS.size()));
   }
 
   private static Path currentUserHome() {
@@ -2103,15 +2109,15 @@ public final class MewCodeModel implements Model, CommandContext.UIController, A
     var result = new StringBuilder();
     for (int i = 0; i < lines.length; i++) {
       if (i > 0) result.append('\n');
-      result.append(i == 0 ? Styles.PROMPT.render("❯ ") : "  ").append(safeTerminalText(lines[i]));
+      result.append(i == 0 ? PROMPT.render("❯ ") : "  ").append(safeTerminalText(lines[i]));
     }
     return result.toString();
   }
 
   private static String renderError(String message, double elapsed) {
-    return Styles.ERROR.render("✖ " + safeTerminalText(message))
+    return ERROR.render("✖ " + safeTerminalText(message))
         + "\n"
-        + Styles.DIM.render("  Failed in %.1fs".formatted(elapsed));
+        + DIM.render("  Failed in %.1fs".formatted(elapsed));
   }
 
   private double elapsedSeconds() {

@@ -54,7 +54,12 @@ class AgentTurnCoordinatorPromptTest {
               conversation,
               ToolApiProtocol.OPENAI,
               new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+              new PromptRequestFactory(() -> PromptBuilder.buildBundle(projectRoot)),
+              null,
+              null,
+              null,
+              null,
+              null);
 
       var events = new ArrayList<AgentEvent>();
       AgentRun run = coordinator.startRun("hello", AgentMode.EXECUTE);
@@ -97,11 +102,21 @@ class AgentTurnCoordinatorPromptTest {
               conversation,
               ToolApiProtocol.OPENAI,
               new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+              new PromptRequestFactory(() -> PromptBuilder.buildBundle(projectRoot)),
+              null,
+              null,
+              null,
+              null,
+              null);
       coordinator.setPromptAdditionsSupplier(
           () ->
               new PromptAdditions(
-                  "MEMORY_INDEX", Optional.of(new Message("user", "RESUME_REMINDER"))));
+                  "MEMORY_INDEX",
+                  Optional.of(new Message("user", "RESUME_REMINDER")),
+                  "",
+                  "",
+                  List.of(),
+                  ""));
       coordinator.setCompletionListener(completed::set);
 
       AgentRun run = coordinator.startRun("hello", AgentMode.EXECUTE);
@@ -136,14 +151,19 @@ class AgentTurnCoordinatorPromptTest {
               conversation,
               ToolApiProtocol.OPENAI,
               new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+              new PromptRequestFactory(() -> PromptBuilder.buildBundle(projectRoot)),
+              null,
+              null,
+              null,
+              null,
+              null);
 
       AgentRun run = coordinator.startRun("记住我正在找 agent 相关工作", AgentMode.EXECUTE);
       while (!(run.events().next() instanceof AgentEvent.LoopComplete)) {
         // drain the run
       }
 
-      String system = client.requests.getFirst().flattenedSystemPrompt();
+      String system = client.requests.getFirst().systemSegments().toString();
       assertTrue(system.contains("长期 memory"), system);
       assertTrue(system.contains("不要修改 MEWCODE.md"), system);
     }
@@ -188,7 +208,12 @@ class AgentTurnCoordinatorPromptTest {
               conversation,
               ToolApiProtocol.OPENAI,
               new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+              new PromptRequestFactory(() -> PromptBuilder.buildBundle(projectRoot)),
+              null,
+              null,
+              null,
+              null,
+              null);
 
       AgentRun run = coordinator.startRun("记住这条项目知识：不要把它写进文件", AgentMode.EXECUTE);
       while (!(run.events().next() instanceof AgentEvent.LoopComplete)) {
@@ -218,7 +243,12 @@ class AgentTurnCoordinatorPromptTest {
               conversation,
               ToolApiProtocol.OPENAI,
               new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+              new PromptRequestFactory(() -> PromptBuilder.buildBundle(projectRoot)),
+              null,
+              null,
+              null,
+              null,
+              null);
 
       AgentRun run = coordinator.startRun("记住这条规则，并修改 README.md", AgentMode.EXECUTE);
       while (!(run.events().next() instanceof AgentEvent.LoopComplete)) {
@@ -247,7 +277,12 @@ class AgentTurnCoordinatorPromptTest {
               conversation,
               ToolApiProtocol.OPENAI,
               new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+              new PromptRequestFactory(() -> PromptBuilder.buildBundle(projectRoot)),
+              null,
+              null,
+              null,
+              null,
+              null);
 
       AgentRun run = coordinator.startRun("记录测试结果到 results.txt", AgentMode.EXECUTE);
       while (!(run.events().next() instanceof AgentEvent.LoopComplete)) {
@@ -276,7 +311,12 @@ class AgentTurnCoordinatorPromptTest {
               conversation,
               ToolApiProtocol.OPENAI,
               new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+              new PromptRequestFactory(() -> PromptBuilder.buildBundle(projectRoot)),
+              null,
+              null,
+              null,
+              null,
+              null);
 
       AgentRun run = coordinator.startRun("记录一下当前代码中的 TODO", AgentMode.EXECUTE);
       while (!(run.events().next() instanceof AgentEvent.LoopComplete)) {
@@ -306,7 +346,12 @@ class AgentTurnCoordinatorPromptTest {
               conversation,
               ToolApiProtocol.OPENAI,
               new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+              new PromptRequestFactory(() -> PromptBuilder.buildBundle(projectRoot)),
+              null,
+              null,
+              null,
+              null,
+              null);
       coordinator.setCompletionListener(notified::set);
 
       AgentRun run = coordinator.startRun("记住这条信息", AgentMode.EXECUTE);
@@ -336,7 +381,12 @@ class AgentTurnCoordinatorPromptTest {
               conversation,
               ToolApiProtocol.OPENAI,
               new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+              new PromptRequestFactory(() -> PromptBuilder.buildBundle(projectRoot)),
+              null,
+              null,
+              null,
+              null,
+              null);
 
       AgentRun run = coordinator.startRun(requestText, AgentMode.EXECUTE);
       while (!(run.events().next() instanceof AgentEvent.LoopComplete)) {
@@ -374,8 +424,12 @@ class AgentTurnCoordinatorPromptTest {
               conversation,
               ToolApiProtocol.OPENAI,
               new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)),
-              contextManager);
+              new PromptRequestFactory(() -> PromptBuilder.buildBundle(projectRoot)),
+              contextManager,
+              null,
+              null,
+              null,
+              null);
       var completed = new AtomicReference<List<Message>>();
       coordinator.setCompletionListener(completed::set);
 
@@ -453,8 +507,12 @@ class AgentTurnCoordinatorPromptTest {
               conversation,
               ToolApiProtocol.OPENAI,
               new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)),
-              contextManager);
+              new PromptRequestFactory(() -> PromptBuilder.buildBundle(projectRoot)),
+              contextManager,
+              null,
+              null,
+              null,
+              null);
 
       var events = new ArrayList<AgentEvent>();
       AgentRun run = coordinator.startRun("hello", AgentMode.EXECUTE);
@@ -520,8 +578,12 @@ class AgentTurnCoordinatorPromptTest {
               conversation,
               ToolApiProtocol.OPENAI,
               new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)),
-              contextManager);
+              new PromptRequestFactory(() -> PromptBuilder.buildBundle(projectRoot)),
+              contextManager,
+              null,
+              null,
+              null,
+              null);
 
       var events = new ArrayList<AgentEvent>();
       AgentRun run = coordinator.startRun("hello", AgentMode.EXECUTE);
@@ -573,8 +635,12 @@ class AgentTurnCoordinatorPromptTest {
               conversation,
               ToolApiProtocol.OPENAI,
               new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)),
-              contextManager);
+              new PromptRequestFactory(() -> PromptBuilder.buildBundle(projectRoot)),
+              contextManager,
+              null,
+              null,
+              null,
+              null);
 
       var events = new ArrayList<AgentEvent>();
       AgentRun run = coordinator.startManualCompaction(AgentMode.EXECUTE);

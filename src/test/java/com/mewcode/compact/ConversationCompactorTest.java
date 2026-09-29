@@ -9,6 +9,7 @@ import com.mewcode.conversation.ContentBlock;
 import com.mewcode.conversation.Message;
 import com.mewcode.conversation.ToolResultBlock;
 import com.mewcode.conversation.ToolUseBlock;
+import com.mewcode.llm.PromptRequest;
 import com.mewcode.llm.StreamEvent;
 import com.mewcode.testsupport.FakeLlmClient;
 import java.nio.file.Path;
@@ -45,7 +46,7 @@ class ConversationCompactorTest {
                 new StreamEvent.TextDelta(summary()),
                 new StreamEvent.Usage(OptionalLong.of(20), OptionalLong.of(5)),
                 new StreamEvent.StreamEnd("end_turn"));
-        var request = new ContextRequest(List.of("system"), List.of(), Optional.empty());
+        var request = new PromptRequest(List.of("system"), List.of(), List.of(), Optional.empty());
 
         try (var externalizer = new ToolResultExternalizer(tempDir)) {
             var compactor = new ConversationCompactor(
@@ -102,7 +103,7 @@ class ConversationCompactorTest {
         client.enqueue(new StreamEvent.TextDelta(summary()), new StreamEvent.StreamEnd("end_turn"));
         try (var externalizer = new ToolResultExternalizer(tempDir)) {
             new ConversationCompactor(client, new TokenEstimator(), externalizer)
-                    .compact(history, new ContextRequest(List.of(), List.of(), Optional.empty()));
+                    .compact(history, new PromptRequest(List.of(), List.of(), List.of(), Optional.empty()));
         }
 
         var messages = history.getMessages();
@@ -120,7 +121,7 @@ class ConversationCompactorTest {
         try (var externalizer = new ToolResultExternalizer(tempDir)) {
             var result = new ConversationCompactor(
                     client, new TokenEstimator(), externalizer)
-                    .compact(history, new ContextRequest(List.of(), List.of(), Optional.empty()));
+                    .compact(history, new PromptRequest(List.of(), List.of(), List.of(), Optional.empty()));
 
             assertFalse(result.changed());
             assertEquals(0, client.requestCount());
@@ -152,7 +153,7 @@ class ConversationCompactorTest {
                     ContextException.class,
                     () -> compactor.compact(
                             history,
-                            new ContextRequest(List.of(), List.of(), Optional.empty())));
+                            new PromptRequest(List.of(), List.of(), List.of(), Optional.empty())));
             assertEquals(before, history.getMessages());
         }
     }
@@ -172,7 +173,7 @@ class ConversationCompactorTest {
 
         try (var externalizer = new ToolResultExternalizer(tempDir)) {
             new ConversationCompactor(client, new TokenEstimator(), externalizer)
-                    .compact(history, new ContextRequest(List.of(), List.of(), Optional.empty()), "数据库迁移");
+                    .compact(history, new PromptRequest(List.of(), List.of(), List.of(), Optional.empty()), "数据库迁移");
 
             assertTrue(client.requests().getFirst().systemSegments().stream()
                     .anyMatch(segment -> segment.contains("数据库迁移")));

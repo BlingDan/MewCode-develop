@@ -22,7 +22,7 @@ class PermissionConfigLoaderTest {
     Files.writeString(
         configDirectory.resolve("permissions.local.yaml"),
         "rules:\n  - pattern: 'Bash(git *)'\n    decision: deny\n");
-    var config = new PermissionConfig();
+    var config = new AppConfig.PermissionConfig();
     config.setMode("acceptEdits");
 
     var loaded = PermissionConfigLoader.load(projectRoot, config);
@@ -48,7 +48,7 @@ class PermissionConfigLoaderTest {
 
     assertThrows(
         ConfigLoader.ConfigException.class,
-        () -> PermissionConfigLoader.load(projectRoot, new PermissionConfig()));
+        () -> PermissionConfigLoader.load(projectRoot, new AppConfig.PermissionConfig()));
   }
 
   @Test
@@ -63,7 +63,7 @@ class PermissionConfigLoaderTest {
             + "      value: '^git (status|diff)$'\n"
             + "    decision: allow\n");
 
-    var loaded = PermissionConfigLoader.load(projectRoot, new PermissionConfig());
+    var loaded = PermissionConfigLoader.load(projectRoot, new AppConfig.PermissionConfig());
 
     assertEquals(
         com.mewcode.permission.RuleDecision.ALLOW,
@@ -89,7 +89,7 @@ class PermissionConfigLoaderTest {
             + "    decision: allow\n");
     assertThrows(
         ConfigLoader.ConfigException.class,
-        () -> PermissionConfigLoader.load(projectRoot, new PermissionConfig()));
+        () -> PermissionConfigLoader.load(projectRoot, new AppConfig.PermissionConfig()));
 
     Files.writeString(
         projectRoot.resolve(".mewcode/permissions.yaml"),
@@ -99,6 +99,6 @@ class PermissionConfigLoaderTest {
             + "    decision: allow\n");
     assertThrows(
         ConfigLoader.ConfigException.class,
-        () -> PermissionConfigLoader.load(projectRoot, new PermissionConfig()));
+        () -> PermissionConfigLoader.load(projectRoot, new AppConfig.PermissionConfig()));
   }
 }

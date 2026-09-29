@@ -51,22 +51,6 @@ public final class ReadFileTool implements Tool {
   }
 
   @Override
-  public String validateInput(Map<String, Object> input) {
-    String pathError = ToolInput.requireString(input, "path", " 请传入项目根目录内的绝对路径。");
-    if (pathError != null) return pathError;
-    try {
-      if (!Path.of(ToolInput.requiredString(input, "path")).isAbsolute()) {
-        return "参数 path 必须是绝对路径，请传入项目根目录内的绝对路径。";
-      }
-    } catch (RuntimeException error) {
-      return "参数 path 不是合法路径，请传入合法的绝对路径。";
-    }
-    String numberError = validatePositiveInteger(input, "offset");
-    if (numberError != null) return numberError;
-    return validatePositiveInteger(input, "limit");
-  }
-
-  @Override
   public String validateInput(ToolExecutionContext context, Map<String, Object> input) {
     String pathError = ToolInput.requireString(input, "path", " 请传入项目根目录内的绝对路径。");
     if (pathError != null) return pathError;

@@ -67,7 +67,12 @@ class AgentTurnCoordinatorHookTest {
               new com.mewcode.conversation.ConversationManager(),
               ToolApiProtocol.OPENAI,
               new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+              new PromptRequestFactory(() -> PromptBuilder.buildBundle(projectRoot)),
+              null,
+              null,
+              null,
+              null,
+              null);
       coordinator.configureHooks(hooks, state);
 
       await(coordinator.startRun("hello", AgentMode.EXECUTE));
@@ -134,7 +139,12 @@ class AgentTurnCoordinatorHookTest {
               new com.mewcode.conversation.ConversationManager(),
               ToolApiProtocol.OPENAI,
               new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+              new PromptRequestFactory(() -> PromptBuilder.buildBundle(projectRoot)),
+              null,
+              null,
+              null,
+              null,
+              null);
       coordinator.configureHooks(hooks, new HookSessionState());
       await(coordinator.startRun("do ordered work", AgentMode.EXECUTE));
       assertEquals("first\nagent\nlast\n", Files.readString(projectRoot.resolve("order")));

@@ -11,6 +11,7 @@ import com.mewcode.conversation.Message;
 import com.mewcode.conversation.TextBlock;
 import com.mewcode.conversation.ToolResultBlock;
 import com.mewcode.conversation.ToolUseBlock;
+import com.mewcode.llm.PromptRequest;
 import com.mewcode.llm.StreamEvent;
 import com.mewcode.testsupport.FakeLlmClient;
 import java.nio.file.Files;
@@ -37,7 +38,8 @@ class ContextManagerTest {
         try (var manager = new ContextManager(tempDir, client, 128_000)) {
             var preparation = manager.prepareForRequest(
                     conversation,
-                    new ContextRequest(List.of(), List.of(), Optional.empty()));
+                    new PromptRequest(List.of(), List.of(), List.of(), Optional.empty()),
+                    ignored -> {});
 
             assertFalse(preparation.compacted());
             assertTrue(client.requests().isEmpty());
@@ -58,13 +60,15 @@ class ContextManagerTest {
                 manager.commitToolTurn(
                         conversation,
                         List.of(new ToolUseBlock("tool-" + index, "Echo", java.util.Map.of())),
-                        List.of(new ToolResultBlock("tool-" + index, "x".repeat(3_000), false)));
+                        List.of(new ToolResultBlock("tool-" + index, "x".repeat(3_000), false)),
+                        java.util.Map.of());
             }
 
             assertFalse(Files.exists(manager.sessionDirectory()));
             var preparation = manager.prepareForRequest(
                     conversation,
-                    new ContextRequest(List.of(), List.of(), Optional.empty()));
+                    new PromptRequest(List.of(), List.of(), List.of(), Optional.empty()),
+                    ignored -> {});
 
             assertTrue(preparation.compacted());
             assertEquals(1, client.requestCount());
@@ -81,11 +85,13 @@ class ContextManagerTest {
             manager.commitToolTurn(
                     conversation,
                     List.of(new ToolUseBlock("tool-1", "Echo", java.util.Map.of())),
-                    List.of(new ToolResultBlock("tool-1", "x".repeat(80_000), false)));
+                    List.of(new ToolResultBlock("tool-1", "x".repeat(80_000), false)),
+                    java.util.Map.of());
 
             var preparation = manager.prepareForRequest(
                     conversation,
-                    new ContextRequest(List.of(), List.of(), Optional.empty()));
+                    new PromptRequest(List.of(), List.of(), List.of(), Optional.empty()),
+                    ignored -> {});
 
             assertFalse(preparation.compacted());
             assertEquals(0, client.requestCount());
@@ -105,7 +111,8 @@ class ContextManagerTest {
         try (var manager = new ContextManager(tempDir, client, 30_000)) {
             var preparation = manager.prepareForRequest(
                     conversation,
-                    new ContextRequest(List.of(), List.of(), Optional.empty()));
+                    new PromptRequest(List.of(), List.of(), List.of(), Optional.empty()),
+                    ignored -> {});
 
             assertTrue(preparation.compacted());
             assertTrue(client.requests().getFirst().tools().isEmpty());
@@ -121,16 +128,17 @@ class ContextManagerTest {
                 new StreamEvent.TextDelta(summary()),
                 new StreamEvent.StreamEnd("end_turn"));
         var conversation = historyLargeEnoughToCompact();
-        var request = new ContextRequest(List.of(), List.of(), Optional.empty());
+        var request = new PromptRequest(List.of(), List.of(), List.of(), Optional.empty());
         String largeResult = "H".repeat(2_000) + "secret".repeat(10_000) + "T".repeat(2_000);
 
         try (var manager = new ContextManager(tempDir, client, 128_000)) {
             var compacted = manager.forceCompact(
-                    conversation, request, ContextTrigger.MANUAL);
+                    conversation, request, ContextTrigger.MANUAL, "");
             manager.commitToolTurn(
                     conversation,
                     List.of(new TextBlock("tool call")),
-                    List.of(new ToolResultBlock("tool-1", largeResult, false)));
+                    List.of(new ToolResultBlock("tool-1", largeResult, false)),
+                    java.util.Map.of());
 
             assertTrue(compacted.changed());
             assertTrue(conversation.getMessages().getLast().content().getFirst()
@@ -154,8 +162,9 @@ class ContextManagerTest {
                     ContextException.class,
                     () -> manager.forceCompact(
                             conversation,
-                            new ContextRequest(List.of(), List.of(), Optional.empty()),
-                            ContextTrigger.MANUAL));
+                            new PromptRequest(List.of(), List.of(), List.of(), Optional.empty()),
+                            ContextTrigger.MANUAL,
+                            ""));
         }
     }
 
@@ -184,13 +193,13 @@ class ContextManagerTest {
         client.enqueue(invalidSummaryEvents());
         client.enqueue(invalidSummaryEvents());
         var conversation = historyLargeEnoughToCompact();
-        var request = new ContextRequest(List.of(), List.of(), Optional.empty());
+        var request = new PromptRequest(List.of(), List.of(), List.of(), Optional.empty());
 
         try (var manager = new ContextManager(tempDir, client, 30_000)) {
-            assertThrows(ContextException.class, () -> manager.prepareForRequest(conversation, request));
-            assertThrows(ContextException.class, () -> manager.prepareForRequest(conversation, request));
-            assertThrows(ContextException.class, () -> manager.prepareForRequest(conversation, request));
-            assertThrows(ContextException.class, () -> manager.prepareForRequest(conversation, request));
+            assertThrows(ContextException.class, () -> manager.prepareForRequest(conversation, request, ignored -> {}));
+            assertThrows(ContextException.class, () -> manager.prepareForRequest(conversation, request, ignored -> {}));
+            assertThrows(ContextException.class, () -> manager.prepareForRequest(conversation, request, ignored -> {}));
+            assertThrows(ContextException.class, () -> manager.prepareForRequest(conversation, request, ignored -> {}));
 
             assertEquals(3, client.requestCount());
         }
@@ -203,7 +212,7 @@ class ContextManagerTest {
         conversation.addUserMessage("x".repeat(17_500));
         try (var manager = new ContextManager(tempDir, client, 128_000)) {
             long tokens = manager.estimateTokens(
-                    conversation, new ContextRequest(List.of(), List.of(), Optional.empty()));
+                    conversation, new PromptRequest(List.of(), List.of(), List.of(), Optional.empty()));
 
             assertTrue(tokens >= 5_000);
             assertTrue(client.requests().isEmpty());

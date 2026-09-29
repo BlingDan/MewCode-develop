@@ -50,10 +50,5 @@ public interface Tool {
   }
 
   /** 返回 null 表示校验通过，否则返回面向模型的调整提示。 */
-  String validateInput(Map<String, Object> input);
-
-  /** 在共享执行上下文中校验参数。 默认委托旧接口，保证外部自定义工具仍然兼容；需要项目根目录的工具覆盖此方法。 */
-  default String validateInput(ToolExecutionContext context, Map<String, Object> input) {
-    return validateInput(input);
-  }
+  String validateInput(ToolExecutionContext context, Map<String, Object> input);
 }

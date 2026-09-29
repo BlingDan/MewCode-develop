@@ -17,7 +17,7 @@ import org.yaml.snakeyaml.Yaml;
 public final class PermissionConfigLoader {
   private PermissionConfigLoader() {}
 
-  public static LoadedPermissions load(Path projectRoot, PermissionConfig config)
+  public static LoadedPermissions load(Path projectRoot, AppConfig.PermissionConfig config)
       throws ConfigLoader.ConfigException {
     PermissionMode mode;
     try {

@@ -62,7 +62,12 @@ class AgentTurnCoordinatorLazyToolTest {
               conversation,
               ToolApiProtocol.OPENAI,
               new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(projectRoot)));
+              new PromptRequestFactory(() -> PromptBuilder.buildBundle(projectRoot)),
+              null,
+              null,
+              null,
+              null,
+              null);
 
       awaitCompletion(coordinator.startRun("use the external tool", AgentMode.EXECUTE));
     }
@@ -161,7 +166,7 @@ class AgentTurnCoordinatorLazyToolTest {
     }
 
     @Override
-    public String validateInput(Map<String, Object> input) {
+    public String validateInput(ToolExecutionContext context, Map<String, Object> input) {
       return null;
     }
 

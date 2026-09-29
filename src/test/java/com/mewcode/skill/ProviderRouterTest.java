@@ -24,11 +24,10 @@ class ProviderRouterTest {
             List.of(mainConfig, reviewConfig),
             mainConfig,
             mainClient,
-            (config, prompt) -> {
+            config -> {
               creations.incrementAndGet();
               return new FakeLlmClient();
-            },
-            "system");
+            });
 
     assertSame(mainClient, router.select(null).client());
     assertSame(mainClient, router.select("missing").client());

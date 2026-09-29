@@ -23,11 +23,6 @@ public record PromptRequest(
     reminder = reminder == null ? Optional.empty() : reminder;
   }
 
-  /** 为旧的字符串式客户端提供兼容的 system 文本。 */
-  public String flattenedSystemPrompt() {
-    return String.join("\n\n", systemSegments);
-  }
-
   private static List<String> copyStrings(List<String> values) {
     if (values == null) return List.of();
     return values.stream().map(value -> Objects.requireNonNullElse(value, "")).toList();

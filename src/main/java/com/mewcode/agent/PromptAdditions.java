@@ -29,27 +29,6 @@ public record PromptAdditions(
     agentCatalog = Objects.requireNonNullElse(agentCatalog, "");
   }
 
-  public PromptAdditions(
-      String memoryIndex,
-      Optional<Message> resumeReminder,
-      String skillCatalog,
-      String activeSkills) {
-    this(memoryIndex, resumeReminder, skillCatalog, activeSkills, List.of(), "");
-  }
-
-  public PromptAdditions(
-      String memoryIndex,
-      Optional<Message> resumeReminder,
-      String skillCatalog,
-      String activeSkills,
-      List<String> hookReminders) {
-    this(memoryIndex, resumeReminder, skillCatalog, activeSkills, hookReminders, "");
-  }
-
-  public PromptAdditions(String memoryIndex, Optional<Message> resumeReminder) {
-    this(memoryIndex, resumeReminder, "", "");
-  }
-
   public static PromptAdditions empty() {
     return new PromptAdditions("", Optional.empty(), "", "", List.of(), "");
   }

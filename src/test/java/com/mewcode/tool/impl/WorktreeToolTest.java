@@ -52,9 +52,9 @@ class WorktreeToolTest {
                 Map.of("action", "delete", "name", "dirty", "discardChanges", true))
             .isError());
     assertEquals("result", Files.readString(child.resolve("notes.txt")));
-    assertNotNull(tool.validateInput(Map.of("action", "create", "name", "../escape")));
-    assertNotNull(tool.validateInput(Map.of("action", "list", "cwd", root.toString())));
-    assertNotNull(tool.validateInput(Map.of("action", "exit", "discardChanges", true)));
+    assertNotNull(tool.validateInput(null, Map.of("action", "create", "name", "../escape")));
+    assertNotNull(tool.validateInput(null, Map.of("action", "list", "cwd", root.toString())));
+    assertNotNull(tool.validateInput(null, Map.of("action", "exit", "discardChanges", true)));
     assertFalse(tool.isSystem());
     assertFalse(tool.isConcurrencySafe(Map.of("action", "list")));
   }

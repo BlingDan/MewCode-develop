@@ -17,13 +17,4 @@ public record PermissionCheck(
     matchedPattern = Objects.requireNonNullElse(matchedPattern, "");
     authorizationKey = Objects.requireNonNullElse(authorizationKey, "");
   }
-
-  public PermissionCheck(
-      PermissionDecision decision,
-      PermissionReason reason,
-      String message,
-      String matchedPattern,
-      String authorizationKey) {
-    this(decision, reason, message, matchedPattern, authorizationKey, false);
-  }
 }

@@ -51,11 +51,6 @@ public final class GlobTool implements Tool {
   }
 
   @Override
-  public String validateInput(Map<String, Object> input) {
-    return ToolInput.requireString(input, "pattern", " 请传入例如 /项目根目录/**/*.java 的绝对模式。");
-  }
-
-  @Override
   public String validateInput(ToolExecutionContext context, Map<String, Object> input) {
     String patternError =
         ToolInput.requireString(input, "pattern", " 请传入例如 /项目根目录/**/*.java 的绝对模式。");

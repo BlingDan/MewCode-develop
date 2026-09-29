@@ -154,7 +154,7 @@ class ToolRegistryTest {
     }
 
     @Override
-    public String validateInput(Map<String, Object> input) {
+    public String validateInput(ToolExecutionContext context, Map<String, Object> input) {
       return null;
     }
   }

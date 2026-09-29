@@ -5,6 +5,7 @@ import com.mewcode.conversation.ConversationManager;
 import com.mewcode.conversation.Message;
 import com.mewcode.conversation.ToolResultBlock;
 import com.mewcode.llm.LlmClient;
+import com.mewcode.llm.PromptRequest;
 import com.mewcode.llm.StreamEvent;
 import java.nio.file.Path;
 import java.util.List;
@@ -36,17 +37,9 @@ public final class ContextManager implements AutoCloseable {
         this.fuse = new AutoCompactFuse();
     }
 
-    /**
-     * 请求发送前执行自动累积检查；未达到阈值时不调用摘要模型。
-     */
-    public synchronized ContextPreparation prepareForRequest(
-            ConversationManager conversation, ContextRequest request) {
-        return prepareForRequest(conversation, request, ignored -> {});
-    }
-
     /** 只估算当前请求，不触发 Provider 或压缩。 */
     public synchronized long estimateTokens(
-            ConversationManager conversation, ContextRequest request) {
+            ConversationManager conversation, PromptRequest request) {
         ensureOpen();
         return estimator.estimate(
                 Objects.requireNonNull(request, "request"),
@@ -56,7 +49,7 @@ public final class ContextManager implements AutoCloseable {
     /** 请求前执行自动检查，并在真正开始摘要前通知调用方显示状态。 */
     public synchronized ContextPreparation prepareForRequest(
             ConversationManager conversation,
-            ContextRequest request,
+            PromptRequest request,
             Consumer<ContextTrigger> onCompactionStart) {
         ensureOpen();
         Objects.requireNonNull(conversation, "conversation");
@@ -84,17 +77,10 @@ public final class ContextManager implements AutoCloseable {
     }
 
     /** 强制执行一次重量压缩；MANUAL 和 EMERGENCY 不受自动阈值限制。 */
-    public synchronized CompactResult forceCompact(
-            ConversationManager conversation,
-            ContextRequest request,
-            ContextTrigger trigger) {
-        return forceCompact(conversation, request, trigger, "");
-    }
-
     /** 强制压缩，并把用户指定重点仅加入摘要请求。 */
     public synchronized CompactResult forceCompact(
             ConversationManager conversation,
-            ContextRequest request,
+            PromptRequest request,
             ContextTrigger trigger,
             String focus) {
         ensureOpen();
@@ -118,14 +104,6 @@ public final class ContextManager implements AutoCloseable {
         }
     }
 
-    /** 工具结果完成第一层处理后，原子提交完整工具回合。 */
-    public synchronized void commitToolTurn(
-            ConversationManager conversation,
-            List<ContentBlock> assistantContent,
-            List<ToolResultBlock> rawResults) {
-        commitToolTurn(conversation, assistantContent, rawResults, java.util.Map.of());
-    }
-
     public synchronized void commitToolTurn(ConversationManager conversation,
             List<ContentBlock> assistantContent, List<ToolResultBlock> rawResults,
             java.util.Map<String, Path> callDirectories) {
@@ -140,7 +118,7 @@ public final class ContextManager implements AutoCloseable {
     public synchronized void recordUsage(
             StreamEvent.Usage usage,
             List<Message> sentHistory,
-            ContextRequest request) {
+            PromptRequest request) {
         ensureOpen();
         estimator.recordUsage(usage, sentHistory, request);
     }

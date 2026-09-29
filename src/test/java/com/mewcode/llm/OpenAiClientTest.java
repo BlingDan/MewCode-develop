@@ -47,8 +47,13 @@ class OpenAiClientTest {
 
       List<StreamEvent> events =
           collect(
-              new OpenAiClient(provider, PromptBuilder.buildSystemPrompt(Path.of(projectRoot)))
-                  .stream(history));
+              new OpenAiClient(provider)
+                  .openStream(
+                      request(
+                          PromptBuilder.buildBundle(Path.of(projectRoot)).systemSegments(),
+                          history,
+                          List.of()))
+                  .events());
 
       assertEquals("Hello ", ((StreamEvent.TextDelta) events.get(0)).text());
       assertEquals("OpenAI", ((StreamEvent.TextDelta) events.get(1)).text());
@@ -93,8 +98,13 @@ class OpenAiClientTest {
       history.addUserMessage("hello");
 
       collect(
-          new OpenAiClient(provider, PromptBuilder.buildSystemPrompt(Path.of(projectRoot)))
-              .stream(history));
+          new OpenAiClient(provider)
+              .openStream(
+                  request(
+                      PromptBuilder.buildBundle(Path.of(projectRoot)).systemSegments(),
+                      history,
+                      List.of()))
+              .events());
 
       assertTrue(body.get().contains(projectRoot), body.get());
     } finally {
@@ -125,10 +135,11 @@ class OpenAiClientTest {
     try {
       ProviderConfig provider = provider(server, "deepseek-key");
       provider.setProtocol("deepseek");
-      var client = new OpenAiClient(provider, "system");
+      var client = new OpenAiClient(provider);
       var first = new ConversationManager();
       first.addUserMessage("inspect");
-      List<StreamEvent> events = collect(client.stream(first));
+      List<StreamEvent> events =
+          collect(client.openStream(request(List.of("system"), first, List.of())).events());
 
       var reasoning =
           events.stream()
@@ -142,7 +153,7 @@ class OpenAiClientTest {
       second.addUserMessage("inspect");
       second.addAssistantMessage(List.of(new ThinkingBlock(reasoning, ""), new TextBlock("Done")));
       second.addUserMessage("continue");
-      collect(client.stream(second));
+      collect(client.openStream(request(List.of("system"), second, List.of())).events());
 
       assertEquals(2, bodies.size());
       assertTrue(bodies.getLast().contains("reasoning_content"), bodies.getLast());
@@ -168,18 +179,21 @@ class OpenAiClientTest {
       history.addUserMessage("read the file");
       List<StreamEvent> events =
           collect(
-              new OpenAiClient(provider(server, "tool-key"), "system")
-                  .stream(
-                      history,
-                      List.of(
-                          Map.of(
-                              "type",
-                              "function",
-                              "function",
+              new OpenAiClient(provider(server, "tool-key"))
+                  .openStream(
+                      request(
+                          List.of("system"),
+                          history,
+                          List.of(
                               Map.of(
-                                  "name", "ReadFile",
-                                  "description", "read a file",
-                                  "parameters", Map.of("type", "object"))))));
+                                  "type",
+                                  "function",
+                                  "function",
+                                  Map.of(
+                                      "name", "ReadFile",
+                                      "description", "read a file",
+                                      "parameters", Map.of("type", "object"))))))
+                  .events());
 
       assertInstanceOf(StreamEvent.ToolCallComplete.class, events.get(0));
       var call = (StreamEvent.ToolCallComplete) events.get(0);
@@ -231,10 +245,7 @@ class OpenAiClientTest {
               history,
               Optional.of(reminder));
 
-      collect(
-          new OpenAiClient(provider(server, "structured-key"), "legacy")
-              .openStream(request)
-              .events());
+      collect(new OpenAiClient(provider(server, "structured-key")).openStream(request).events());
 
       assertTrue(body.get().contains("stable system"), body.get());
       assertTrue(body.get().contains("stable environment"), body.get());
@@ -267,7 +278,11 @@ class OpenAiClientTest {
       var history = new ConversationManager();
       history.addUserMessage("hello");
 
-      List<StreamEvent> events = collect(new OpenAiClient(provider, "system").stream(history));
+      List<StreamEvent> events =
+          collect(
+              new OpenAiClient(provider)
+                  .openStream(request(List.of("system"), history, List.of()))
+                  .events());
 
       assertEquals(1, events.size());
       assertInstanceOf(StreamEvent.Error.class, events.getFirst());
@@ -297,7 +312,10 @@ class OpenAiClientTest {
       var history = new ConversationManager();
       history.addUserMessage("hello");
       List<StreamEvent> events =
-          collect(new OpenAiClient(provider(server, "rate-limit-key"), "system").stream(history));
+          collect(
+              new OpenAiClient(provider(server, "rate-limit-key"))
+                  .openStream(request(List.of("system"), history, List.of()))
+                  .events());
 
       assertInstanceOf(StreamEvent.Error.class, events.getFirst());
       assertEquals(1, count.get());
@@ -322,7 +340,10 @@ class OpenAiClientTest {
       var history = new ConversationManager();
       history.addUserMessage("hello");
       List<StreamEvent> events =
-          collect(new OpenAiClient(provider(server, "context-key"), "system").stream(history));
+          collect(
+              new OpenAiClient(provider(server, "context-key"))
+                  .openStream(request(List.of("system"), history, List.of()))
+                  .events());
 
       var error = assertInstanceOf(StreamEvent.Error.class, events.getFirst());
       assertEquals(StreamEvent.ErrorKind.CONTEXT_LENGTH, error.errorKind());
@@ -339,6 +360,13 @@ class OpenAiClientTest {
     provider.setApiKey(key);
     provider.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort() + "/v1");
     return provider;
+  }
+
+  private static PromptRequest request(
+      List<String> systemSegments,
+      ConversationManager conversation,
+      List<Map<String, Object>> tools) {
+    return new PromptRequest(systemSegments, tools, conversation.getMessages(), Optional.empty());
   }
 
   private static List<StreamEvent> collect(java.util.concurrent.BlockingQueue<StreamEvent> queue)

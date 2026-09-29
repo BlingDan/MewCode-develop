@@ -10,8 +10,7 @@ public class MouseMessage implements Message {
 
     public enum MouseButton {
         MouseButtonWheelUp,
-        MouseButtonWheelDown,
-        OTHER
+        MouseButtonWheelDown
     }
 
     private final MouseButton button;

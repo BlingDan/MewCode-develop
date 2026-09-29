@@ -2,7 +2,6 @@ package com.mewcode.prompt;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import com.mewcode.agent.AgentMode;
 import java.nio.file.Path;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -16,7 +15,7 @@ class PromptBuilderTest {
   void describesTheActualRootAndHowToResolveRelativeUserPaths() {
     Path root = projectRoot.toAbsolutePath().normalize();
 
-    String prompt = PromptBuilder.buildSystemPrompt(root);
+    String prompt = String.join("\n\n", PromptBuilder.buildBundle(root).systemSegments());
 
     assertTrue(prompt.contains("The current project root is: " + root));
     assertTrue(prompt.contains("Resolve user-provided relative paths against that project root"));
@@ -28,19 +27,16 @@ class PromptBuilderTest {
   }
 
   @Test
-  void planModeExplainsReadOnlyPlanningAndLoopPromptHasNoOneRoundLimit() {
-    String planPrompt = PromptBuilder.buildSystemPrompt(projectRoot, AgentMode.PLAN);
-    String executePrompt = PromptBuilder.buildSystemPrompt(projectRoot, AgentMode.EXECUTE);
+  void stablePromptDefersModeSpecificInstructionsToReminders() {
+    String prompt = String.join("\n\n", PromptBuilder.buildBundle(projectRoot).systemSegments());
 
-    assertTrue(planPrompt.contains("planning mode"));
-    assertTrue(planPrompt.contains("read-only"));
-    assertFalse(planPrompt.contains("WriteFile"));
-    assertFalse(executePrompt.contains("one tool result round"));
-    assertTrue(executePrompt.contains("Continue"));
+    assertTrue(prompt.contains("Runtime mode reminders"));
+    assertFalse(prompt.contains("one tool result round"));
+    assertTrue(prompt.contains("Continue"));
   }
 
   @Test
-  void exposesSevenFixedModulesInPriorityOrderAndThreeEmptySlots() {
+  void exposesSevenFixedModulesAndTheOptionalInstructionsSlot() {
     assertEquals(
         List.of(
             "identity",
@@ -50,9 +46,7 @@ class PromptBuilderTest {
             "tool-usage",
             "tone",
             "text-output",
-            "custom-instructions",
-            "activated-skills",
-            "long-term-memory"),
+            "custom-instructions"),
         PromptBuilder.modules().stream().map(PromptModule::name).toList());
     assertEquals(7, PromptBuilder.fixedModules().size());
     assertTrue(

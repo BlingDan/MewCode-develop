@@ -59,30 +59,6 @@ public final class GrepTool implements Tool {
   }
 
   @Override
-  public String validateInput(Map<String, Object> input) {
-    String patternError = ToolInput.requireString(input, "pattern", " 请传入要搜索的正则表达式。");
-    if (patternError != null) return patternError;
-    String pathError = ToolInput.requireString(input, "path", " 请传入项目根目录内的绝对搜索根目录。");
-    if (pathError != null) return pathError;
-    try {
-      Pattern.compile((String) input.get("pattern"));
-    } catch (PatternSyntaxException error) {
-      return "参数 pattern 不是合法正则表达式：" + error.getDescription() + "。请修正后重试。";
-    }
-    try {
-      if (!Path.of((String) input.get("path")).isAbsolute()) {
-        return "参数 path 必须是绝对路径，请传入项目根目录内的搜索根目录。";
-      }
-    } catch (RuntimeException error) {
-      return "参数 path 不是合法路径，请传入合法的绝对路径。";
-    }
-    if (input.containsKey("include") && !(input.get("include") instanceof String)) {
-      return "参数 include 必须是文件名 glob 字符串。";
-    }
-    return null;
-  }
-
-  @Override
   public String validateInput(ToolExecutionContext context, Map<String, Object> input) {
     String patternError = ToolInput.requireString(input, "pattern", " 请传入要搜索的正则表达式。");
     if (patternError != null) return patternError;

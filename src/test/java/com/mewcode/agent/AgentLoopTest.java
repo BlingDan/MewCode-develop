@@ -3,7 +3,9 @@ package com.mewcode.agent;
 import com.mewcode.conversation.ConversationManager;
 import com.mewcode.llm.CancellableLlmStream;
 import com.mewcode.llm.LlmClient;
+import com.mewcode.llm.PromptRequest;
 import com.mewcode.llm.StreamEvent;
+import com.mewcode.prompt.PromptBuilder;
 import com.mewcode.tool.FileStateCache;
 import com.mewcode.tool.Tool;
 import com.mewcode.tool.ToolApiProtocol;
@@ -51,9 +53,8 @@ class AgentLoopTest {
 
         try (var executor = new ToolExecutor(registry,
                 new ToolExecutionContext(tempDir, java.time.Duration.ofSeconds(2), new FileStateCache()))) {
-            var coordinator = new AgentTurnCoordinator(client, registry, executor,
-                    new ConversationManager(), ToolApiProtocol.OPENAI,
-                    new AgentLoopConfig(5, 3));
+            var coordinator = coordinator(client, registry, executor,
+                    new ConversationManager(), new AgentLoopConfig(5, 3));
             var events = collect(coordinator.startRun("do it", AgentMode.EXECUTE));
 
             assertEquals(3, client.calls.get());
@@ -85,9 +86,8 @@ class AgentLoopTest {
 
         try (var executor = new ToolExecutor(registry,
                 new ToolExecutionContext(tempDir, java.time.Duration.ofSeconds(2), new FileStateCache()))) {
-            var coordinator = new AgentTurnCoordinator(client, registry, executor,
-                    new ConversationManager(), ToolApiProtocol.OPENAI,
-                    new AgentLoopConfig(2, 3));
+            var coordinator = coordinator(client, registry, executor,
+                    new ConversationManager(), new AgentLoopConfig(2, 3));
             var events = collect(coordinator.startRun("keep going", AgentMode.EXECUTE));
 
             assertEquals(2, client.calls.get());
@@ -111,9 +111,8 @@ class AgentLoopTest {
 
         try (var executor = new ToolExecutor(registry,
                 new ToolExecutionContext(tempDir, java.time.Duration.ofSeconds(2), new FileStateCache()))) {
-            var coordinator = new AgentTurnCoordinator(client, registry, executor,
-                    new ConversationManager(), ToolApiProtocol.OPENAI,
-                    new AgentLoopConfig(5, 3));
+            var coordinator = coordinator(client, registry, executor,
+                    new ConversationManager(), new AgentLoopConfig(5, 3));
             var events = collect(coordinator.startRun("find a tool", AgentMode.EXECUTE));
 
             assertEquals(3, client.calls.get());
@@ -138,9 +137,8 @@ class AgentLoopTest {
 
         try (var executor = new ToolExecutor(registry,
                 new ToolExecutionContext(tempDir, java.time.Duration.ofSeconds(2), new FileStateCache()))) {
-            var coordinator = new AgentTurnCoordinator(client, registry, executor,
-                    new ConversationManager(), ToolApiProtocol.OPENAI,
-                    new AgentLoopConfig(5, 3));
+            var coordinator = coordinator(client, registry, executor,
+                    new ConversationManager(), new AgentLoopConfig(5, 3));
             var events = collect(coordinator.startRun("plan it", AgentMode.PLAN));
 
             assertEquals(2, client.calls.get());
@@ -159,7 +157,7 @@ class AgentLoopTest {
     }
 
     @Test
-    void forwardsTheCurrentModePromptToEachProviderRequest() throws Exception {
+    void forwardsTheCurrentModeReminderToEachProviderRequest() throws Exception {
         var client = new QueueClient(List.of(queue(
                 new StreamEvent.TextDelta("Plan ready."),
                 new StreamEvent.StreamEnd("end_turn"))));
@@ -168,13 +166,11 @@ class AgentLoopTest {
 
         try (var executor = new ToolExecutor(registry,
                 new ToolExecutionContext(tempDir, java.time.Duration.ofSeconds(2), new FileStateCache()))) {
-            var coordinator = new AgentTurnCoordinator(client, registry, executor,
-                    new ConversationManager(), ToolApiProtocol.OPENAI,
-                    new AgentLoopConfig(), mode -> mode == AgentMode.PLAN
-                            ? "plan-system" : "execute-system");
+            var coordinator = coordinator(client, registry, executor,
+                    new ConversationManager(), new AgentLoopConfig());
             collect(coordinator.startRun("make a plan", AgentMode.PLAN));
 
-            assertEquals(List.of("plan-system"), client.prompts);
+            assertTrue(client.reminders.getFirst().contains("Current mode: PLAN"));
         }
     }
 
@@ -191,8 +187,8 @@ class AgentLoopTest {
 
         try (var executor = new ToolExecutor(registry,
                 new ToolExecutionContext(tempDir, java.time.Duration.ofSeconds(20), new FileStateCache()))) {
-            var coordinator = new AgentTurnCoordinator(client, registry, executor,
-                    conversation, ToolApiProtocol.OPENAI);
+            var coordinator = coordinator(
+                    client, registry, executor, conversation, new AgentLoopConfig());
             var run = coordinator.startRun("cancel tool", AgentMode.EXECUTE);
             assertTrue(started.await(2, TimeUnit.SECONDS));
 
@@ -232,33 +228,45 @@ class AgentLoopTest {
         return queue;
     }
 
+    private AgentTurnCoordinator coordinator(
+            LlmClient client,
+            ToolRegistry registry,
+            ToolExecutor executor,
+            ConversationManager conversation,
+            AgentLoopConfig config) {
+        return new AgentTurnCoordinator(
+                client,
+                registry,
+                executor,
+                conversation,
+                ToolApiProtocol.OPENAI,
+                config,
+                new PromptRequestFactory(() -> PromptBuilder.buildBundle(tempDir)),
+                null,
+                null,
+                null,
+                null,
+                null);
+    }
+
     private static final class QueueClient implements LlmClient {
         private final List<BlockingQueue<StreamEvent>> responses;
         private final AtomicInteger calls = new AtomicInteger();
         private final List<List<Map<String, Object>>> toolRequests = new ArrayList<>();
-        private final List<String> prompts = new ArrayList<>();
+        private final List<String> reminders = new ArrayList<>();
 
         private QueueClient(List<BlockingQueue<StreamEvent>> responses) {
             this.responses = new ArrayList<>(responses);
         }
 
         @Override
-        public synchronized CancellableLlmStream openStream(
-                ConversationManager conversation,
-                List<Map<String, Object>> tools) {
+        public synchronized CancellableLlmStream openStream(PromptRequest request) {
             calls.incrementAndGet();
-            toolRequests.add(tools == null ? List.of() : List.copyOf(tools));
+            toolRequests.add(request.tools());
+            reminders.add(request.reminder().map(com.mewcode.conversation.Message::textContent)
+                    .orElse(""));
             if (responses.isEmpty()) throw new AssertionError("unexpected extra model request");
             return new CancellableLlmStream(responses.removeFirst(), () -> { });
-        }
-
-        @Override
-        public synchronized CancellableLlmStream openStream(
-                ConversationManager conversation,
-                List<Map<String, Object>> tools,
-                String systemPrompt) {
-            prompts.add(systemPrompt);
-            return openStream(conversation, tools);
         }
     }
 
@@ -273,7 +281,7 @@ class AgentLoopTest {
         @Override public boolean isReadOnly() { return true; }
         @Override public boolean isDestructive() { return false; }
         @Override public boolean isConcurrencySafe(Map<String, Object> input) { return true; }
-        @Override public String validateInput(Map<String, Object> input) { return null; }
+        @Override public String validateInput(ToolExecutionContext context, Map<String, Object> input) { return null; }
     }
 
     private static final class WriteLikeTool implements Tool {
@@ -294,7 +302,7 @@ class AgentLoopTest {
         @Override public boolean isReadOnly() { return false; }
         @Override public boolean isDestructive() { return true; }
         @Override public boolean isConcurrencySafe(Map<String, Object> input) { return false; }
-        @Override public String validateInput(Map<String, Object> input) { return null; }
+        @Override public String validateInput(ToolExecutionContext context, Map<String, Object> input) { return null; }
     }
 
     private static final class BlockingTool implements Tool {
@@ -322,6 +330,6 @@ class AgentLoopTest {
         @Override public boolean isReadOnly() { return true; }
         @Override public boolean isDestructive() { return false; }
         @Override public boolean isConcurrencySafe(Map<String, Object> input) { return false; }
-        @Override public String validateInput(Map<String, Object> input) { return null; }
+        @Override public String validateInput(ToolExecutionContext context, Map<String, Object> input) { return null; }
     }
 }

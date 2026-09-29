@@ -1,6 +1,5 @@
 package com.mewcode.prompt;
 
-import com.mewcode.agent.AgentMode;
 import com.mewcode.tool.ToolPromptRules;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -76,16 +75,13 @@ public final class PromptBuilder {
             "Use Markdown when it improves readability. Summarize completed work and include relevant verification results in the final response."));
   }
 
-  /** 返回后续章节可填充的自定义指令、Skill 和长期记忆插槽。 */
+  /** 返回可选的项目指令模块。 */
   public static List<PromptModule> optionalModules() {
     return optionalModules("");
   }
 
   private static List<PromptModule> optionalModules(String instructionText) {
-    return List.of(
-        new PromptModule("custom-instructions", 80, instructionText),
-        new PromptModule("activated-skills", 90, ""),
-        new PromptModule("long-term-memory", 100, ""));
+    return List.of(new PromptModule("custom-instructions", 80, instructionText));
   }
 
   /** 构建稳定模块和环境上下文分离的系统提示 bundle。 */
@@ -98,32 +94,5 @@ public final class PromptBuilder {
   public static SystemPromptBundle buildBundle(Path projectRoot, String instructionText) {
     Path root = projectRoot.toAbsolutePath().normalize();
     return new SystemPromptBundle(modules(instructionText), new EnvironmentContext(root, Map.of()));
-  }
-
-  /** 使用当前目录和 Execute Mode 生成默认提示词。 */
-  public static String buildSystemPrompt() {
-    return buildSystemPrompt(Path.of(".").toAbsolutePath().normalize(), AgentMode.EXECUTE);
-  }
-
-  /** 使用指定项目根目录生成 Execute Mode 提示词。 */
-  public static String buildSystemPrompt(Path projectRoot) {
-    return buildSystemPrompt(projectRoot, AgentMode.EXECUTE);
-  }
-
-  /** 生成包含项目根目录和本轮 Agent 模式的完整系统提示词。 */
-  public static String buildSystemPrompt(Path projectRoot, AgentMode mode) {
-    String common = buildBundle(projectRoot).flattenedText();
-    String modeHint =
-        mode == AgentMode.PLAN
-            ? """
-                  You are currently in planning mode. Use only safe read-only tools for investigation.
-                  Do not modify files, run destructive commands, or claim that changes were made.
-                  Finish with a concrete, ordered implementation plan.
-                  """
-            : """
-                  You are currently in execution mode. Use the supplied tools to complete the user's task.
-                  Verify important changes with the available tools before giving the final response.
-                  """;
-    return (common + "\n" + modeHint).strip();
   }
 }

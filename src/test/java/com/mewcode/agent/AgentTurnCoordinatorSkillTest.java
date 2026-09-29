@@ -65,7 +65,12 @@ class AgentTurnCoordinatorSkillTest {
               conversation,
               ToolApiProtocol.OPENAI,
               new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(temp)));
+              new PromptRequestFactory(() -> PromptBuilder.buildBundle(temp)),
+              null,
+              null,
+              null,
+              null,
+              null);
       coordinator.configureSkills(
           catalog, () -> catalog.refresh(registry.ordinaryToolNames(), Set.of()), null, null);
 
@@ -74,10 +79,10 @@ class AgentTurnCoordinatorSkillTest {
     }
 
     List<PromptRequest> requests = client.requests();
-    assertTrue(requests.get(0).flattenedSystemPrompt().contains("custom: custom description"));
-    assertFalse(requests.get(0).flattenedSystemPrompt().contains("FULL custom SOP"));
+    assertTrue(requests.get(0).systemSegments().toString().contains("custom: custom description"));
+    assertFalse(requests.get(0).systemSegments().toString().contains("FULL custom SOP"));
     assertTrue(requests.get(1).systemSegments().getLast().contains("FULL custom SOP raw args"));
-    assertFalse(requests.get(2).flattenedSystemPrompt().contains("FULL custom SOP"));
+    assertFalse(requests.get(2).systemSegments().toString().contains("FULL custom SOP"));
     assertEquals(Set.of("LoadSkill", "Echo"), toolNames(requests.get(1)));
   }
 
@@ -92,11 +97,7 @@ class AgentTurnCoordinatorSkillTest {
     ProviderConfig reviewerConfig = provider("reviewer", "openai");
     ProviderRouter router =
         new ProviderRouter(
-            List.of(mainConfig, reviewerConfig),
-            mainConfig,
-            main,
-            (config, prompt) -> reviewer,
-            "system");
+            List.of(mainConfig, reviewerConfig), mainConfig, main, config -> reviewer);
     var registry = new ToolRegistry();
     registry.register(new LoadSkillTool());
     registry.register(new EchoTool());
@@ -117,7 +118,12 @@ class AgentTurnCoordinatorSkillTest {
               conversation,
               ToolApiProtocol.OPENAI,
               new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(temp)));
+              new PromptRequestFactory(() -> PromptBuilder.buildBundle(temp)),
+              null,
+              null,
+              null,
+              null,
+              null);
       coordinator.configureSkills(
           catalog,
           () ->
@@ -212,7 +218,7 @@ class AgentTurnCoordinatorSkillTest {
       return true;
     }
 
-    public String validateInput(Map<String, Object> input) {
+    public String validateInput(ToolExecutionContext context, Map<String, Object> input) {
       return null;
     }
   }

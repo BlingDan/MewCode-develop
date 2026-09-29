@@ -110,7 +110,7 @@ public final class TaskTools {
     }
 
     @Override
-    public String validateInput(Map<String, Object> input) {
+    public String validateInput(ToolExecutionContext context, Map<String, Object> input) {
       return null;
     }
   }
@@ -146,7 +146,7 @@ public final class TaskTools {
     }
 
     @Override
-    public String validateInput(Map<String, Object> input) {
+    public String validateInput(ToolExecutionContext context, Map<String, Object> input) {
       return string(input, "task_id") == null ? "TaskGet 需要非空 task_id。" : null;
     }
   }
@@ -184,7 +184,7 @@ public final class TaskTools {
     }
 
     @Override
-    public String validateInput(Map<String, Object> input) {
+    public String validateInput(ToolExecutionContext context, Map<String, Object> input) {
       String subjectError = required(input, "subject", "TaskCreate 需要非空 subject。");
       return subjectError != null
           ? subjectError
@@ -251,7 +251,7 @@ public final class TaskTools {
     }
 
     @Override
-    public String validateInput(Map<String, Object> input) {
+    public String validateInput(ToolExecutionContext context, Map<String, Object> input) {
       if (string(input, "task_id") == null) return "TaskUpdate 需要非空 task_id。";
       String status = string(input, "status");
       if (status == null

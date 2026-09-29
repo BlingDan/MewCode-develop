@@ -32,7 +32,6 @@ class SystemPromptBundleTest {
                 + "/.trae/skills/mew-spec/SKILL.md."
                 + "\nos: test"),
         bundle.systemSegments());
-    assertEquals(String.join("\n\n", bundle.systemSegments()), bundle.flattenedText());
   }
 
   @Test

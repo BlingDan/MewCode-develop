@@ -3,12 +3,12 @@ package com.mewcode.llm;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mewcode.config.ProviderConfig;
 import com.mewcode.conversation.ContentBlock;
-import com.mewcode.conversation.ConversationManager;
 import com.mewcode.conversation.Message;
 import com.mewcode.conversation.TextBlock;
 import com.mewcode.conversation.ThinkingBlock;
 import com.mewcode.conversation.ToolResultBlock;
 import com.mewcode.conversation.ToolUseBlock;
+import com.mewcode.util.Closeables;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
 import com.openai.core.http.StreamResponse;
 import com.openai.models.FunctionDefinition;
@@ -39,22 +39,14 @@ public final class OpenAiClient implements LlmClient {
 
   private final com.openai.client.OpenAIClient client;
   private final String model;
-  private final String systemPrompt;
 
-  public OpenAiClient(ProviderConfig provider, String systemPrompt) {
+  public OpenAiClient(ProviderConfig provider) {
     var builder = OpenAIOkHttpClient.builder().apiKey(provider.getApiKey()).maxRetries(0);
     if (provider.getBaseUrl() != null && !provider.getBaseUrl().isBlank()) {
       builder.baseUrl(provider.getBaseUrl());
     }
     this.client = builder.build();
     this.model = provider.getModel();
-    this.systemPrompt = systemPrompt;
-  }
-
-  @Override
-  public CancellableLlmStream openStream(
-      List<Message> messages, List<Map<String, Object>> apiTools) {
-    return openStream(messages, apiTools, systemPrompt);
   }
 
   @Override
@@ -65,20 +57,7 @@ public final class OpenAiClient implements LlmClient {
     return openStream(messages, request.tools(), request.systemSegments());
   }
 
-  @Override
-  public CancellableLlmStream openStream(
-      ConversationManager conversation, List<Map<String, Object>> apiTools, String prompt) {
-    return openStream(conversation.getMessages(), apiTools, prompt);
-  }
-
   /** 创建后台 worker，把 SDK 的同步 SSE 迭代转换为可取消事件流。 */
-  private CancellableLlmStream openStream(
-      List<Message> messages, List<Map<String, Object>> apiTools, String prompt) {
-    String effectivePrompt = prompt == null ? systemPrompt : prompt;
-    List<String> systemSegments = effectivePrompt == null ? List.of() : List.of(effectivePrompt);
-    return openStream(messages, apiTools, systemSegments);
-  }
-
   private CancellableLlmStream openStream(
       List<Message> messages, List<Map<String, Object>> apiTools, List<String> systemSegments) {
     var queue = new LinkedBlockingQueue<StreamEvent>(QUEUE_CAPACITY);
@@ -90,18 +69,6 @@ public final class OpenAiClient implements LlmClient {
             () -> streamInCurrentThread(snapshot, tools, systemSegments, queue, control));
     control.worker(worker);
     return new CancellableLlmStream(queue, control::close);
-  }
-
-  @Override
-  public BlockingQueue<StreamEvent> stream(
-      List<Message> messages, List<Map<String, Object>> apiTools) {
-    return openStream(messages, apiTools).events();
-  }
-
-  @Override
-  public BlockingQueue<StreamEvent> stream(
-      ConversationManager conversation, List<Map<String, Object>> apiTools) {
-    return stream(conversation.getMessages(), apiTools);
   }
 
   /** 在 worker 线程中消费 Chat Completions；取消同时关闭响应和中断线程。 */
@@ -184,7 +151,7 @@ public final class OpenAiClient implements LlmClient {
                                                 .function()
                                                 .flatMap(function -> function.name())
                                                 .orElse("");
-                                        if (!accumulator.has(id)) accumulator.start(id, name);
+                                        accumulator.start(id, name);
                                         final String callId = id;
                                         toolCall
                                             .function()
@@ -286,7 +253,7 @@ public final class OpenAiClient implements LlmClient {
 
   private static String writeJson(Map<String, Object> value) {
     try {
-      return MAPPER.writeValueAsString(value == null ? Map.of() : value);
+      return MAPPER.writeValueAsString(value);
     } catch (Exception error) {
       return "{}";
     }
@@ -372,7 +339,7 @@ public final class OpenAiClient implements LlmClient {
 
     private void response(AutoCloseable value) {
       if (!response.compareAndSet(null, value)) return;
-      if (closed.get()) closeQuietly(value);
+      if (closed.get()) Closeables.closeQuietly(value);
     }
 
     private boolean isClosed() {
@@ -383,19 +350,10 @@ public final class OpenAiClient implements LlmClient {
       if (!closed.compareAndSet(false, true)) return;
       AutoCloseable currentResponse = response.get();
       if (currentResponse != null) {
-        Thread.startVirtualThread(() -> closeQuietly(currentResponse));
+        Thread.startVirtualThread(() -> Closeables.closeQuietly(currentResponse));
       }
       Thread thread = worker.get();
       if (thread != null) thread.interrupt();
-    }
-
-    private static void closeQuietly(AutoCloseable closeable) {
-      if (closeable == null) return;
-      try {
-        closeable.close();
-      } catch (Exception ignored) {
-        // provider close 是 best-effort。
-      }
     }
   }
 }

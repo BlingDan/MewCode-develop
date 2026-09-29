@@ -103,14 +103,8 @@ public final class ConfigLoader {
     } catch (IllegalArgumentException error) {
       throw new ConfigException("Invalid worktree configuration: time or relative file rules");
     }
-    if (config.getAgent() == null || config.getAgent().getLoop() == null) {
-      throw new ConfigException("agent.loop must be an object");
-    }
     try {
       config.getAgent().getLoop().validate();
-      if (config.getAgent().getSubagent() == null) {
-        throw new IllegalArgumentException("subagent must be an object");
-      }
       config.getAgent().getSubagent().validate();
     } catch (IllegalArgumentException error) {
       String field =
@@ -119,9 +113,6 @@ public final class ConfigLoader {
               : error.getMessage() != null && error.getMessage().startsWith("unknownToolRoundLimit")
                   ? "unknown_tool_round_limit"
                   : "subagent.auto_background_ms";
-      if ("subagent".equals(error.getMessage())) {
-        throw new ConfigException("agent.subagent must be an object");
-      }
       throw new ConfigException(
           "agent."
               + (field.startsWith("subagent") ? field : "loop." + field)
@@ -129,14 +120,13 @@ public final class ConfigLoader {
     }
 
     try {
-      PermissionMode.parse(
-          config.getPermissions() == null ? null : config.getPermissions().getMode());
+      PermissionMode.parse(config.getPermissions().getMode());
     } catch (IllegalArgumentException error) {
       throw new ConfigException(
           "permissions.mode must be default, acceptEdits, plan, or bypassPermissions");
     }
 
-    if (config.getProviders() == null || config.getProviders().isEmpty()) {
+    if (config.getProviders().isEmpty()) {
       throw new ConfigException("providers must contain at least one entry");
     }
 

@@ -8,6 +8,7 @@ import com.mewcode.llm.CancellableLlmStream;
 import com.mewcode.llm.LlmClient;
 import com.mewcode.llm.PromptRequest;
 import com.mewcode.llm.StreamEvent;
+import com.mewcode.util.Closeables;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -223,12 +224,8 @@ public final class MemoryManager implements AutoCloseable {
         AutoCloseable use;
         try { use = usage.get(); } catch (RuntimeException error) { diagnostics.accept("memory 目标目录已不可用，未开始更新。"); return; }
         try {
-            executor.submit(() -> { try { update(turn, currentClient, currentModel); } finally { releaseUse(use); } });
-        } catch (RuntimeException error) { releaseUse(use); throw error; }
-    }
-
-    private static void releaseUse(AutoCloseable use) {
-        try { use.close(); } catch (Exception ignored) { }
+            executor.submit(() -> { try { update(turn, currentClient, currentModel); } finally { Closeables.closeQuietly(use); } });
+        } catch (RuntimeException error) { Closeables.closeQuietly(use); throw error; }
     }
 
     @Override

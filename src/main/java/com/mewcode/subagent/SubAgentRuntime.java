@@ -26,6 +26,7 @@ import com.mewcode.tool.FileStateCache;
 import com.mewcode.tool.ToolExecutor;
 import com.mewcode.tool.ToolRegistry;
 import com.mewcode.tool.ToolResult;
+import com.mewcode.util.Closeables;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -100,8 +101,8 @@ public final class SubAgentRuntime {
   public ToolResult execute(SubAgentInvocation invocation, ParentAgentSnapshot parent) {
     Objects.requireNonNull(invocation, "invocation");
     Objects.requireNonNull(parent, "parent");
-    if (invocation.subagentType() == null || invocation.subagentType().isBlank()) {
-      return executeFork(invocation, parent);
+    if (invocation.subagentType().isBlank()) {
+      return executeTask(invocation, parent, null, true, parent.route());
     }
     SubAgentSpec spec =
         (workspace == null ? catalog : workspace.agentCatalog(parentLoopConfig.getMaxIterations()))
@@ -112,13 +113,6 @@ public final class SubAgentRuntime {
     ProviderRouter.Route route = resolveRoute(parent.route(), model);
     if (route == null) return ToolResult.error("请求的 SubAgent 模型不可用：" + model);
     return executeTask(invocation, parent, spec, false, route);
-  }
-
-  private ToolResult executeFork(SubAgentInvocation invocation, ParentAgentSnapshot parent) {
-    if (parent.sentRequest() == null || parent.parentRun() == null || parent.route() == null) {
-      return ToolResult.error("Fork 缺少父 Agent 的实际请求快照。");
-    }
-    return executeTask(invocation, parent, null, true, parent.route());
   }
 
   private ToolResult executeTask(
@@ -156,7 +150,7 @@ public final class SubAgentRuntime {
           frozenHead =
               workspace.manager().freezeHead(dispatchCwd, parent.parentRun().cancellationToken());
         } catch (RuntimeException failure) {
-          closeUse(parentUse);
+          Closeables.closeQuietly(parentUse);
           throw failure;
         }
       } else {
@@ -178,7 +172,7 @@ public final class SubAgentRuntime {
         fork ? forkConversation(parent, invocation) : new ConversationManager();
     PromptRequestFactory childPromptFactory =
         fork ? forkPromptFactory(parent) : definitionPromptFactory(spec);
-    AgentMode childMode = parent.mode() == null ? AgentMode.EXECUTE : parent.mode();
+    AgentMode childMode = parent.mode();
     AgentLoopConfig childConfig =
         new AgentLoopConfig(
             spec == null ? parentLoopConfig.getMaxIterations() : spec.maxTurns(),
@@ -206,7 +200,7 @@ public final class SubAgentRuntime {
                   childRoot = created.worktreePath();
                 }
               } finally {
-                if (adapter != null) closeUse(parentUse);
+                if (adapter != null) Closeables.closeQuietly(parentUse);
               }
               HookSessionState childHookState = new HookSessionState();
               var childWorkspace =
@@ -255,7 +249,8 @@ public final class SubAgentRuntime {
                 segments.addAll(childWorkspace.systemPrompt().systemSegments());
                 segments.add(adapter.buildNotice(dispatchCwd, childRoot));
                 effectivePrompt =
-                    new PromptRequestFactory(childWorkspace).withFixedSystemSegments(segments);
+                    new PromptRequestFactory(childWorkspace::systemPrompt)
+                        .withFixedSystemSegments(segments);
               }
               cleanup.set(
                   () -> {
@@ -266,7 +261,7 @@ public final class SubAgentRuntime {
                       childHooks.awaitSessionIdle(childHookState, java.time.Duration.ofSeconds(2));
                     }
                     childExecutor.close();
-                    closeUse(parentUse);
+                    Closeables.closeQuietly(parentUse);
                     childContext.close();
                     if (childWorkspace != null) {
                       childWorkspace.closeMemories();
@@ -292,8 +287,8 @@ public final class SubAgentRuntime {
                         effectivePrompt,
                         childContext,
                         permissionGate,
-                        permissionMode,
-                        new PermissionRuleEngine(permissionRuleEngine.rules()),
+                        new com.mewcode.permission.PermissionRuntime(
+                            permissionMode, new PermissionRuleEngine(permissionRuleEngine.rules())),
                         pathAuthorizationStore,
                         bashSandbox);
                 child.setPromptAdditionsSupplier(
@@ -356,13 +351,13 @@ public final class SubAgentRuntime {
               Runnable removeDelegate = removePermissionDelegate.getAndSet(null);
               if (removeDelegate != null) removeDelegate.run();
               String id = taskId.get();
-              if (id != null && parent.parentRun() != null) {
+              if (id != null) {
                 parent.parentRun().events().publish(new AgentEvent.SubAgentBackgrounded(id));
                 published.complete(id);
               }
             },
             () -> {
-              closeUse(parentUse);
+              Closeables.closeQuietly(parentUse);
               Runnable action = cleanup.getAndSet(null);
               if (action != null) action.run();
               if (adapter != null) {
@@ -386,7 +381,7 @@ public final class SubAgentRuntime {
               }
             },
             event -> {
-              if (event instanceof AgentEvent.PermissionRequested && parent.parentRun() != null) {
+              if (event instanceof AgentEvent.PermissionRequested) {
                 parent.parentRun().events().publish(event);
               }
             },
@@ -397,7 +392,7 @@ public final class SubAgentRuntime {
       handle = taskManager.start(trustedTaskId, request);
       taskId.set(handle.taskId());
     } catch (RuntimeException error) {
-      closeUse(parentUse);
+      Closeables.closeQuietly(parentUse);
       return ToolResult.error("无法启动 SubAgent。");
     }
 
@@ -407,7 +402,7 @@ public final class SubAgentRuntime {
         .completion()
         .whenComplete((ignored, error) -> parent.parentRun().removeCancellationHook(cancelTask));
 
-    if (!publishImmediately && parent.parentRun() != null) {
+    if (!publishImmediately) {
       parent
           .parentRun()
           .setBackgroundRequester(() -> taskManager.publish(sessionId, handle.taskId()));
@@ -430,7 +425,7 @@ public final class SubAgentRuntime {
         return asyncResult(taskIdValue);
       }
       SubAgentTaskManager.TaskSnapshot snapshot = (SubAgentTaskManager.TaskSnapshot) completed;
-      if (parent.parentRun() != null) parent.parentRun().clearBackgroundRequester();
+      parent.parentRun().clearBackgroundRequester();
       return snapshot.status() == SubAgentTaskManager.Status.COMPLETED
           ? ToolResult.success(snapshot.result())
           : ToolResult.error(snapshot.error().isBlank() ? "子 Agent 执行失败。" : snapshot.error());
@@ -574,13 +569,6 @@ public final class SubAgentRuntime {
       mode = mode == null ? AgentMode.EXECUTE : mode;
       parentRun = Objects.requireNonNull(parentRun, "parentRun");
       sessionId = requireText(sessionId, "sessionId");
-    }
-  }
-
-  private static void closeUse(AutoCloseable use) {
-    try {
-      use.close();
-    } catch (Exception ignored) {
     }
   }
 

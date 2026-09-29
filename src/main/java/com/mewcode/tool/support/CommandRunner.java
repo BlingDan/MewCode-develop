@@ -2,7 +2,6 @@ package com.mewcode.tool.support;
 
 import com.mewcode.agent.CancellationToken;
 import com.mewcode.permission.BashSandbox;
-import com.mewcode.permission.BashSandboxFactory;
 import com.mewcode.permission.BashSandboxRequest;
 import com.mewcode.permission.SandboxedProcess;
 import com.mewcode.tool.ToolExecutionContext;
@@ -29,7 +28,7 @@ public final class CommandRunner {
   private final BashSandbox sandbox;
 
   public CommandRunner() {
-    this(BashSandboxFactory.create());
+    this(BashSandbox.create());
   }
 
   public CommandRunner(BashSandbox sandbox) {

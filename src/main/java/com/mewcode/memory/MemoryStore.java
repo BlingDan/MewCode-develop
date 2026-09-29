@@ -50,10 +50,7 @@ public final class MemoryStore {
     public String loadIndex() throws IOException {
         lock.lock();
         try {
-            Path index = directory.resolve(INDEX_FILE);
-            return Files.isRegularFile(index, LinkOption.NOFOLLOW_LINKS)
-                    ? Files.readString(index, StandardCharsets.UTF_8)
-                    : "";
+            return loadIndexUnlocked();
         } finally {
             lock.unlock();
         }
@@ -62,21 +59,7 @@ public final class MemoryStore {
     public List<MemoryNote> scanNotes() throws IOException {
         lock.lock();
         try {
-            if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) return List.of();
-            var notes = new ArrayList<MemoryNote>();
-            try (Stream<Path> paths = Files.list(directory)) {
-                for (Path path : paths.sorted(Comparator.comparing(Path::toString)).toList()) {
-                    if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
-                            || INDEX_FILE.equals(path.getFileName().toString())) continue;
-                    try {
-                        MemoryNote note = parseNote(path, level);
-                        if (note != null) notes.add(note);
-                    } catch (RuntimeException ignored) {
-                        // 单个手写坏笔记不应阻止其他 memory 注入。
-                    }
-                }
-            }
-            return List.copyOf(notes);
+            return List.copyOf(scanNotesUnlocked());
         } finally {
             lock.unlock();
         }

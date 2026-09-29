@@ -46,10 +46,7 @@ public final class AgentCatalog {
         .forEach(spec -> addCandidate(candidates, spec));
 
     var selected = new LinkedHashMap<String, SubAgentSpec>();
-    candidates.forEach(
-        (name, versions) -> {
-          if (!versions.isEmpty()) selected.put(name, versions.getLast());
-        });
+    candidates.forEach((name, versions) -> selected.put(name, versions.getLast()));
     var ordered =
         selected.values().stream().sorted(Comparator.comparing(SubAgentSpec::name)).toList();
     return new AgentCatalog(new Snapshot(Map.copyOf(selected), ordered, diagnostics));

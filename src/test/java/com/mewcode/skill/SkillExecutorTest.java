@@ -81,7 +81,12 @@ class SkillExecutorTest {
               temporary,
               ToolApiProtocol.OPENAI,
               new AgentLoopConfig(),
-              new PromptRequestFactory(PromptBuilder.buildBundle(Path.of("/tmp"))));
+              new PromptRequestFactory(() -> PromptBuilder.buildBundle(Path.of("/tmp"))),
+              null,
+              null,
+              null,
+              null,
+              null);
       var result =
           SkillExecutor.runFork(
               new SkillExecutor.ForkRequest(

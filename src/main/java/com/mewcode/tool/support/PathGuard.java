@@ -13,11 +13,6 @@ public final class PathGuard {
 
   private PathGuard() {}
 
-  /** 校验路径格式、项目边界、目标存在性和符号链接逃逸。 */
-  public static String validatePath(Object raw, Path projectRoot, boolean mustExist) {
-    return validatePath(raw, projectRoot, mustExist, false);
-  }
-
   /** 校验路径；只有已经通过权限闸门明确授权时才允许越出项目根目录。 */
   public static String validatePath(
       Object raw, Path projectRoot, boolean mustExist, boolean allowOutside) {
@@ -59,11 +54,6 @@ public final class PathGuard {
     return null;
   }
 
-  /** 校验写入类工具的路径参数；目标本身可以尚不存在。 */
-  public static String validatePathArgument(Object raw, Path projectRoot) {
-    return validatePathArgument(raw, projectRoot, false);
-  }
-
   /** 仅在权限层已明确授权时允许项目外路径继续进入工具执行。 */
   public static String validatePathArgument(Object raw, Path projectRoot, boolean allowOutside) {
     Path root = normalizeRoot(projectRoot);
@@ -73,11 +63,6 @@ public final class PathGuard {
     Path path = parse(value);
     if (path == null) return "参数 path 不是合法路径。当前项目根目录：" + root + "。请传入合法的绝对路径。";
     return validateAbsolutePath(path, value, root, "path", allowOutside);
-  }
-
-  /** 校验搜索模式的绝对路径和项目边界，不执行文件系统访问。 */
-  public static String validatePattern(Object raw, Path projectRoot) {
-    return validatePattern(raw, projectRoot, false);
   }
 
   /** 校验 glob 模式；授权模式仅放开项目边界，不改变格式检查。 */
@@ -91,11 +76,6 @@ public final class PathGuard {
       return "参数 pattern 不是合法路径模式。当前项目根目录：" + root + "。请传入项目根目录内的绝对模式。";
     }
     return validateAbsolutePath(pattern, value, root, "pattern", allowOutside);
-  }
-
-  /** Glob 工具的执行前校验别名，语义上强调此时不访问文件系统。 */
-  public static String validatePatternArgument(Object raw, Path projectRoot) {
-    return validatePattern(raw, projectRoot);
   }
 
   public static String validatePatternArgument(Object raw, Path projectRoot, boolean allowOutside) {

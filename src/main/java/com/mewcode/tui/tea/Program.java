@@ -358,7 +358,7 @@ public class Program {
             int btn = Integer.parseInt(parts[0]);
             if (btn == 64) return new MouseMessage(MouseMessage.MouseButton.MouseButtonWheelUp);
             if (btn == 65) return new MouseMessage(MouseMessage.MouseButton.MouseButtonWheelDown);
-            return new MouseMessage(MouseMessage.MouseButton.OTHER);
+            return null;
         } catch (NumberFormatException e) { return null; }
     }
 

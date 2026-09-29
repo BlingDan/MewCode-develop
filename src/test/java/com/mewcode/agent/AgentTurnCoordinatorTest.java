@@ -5,8 +5,11 @@ import static org.junit.jupiter.api.Assertions.*;
 import com.mewcode.conversation.ConversationManager;
 import com.mewcode.conversation.ToolResultBlock;
 import com.mewcode.conversation.ToolUseBlock;
+import com.mewcode.llm.CancellableLlmStream;
 import com.mewcode.llm.LlmClient;
+import com.mewcode.llm.PromptRequest;
 import com.mewcode.llm.StreamEvent;
+import com.mewcode.prompt.PromptBuilder;
 import com.mewcode.tool.FileStateCache;
 import com.mewcode.tool.Tool;
 import com.mewcode.tool.ToolApiProtocol;
@@ -47,9 +50,7 @@ class AgentTurnCoordinatorTest {
             registry,
             new ToolExecutionContext(
                 tempDir, java.time.Duration.ofSeconds(2), new FileStateCache()))) {
-      var coordinator =
-          new AgentTurnCoordinator(
-              client, registry, executor, conversation, ToolApiProtocol.OPENAI);
+      var coordinator = coordinator(client, registry, executor, conversation);
       BlockingQueue<AgentEvent> events = coordinator.start("inspect");
       List<AgentEvent> seen = awaitCompletion(events);
 
@@ -114,9 +115,7 @@ class AgentTurnCoordinatorTest {
             registry,
             new ToolExecutionContext(
                 tempDir, java.time.Duration.ofSeconds(2), new FileStateCache()))) {
-      var coordinator =
-          new AgentTurnCoordinator(
-              client, registry, executor, conversation, ToolApiProtocol.OPENAI);
+      var coordinator = coordinator(client, registry, executor, conversation);
       List<AgentEvent> events = awaitCompletion(coordinator.start("one round only"));
 
       assertEquals(3, client.calls.size());
@@ -150,9 +149,7 @@ class AgentTurnCoordinatorTest {
             registry,
             new ToolExecutionContext(
                 tempDir, java.time.Duration.ofSeconds(2), new FileStateCache()))) {
-      var coordinator =
-          new AgentTurnCoordinator(
-              client, registry, executor, conversation, ToolApiProtocol.OPENAI);
+      var coordinator = coordinator(client, registry, executor, conversation);
       List<AgentEvent> events = awaitCompletion(coordinator.start("invalid"));
 
       var started =
@@ -184,6 +181,26 @@ class AgentTurnCoordinatorTest {
     return queue;
   }
 
+  private AgentTurnCoordinator coordinator(
+      LlmClient client,
+      ToolRegistry registry,
+      com.mewcode.tool.ToolExecutor executor,
+      ConversationManager conversation) {
+    return new AgentTurnCoordinator(
+        client,
+        registry,
+        executor,
+        conversation,
+        ToolApiProtocol.OPENAI,
+        new AgentLoopConfig(),
+        new PromptRequestFactory(() -> PromptBuilder.buildBundle(tempDir)),
+        null,
+        null,
+        null,
+        null,
+        null);
+  }
+
   private static final class QueueClient implements LlmClient {
     private final List<BlockingQueue<StreamEvent>> responses;
     private final List<ConversationManager> calls = new ArrayList<>();
@@ -194,13 +211,12 @@ class AgentTurnCoordinatorTest {
     }
 
     @Override
-    public synchronized BlockingQueue<StreamEvent> stream(
-        ConversationManager conversation, List<Map<String, Object>> tools) {
+    public synchronized CancellableLlmStream openStream(PromptRequest request) {
       var snapshot = new ConversationManager();
-      for (var message : conversation.getMessages()) snapshot.addMessage(message);
+      for (var message : request.history()) snapshot.addMessage(message);
       calls.add(snapshot);
-      toolRequests.add(tools == null ? List.of() : List.copyOf(tools));
-      return responses.removeFirst();
+      toolRequests.add(request.tools());
+      return new CancellableLlmStream(responses.removeFirst(), () -> {});
     }
   }
 
@@ -246,7 +262,7 @@ class AgentTurnCoordinatorTest {
     }
 
     @Override
-    public String validateInput(Map<String, Object> input) {
+    public String validateInput(ToolExecutionContext context, Map<String, Object> input) {
       return null;
     }
   }

@@ -74,7 +74,7 @@ public final class AgentTool implements Tool {
   }
 
   @Override
-  public String validateInput(Map<String, Object> input) {
+  public String validateInput(ToolExecutionContext context, Map<String, Object> input) {
     if (input == null) return "Agent 参数不能为空。";
     if (!(input.get("prompt") instanceof String prompt) || prompt.isBlank()) {
       return "Agent 需要非空 prompt。";

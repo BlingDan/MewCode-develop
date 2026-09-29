@@ -1,5 +1,6 @@
 package com.mewcode.config;
 
+import com.mewcode.agent.AgentLoopConfig;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -60,5 +61,68 @@ public final class AppConfig {
   /** 设置项目级 MCP Server 原始配置；空值按没有 MCP 配置处理。 */
   public void setMcpServers(Map<String, Object> mcpServers) {
     this.mcpServers = mcpServers == null ? new LinkedHashMap<>() : new LinkedHashMap<>(mcpServers);
+  }
+
+  /** 与 Agent 相关的 YAML 配置。 */
+  public static final class AgentConfig {
+    private AgentLoopConfig loop = new AgentLoopConfig();
+    private SubAgentConfig subagent = new SubAgentConfig();
+
+    public AgentLoopConfig getLoop() {
+      return loop;
+    }
+
+    public void setLoop(AgentLoopConfig loop) {
+      this.loop = loop == null ? new AgentLoopConfig() : loop;
+    }
+
+    public SubAgentConfig getSubagent() {
+      return subagent;
+    }
+
+    public void setSubagent(SubAgentConfig subagent) {
+      this.subagent = subagent == null ? new SubAgentConfig() : subagent;
+    }
+  }
+
+  /** SubAgent 的全局运行配置。 */
+  public static final class SubAgentConfig {
+    public static final long DEFAULT_AUTO_BACKGROUND_MS = 20_000L;
+
+    private long autoBackgroundMs = DEFAULT_AUTO_BACKGROUND_MS;
+
+    public long getAutoBackgroundMs() {
+      return autoBackgroundMs;
+    }
+
+    public void setAutoBackgroundMs(long autoBackgroundMs) {
+      this.autoBackgroundMs = autoBackgroundMs;
+    }
+
+    public void validate() {
+      if (autoBackgroundMs <= 0) {
+        throw new IllegalArgumentException("autoBackgroundMs must be positive");
+      }
+    }
+
+    public SubAgentConfig copy() {
+      var copy = new SubAgentConfig();
+      copy.setAutoBackgroundMs(autoBackgroundMs);
+      copy.validate();
+      return copy;
+    }
+  }
+
+  /** 权限模式配置，规则文件由 {@link PermissionConfigLoader} 分层加载。 */
+  public static final class PermissionConfig {
+    private String mode = "default";
+
+    public String getMode() {
+      return mode;
+    }
+
+    public void setMode(String mode) {
+      this.mode = mode == null || mode.isBlank() ? "default" : mode;
+    }
   }
 }

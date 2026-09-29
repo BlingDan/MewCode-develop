@@ -5,7 +5,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.mewcode.compact.ContextRequest;
 import com.mewcode.conversation.Message;
 import com.mewcode.llm.PromptRequest;
 import com.mewcode.prompt.PromptBuilder;
@@ -18,11 +17,17 @@ class PromptRequestFactoryTest {
 
   @Test
   void reusesStableSystemSegmentsAndSchedulesReminderEveryFourRounds() {
-    var factory = new PromptRequestFactory(PromptBuilder.buildBundle(Path.of("project")));
+    var factory = new PromptRequestFactory(() -> PromptBuilder.buildBundle(Path.of("project")));
     var history = List.of(new Message("user", "fix it"));
-    PromptRequest first = factory.create(AgentMode.EXECUTE, 1, false, history, List.of());
-    PromptRequest second = factory.create(AgentMode.EXECUTE, 2, false, history, List.of());
-    PromptRequest fifth = factory.create(AgentMode.EXECUTE, 5, false, history, List.of());
+    PromptRequest first =
+        factory.create(
+            AgentMode.EXECUTE, 1, false, history, List.of(), List.of(), PromptAdditions.empty());
+    PromptRequest second =
+        factory.create(
+            AgentMode.EXECUTE, 2, false, history, List.of(), List.of(), PromptAdditions.empty());
+    PromptRequest fifth =
+        factory.create(
+            AgentMode.EXECUTE, 5, false, history, List.of(), List.of(), PromptAdditions.empty());
 
     assertEquals(first.systemSegments(), second.systemSegments());
     assertEquals(first.systemSegments(), fifth.systemSegments());
@@ -36,10 +41,12 @@ class PromptRequestFactoryTest {
 
   @Test
   void modeSwitchCanForceTheNextReminderToBeCompleteWithoutChangingHistory() {
-    var factory = new PromptRequestFactory(PromptBuilder.buildBundle(Path.of("project")));
+    var factory = new PromptRequestFactory(() -> PromptBuilder.buildBundle(Path.of("project")));
     var history = List.of(new Message("user", "plan this"));
 
-    PromptRequest request = factory.create(AgentMode.PLAN, 2, true, history, List.of());
+    PromptRequest request =
+        factory.create(
+            AgentMode.PLAN, 2, true, history, List.of(), List.of(), PromptAdditions.empty());
 
     String text = request.reminder().orElseThrow().textContent();
     assertTrue(text.contains("Current mode: PLAN"));
@@ -49,12 +56,13 @@ class PromptRequestFactoryTest {
   }
 
   @Test
-  void createsContextRequestWithoutPersistingConversationHistory() {
-    var factory = new PromptRequestFactory(PromptBuilder.buildBundle(Path.of("project")));
+  void createsRequestWithoutPersistingConversationHistory() {
+    var factory = new PromptRequestFactory(() -> PromptBuilder.buildBundle(Path.of("project")));
     var tools = List.<Map<String, Object>>of(Map.of("name", "ReadFile"));
 
-    ContextRequest request =
-        factory.createContextRequest(AgentMode.EXECUTE, 1, false, tools, List.of());
+    PromptRequest request =
+        factory.create(
+            AgentMode.EXECUTE, 1, false, List.of(), tools, List.of(), PromptAdditions.empty());
 
     assertEquals(factory.systemPrompt().systemSegments(), request.systemSegments());
     assertEquals(tools, request.tools());
@@ -63,13 +71,15 @@ class PromptRequestFactoryTest {
 
   @Test
   void injectsCatalogSummaryWithoutBodiesAndPinsActiveSopLast() {
-    var factory = new PromptRequestFactory(PromptBuilder.buildBundle(Path.of("project")));
+    var factory = new PromptRequestFactory(() -> PromptBuilder.buildBundle(Path.of("project")));
     var additions =
         new PromptAdditions(
             "memory",
             java.util.Optional.empty(),
             "# 可用 Skills\n- review: review changes",
-            "# 当前已激活 Skills\nFULL SOP");
+            "# 当前已激活 Skills\nFULL SOP",
+            List.of(),
+            "");
 
     PromptRequest request =
         factory.create(AgentMode.EXECUTE, 1, true, List.of(), List.of(), List.of(), additions);
@@ -88,11 +98,11 @@ class PromptRequestFactoryTest {
 
   @Test
   void appendsHookRemindersAfterExistingReminderWithoutChangingHistory() {
-    var factory = new PromptRequestFactory(PromptBuilder.buildBundle(Path.of("project")));
+    var factory = new PromptRequestFactory(() -> PromptBuilder.buildBundle(Path.of("project")));
     var history = List.of(new Message("user", "keep history"));
     var additions =
         new PromptAdditions(
-            "", java.util.Optional.empty(), "", "", List.of("HOOK_FIRST", "HOOK_SECOND"));
+            "", java.util.Optional.empty(), "", "", List.of("HOOK_FIRST", "HOOK_SECOND"), "");
 
     PromptRequest request =
         factory.create(AgentMode.EXECUTE, 1, false, history, List.of(), List.of(), additions);

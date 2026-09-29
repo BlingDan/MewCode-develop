@@ -45,8 +45,13 @@ class AnthropicClientTest {
 
       List<StreamEvent> events =
           collect(
-              new AnthropicClient(provider, PromptBuilder.buildSystemPrompt(Path.of(projectRoot)))
-                  .stream(history));
+              new AnthropicClient(provider)
+                  .openStream(
+                      request(
+                          PromptBuilder.buildBundle(Path.of(projectRoot)).systemSegments(),
+                          history,
+                          List.of()))
+                  .events());
 
       assertInstanceOf(StreamEvent.ThinkingDelta.class, events.get(0));
       assertEquals("HIDDEN_THOUGHT", ((StreamEvent.ThinkingDelta) events.get(0)).text());
@@ -76,8 +81,13 @@ class AnthropicClientTest {
       withThinking.addAssistantMessage(List.of(new ThinkingBlock("HIDDEN_THOUGHT", "dGVzdA==")));
       withThinking.addUserMessage("continue");
       collect(
-          new AnthropicClient(provider, PromptBuilder.buildSystemPrompt(Path.of(projectRoot)))
-              .stream(withThinking));
+          new AnthropicClient(provider)
+              .openStream(
+                  request(
+                      PromptBuilder.buildBundle(Path.of(projectRoot)).systemSegments(),
+                      withThinking,
+                      List.of()))
+              .events());
       assertTrue(body.get().contains("HIDDEN_THOUGHT"), body.get());
       assertTrue(body.get().contains("dGVzdA=="), body.get());
     } finally {
@@ -101,17 +111,20 @@ class AnthropicClientTest {
       history.addUserMessage("read the file");
       List<StreamEvent> events =
           collect(
-              new AnthropicClient(provider(server, "tool-key", false), "system")
-                  .stream(
-                      history,
-                      List.of(
-                          Map.of(
-                              "name",
-                              "ReadFile",
-                              "description",
-                              "read a file",
-                              "input_schema",
-                              Map.of("type", "object")))));
+              new AnthropicClient(provider(server, "tool-key", false))
+                  .openStream(
+                      request(
+                          List.of("system"),
+                          history,
+                          List.of(
+                              Map.of(
+                                  "name",
+                                  "ReadFile",
+                                  "description",
+                                  "read a file",
+                                  "input_schema",
+                                  Map.of("type", "object")))))
+                  .events());
 
       assertInstanceOf(StreamEvent.ToolCallComplete.class, events.get(0));
       var call = (StreamEvent.ToolCallComplete) events.get(0);
@@ -166,7 +179,7 @@ class AnthropicClientTest {
               Optional.of(reminder));
 
       collect(
-          new AnthropicClient(provider(server, "structured-key", false), "legacy")
+          new AnthropicClient(provider(server, "structured-key", false))
               .openStream(request)
               .events());
 
@@ -201,7 +214,11 @@ class AnthropicClientTest {
       var history = new ConversationManager();
       history.addUserMessage("hello");
 
-      List<StreamEvent> events = collect(new AnthropicClient(provider, "system").stream(history));
+      List<StreamEvent> events =
+          collect(
+              new AnthropicClient(provider)
+                  .openStream(request(List.of("system"), history, List.of()))
+                  .events());
 
       assertEquals(1, events.size());
       assertInstanceOf(StreamEvent.Error.class, events.getFirst());
@@ -233,8 +250,9 @@ class AnthropicClientTest {
       history.addUserMessage("hello");
       List<StreamEvent> events =
           collect(
-              new AnthropicClient(provider(server, "rate-limit-key", false), "system")
-                  .stream(history));
+              new AnthropicClient(provider(server, "rate-limit-key", false))
+                  .openStream(request(List.of("system"), history, List.of()))
+                  .events());
 
       assertInstanceOf(StreamEvent.Error.class, events.getFirst());
       assertEquals(1, count.get());
@@ -260,8 +278,9 @@ class AnthropicClientTest {
       history.addUserMessage("hello");
       List<StreamEvent> events =
           collect(
-              new AnthropicClient(provider(server, "context-key", false), "system")
-                  .stream(history));
+              new AnthropicClient(provider(server, "context-key", false))
+                  .openStream(request(List.of("system"), history, List.of()))
+                  .events());
 
       var error = assertInstanceOf(StreamEvent.Error.class, events.getFirst());
       assertEquals(StreamEvent.ErrorKind.CONTEXT_LENGTH, error.errorKind());
@@ -279,6 +298,13 @@ class AnthropicClientTest {
     provider.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
     provider.setThinking(thinking);
     return provider;
+  }
+
+  private static PromptRequest request(
+      List<String> systemSegments,
+      ConversationManager conversation,
+      List<Map<String, Object>> tools) {
+    return new PromptRequest(systemSegments, tools, conversation.getMessages(), Optional.empty());
   }
 
   private static List<StreamEvent> collect(java.util.concurrent.BlockingQueue<StreamEvent> queue)

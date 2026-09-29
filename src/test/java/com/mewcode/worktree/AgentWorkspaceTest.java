@@ -40,15 +40,17 @@ class AgentWorkspaceTest {
     Path child = manager.create(root, "child", new CancellationToken()).path();
     Files.writeString(child.resolve("MEWCODE.md"), "child instruction");
     var workspace = new AgentWorkspace(root, "session", "main", new FileStateCache(), manager);
-    var factory = new com.mewcode.agent.PromptRequestFactory(workspace);
+    var factory = new com.mewcode.agent.PromptRequestFactory(workspace::systemPrompt);
     var beforeRequest =
         factory.create(
             com.mewcode.agent.AgentMode.EXECUTE,
             1,
             false,
             java.util.List.of(),
-            java.util.List.of());
-    String old = workspace.systemPrompt().flattenedText();
+            java.util.List.of(),
+            java.util.List.of(),
+            com.mewcode.agent.PromptAdditions.empty());
+    String old = workspace.systemPrompt().systemSegments().toString();
     manager.enter(workspace, "child");
     assertTrue(old.contains("parent instruction"));
     var afterRequest =
@@ -57,11 +59,14 @@ class AgentWorkspaceTest {
             2,
             false,
             java.util.List.of(),
-            java.util.List.of());
+            java.util.List.of(),
+            java.util.List.of(),
+            com.mewcode.agent.PromptAdditions.empty());
     assertTrue(String.join("\n", beforeRequest.systemSegments()).contains("parent instruction"));
     assertTrue(String.join("\n", afterRequest.systemSegments()).contains("child instruction"));
-    assertTrue(workspace.systemPrompt().flattenedText().contains("child instruction"));
-    assertFalse(workspace.systemPrompt().flattenedText().contains("parent instruction"));
+    assertTrue(workspace.systemPrompt().systemSegments().toString().contains("child instruction"));
+    assertFalse(
+        workspace.systemPrompt().systemSegments().toString().contains("parent instruction"));
     assertEquals(child, workspace.capture(new CancellationToken()).projectRoot());
     assertThrows(WorktreeException.class, () -> manager.enter(workspace, "child"));
     manager.exit(workspace, false, new CancellationToken());

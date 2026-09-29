@@ -53,7 +53,7 @@ public final class BashTool implements Tool {
   }
 
   @Override
-  public String validateInput(Map<String, Object> input) {
+  public String validateInput(ToolExecutionContext context, Map<String, Object> input) {
     return ToolInput.requireString(input, "command", " 请传入要执行的 shell 命令。");
   }
 

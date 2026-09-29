@@ -12,7 +12,9 @@ class SystemReminderFactoryTest {
 
   @Test
   void createsAUserMessageWithOneTaggedTextBlock() {
-    Message reminder = SystemReminderFactory.full(new ReminderContext(AgentMode.PLAN, 1, false));
+    Message reminder =
+        SystemReminderFactory.full(
+            new ReminderContext(AgentMode.PLAN, 1, false), java.util.List.of());
 
     assertEquals("user", reminder.role());
     assertEquals(1, reminder.content().size());

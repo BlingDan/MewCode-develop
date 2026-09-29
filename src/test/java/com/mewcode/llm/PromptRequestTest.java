@@ -38,7 +38,6 @@ class PromptRequestTest {
         "object", ((Map<?, ?>) request.tools().getFirst().get("input_schema")).get("type"));
     assertEquals(List.of(new Message("user", "hello")), request.history());
     assertEquals(Optional.of(reminder), request.reminder());
-    assertEquals("stable", request.flattenedSystemPrompt());
     assertThrows(
         UnsupportedOperationException.class, () -> request.tools().getFirst().put("x", "y"));
   }

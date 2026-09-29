@@ -11,7 +11,7 @@ import com.mewcode.agent.AgentTurnCoordinator;
 import com.mewcode.config.ProviderConfig;
 import com.mewcode.conversation.ConversationManager;
 import com.mewcode.llm.StreamEvent;
-import com.mewcode.permission.BashSandboxFactory;
+import com.mewcode.permission.BashSandbox;
 import com.mewcode.permission.PathAuthorizationStore;
 import com.mewcode.permission.PermissionGate;
 import com.mewcode.permission.PermissionRuleEngine;
@@ -54,11 +54,9 @@ class SubAgentRuntimeTest {
     var registry = ToolRegistry.createDefault();
     registry.register(new AgentTool());
     var provider = provider("main", "model-one");
-    var router =
-        new ProviderRouter(
-            List.of(provider), provider, client, (ignored, prompt) -> client, "system");
+    var router = new ProviderRouter(List.of(provider), provider, client, ignored -> client);
     var promptFactory =
-        new com.mewcode.agent.PromptRequestFactory(PromptBuilder.buildBundle(projectRoot));
+        new com.mewcode.agent.PromptRequestFactory(() -> PromptBuilder.buildBundle(projectRoot));
     var permissionGate = new PermissionGate();
     var permissionRules = new PermissionRuleEngine();
 
@@ -72,7 +70,12 @@ class SubAgentRuntimeTest {
               new ConversationManager(),
               ToolApiProtocol.OPENAI,
               new AgentLoopConfig(5, 3),
-              promptFactory);
+              promptFactory,
+              null,
+              null,
+              null,
+              null,
+              null);
       coordinator.setSubAgentRuntime(
           new SubAgentRuntime(
               AgentCatalog.load(projectRoot, projectRoot, List.of(), 5),
@@ -84,7 +87,7 @@ class SubAgentRuntimeTest {
               permissionGate,
               permissionRules,
               new PathAuthorizationStore(projectRoot),
-              BashSandboxFactory.create(),
+              BashSandbox.create(),
               null,
               "session",
               1_000,
@@ -103,7 +106,7 @@ class SubAgentRuntimeTest {
       assertEquals(
           List.of(new com.mewcode.conversation.Message("user", "inspect files")),
           client.requests().get(1).history());
-      assertTrue(client.requests().get(1).flattenedSystemPrompt().contains("只读取和搜索项目"));
+      assertTrue(client.requests().get(1).systemSegments().toString().contains("只读取和搜索项目"));
       assertTrue(client.requests().get(1).tools().toString().contains("ReadFile"));
       assertTrue(
           client.requests().get(1).tools().stream()
@@ -161,8 +164,7 @@ class SubAgentRuntimeTest {
           }
         };
     var router =
-        new ProviderRouter(
-            List.of(provider), provider, readerClient, (ignored, prompt) -> readerClient, "system");
+        new ProviderRouter(List.of(provider), provider, readerClient, ignored -> readerClient);
     var workspace =
         new com.mewcode.worktree.AgentWorkspace(
             projectRoot,
@@ -171,7 +173,7 @@ class SubAgentRuntimeTest {
             "main",
             new FileStateCache(),
             manager);
-    var promptFactory = new com.mewcode.agent.PromptRequestFactory(workspace);
+    var promptFactory = new com.mewcode.agent.PromptRequestFactory(workspace::systemPrompt);
     try (var tasks = new SubAgentTaskManager()) {
       var runtime =
           new SubAgentRuntime(
@@ -184,7 +186,7 @@ class SubAgentRuntimeTest {
               new PermissionGate(),
               new PermissionRuleEngine(),
               new PathAuthorizationStore(projectRoot),
-              BashSandboxFactory.create(),
+              BashSandbox.create(),
               null,
               "session",
               10_000,
@@ -192,7 +194,14 @@ class SubAgentRuntimeTest {
       runtime.configureWorkspace(workspace);
       var parent =
           new SubAgentRuntime.ParentAgentSnapshot(
-              promptFactory.create(AgentMode.EXECUTE, 1, false, List.of(), List.of()),
+              promptFactory.create(
+                  AgentMode.EXECUTE,
+                  1,
+                  false,
+                  List.of(),
+                  List.of(),
+                  List.of(),
+                  com.mewcode.agent.PromptAdditions.empty()),
               List.of(),
               com.mewcode.agent.ToolPolicy.forMode(AgentMode.EXECUTE),
               router.main(),
@@ -217,7 +226,7 @@ class SubAgentRuntimeTest {
       assertTrue(result.content().contains("无成果工作树已清理"), result.content());
       assertTrue(client.requests().get(1).history().toString().contains("baseline"));
       assertTrue(!client.requests().get(1).history().toString().contains("parent changed"));
-      assertTrue(client.requests().getFirst().flattenedSystemPrompt().contains("重新读取"));
+      assertTrue(client.requests().getFirst().systemSegments().toString().contains("重新读取"));
       assertTrue(manager.list().isEmpty());
       assertEquals(
           "parent changed", java.nio.file.Files.readString(projectRoot.resolve("notes.txt")));
@@ -252,9 +261,7 @@ class SubAgentRuntimeTest {
           new StreamEvent.TextDelta("done editing"), new StreamEvent.StreamEnd("end_turn"));
     var registry = ToolRegistry.createDefault();
     var provider = provider("main", "model");
-    var router =
-        new ProviderRouter(
-            List.of(provider), provider, client, (ignored, prompt) -> client, "system");
+    var router = new ProviderRouter(List.of(provider), provider, client, ignored -> client);
     var manager =
         new com.mewcode.worktree.WorktreeManager(
             projectRoot, new com.mewcode.config.WorktreeConfig(), "session");
@@ -266,7 +273,7 @@ class SubAgentRuntimeTest {
             "main",
             new FileStateCache(),
             manager);
-    var promptFactory = new com.mewcode.agent.PromptRequestFactory(workspace);
+    var promptFactory = new com.mewcode.agent.PromptRequestFactory(workspace::systemPrompt);
     try (var tasks = new SubAgentTaskManager()) {
       var runtime =
           new SubAgentRuntime(
@@ -279,7 +286,7 @@ class SubAgentRuntimeTest {
               new PermissionGate(),
               new PermissionRuleEngine(),
               new PathAuthorizationStore(projectRoot),
-              BashSandboxFactory.create(),
+              BashSandbox.create(),
               null,
               "session",
               10_000,
@@ -287,7 +294,14 @@ class SubAgentRuntimeTest {
       runtime.configureWorkspace(workspace);
       var parent =
           new SubAgentRuntime.ParentAgentSnapshot(
-              promptFactory.create(AgentMode.EXECUTE, 1, false, List.of(), List.of()),
+              promptFactory.create(
+                  AgentMode.EXECUTE,
+                  1,
+                  false,
+                  List.of(),
+                  List.of(),
+                  List.of(),
+                  com.mewcode.agent.PromptAdditions.empty()),
               List.of(),
               com.mewcode.agent.ToolPolicy.forMode(AgentMode.EXECUTE),
               router.main(),
@@ -356,7 +370,7 @@ class SubAgentRuntimeTest {
             "main",
             new FileStateCache(),
             manager);
-    var promptFactory = new com.mewcode.agent.PromptRequestFactory(workspace);
+    var promptFactory = new com.mewcode.agent.PromptRequestFactory(workspace::systemPrompt);
     var opened = new java.util.concurrent.CountDownLatch(2);
     var release = new java.util.concurrent.CountDownLatch(1);
     var stages =
@@ -368,7 +382,7 @@ class SubAgentRuntimeTest {
           @Override
           public com.mewcode.llm.CancellableLlmStream openStream(
               com.mewcode.llm.PromptRequest request) {
-            String system = request.flattenedSystemPrompt();
+            String system = request.systemSegments().toString();
             Path cwd =
                 manager.list().stream()
                     .map(r -> r.path())
@@ -418,9 +432,7 @@ class SubAgentRuntimeTest {
           }
         };
     var provider = provider("main", "model");
-    var router =
-        new ProviderRouter(
-            List.of(provider), provider, client, (ignored, prompt) -> client, "system");
+    var router = new ProviderRouter(List.of(provider), provider, client, ignored -> client);
     try (var tasks = new SubAgentTaskManager()) {
       var runtime =
           new SubAgentRuntime(
@@ -433,7 +445,7 @@ class SubAgentRuntimeTest {
               new PermissionGate(),
               new PermissionRuleEngine(),
               new PathAuthorizationStore(projectRoot),
-              BashSandboxFactory.create(),
+              BashSandbox.create(),
               null,
               "session",
               10_000,
@@ -441,7 +453,14 @@ class SubAgentRuntimeTest {
       runtime.configureWorkspace(workspace);
       var parent =
           new SubAgentRuntime.ParentAgentSnapshot(
-              promptFactory.create(AgentMode.EXECUTE, 1, false, List.of(), List.of()),
+              promptFactory.create(
+                  AgentMode.EXECUTE,
+                  1,
+                  false,
+                  List.of(),
+                  List.of(),
+                  List.of(),
+                  com.mewcode.agent.PromptAdditions.empty()),
               List.of(),
               com.mewcode.agent.ToolPolicy.forMode(AgentMode.EXECUTE),
               router.main(),
@@ -524,12 +543,10 @@ class SubAgentRuntimeTest {
             "main",
             new FileStateCache(),
             manager);
-    var promptFactory = new com.mewcode.agent.PromptRequestFactory(workspace);
+    var promptFactory = new com.mewcode.agent.PromptRequestFactory(workspace::systemPrompt);
     var client = new FakeLlmClient();
     var provider = provider("main", "model");
-    var router =
-        new ProviderRouter(
-            List.of(provider), provider, client, (ignored, prompt) -> client, "system");
+    var router = new ProviderRouter(List.of(provider), provider, client, ignored -> client);
     try (var tasks = new SubAgentTaskManager()) {
       var runtime =
           new SubAgentRuntime(
@@ -542,7 +559,7 @@ class SubAgentRuntimeTest {
               new PermissionGate(),
               new PermissionRuleEngine(),
               new PathAuthorizationStore(projectRoot),
-              BashSandboxFactory.create(),
+              BashSandbox.create(),
               null,
               "session",
               10_000,
@@ -550,7 +567,14 @@ class SubAgentRuntimeTest {
       runtime.configureWorkspace(workspace);
       var parent =
           new SubAgentRuntime.ParentAgentSnapshot(
-              promptFactory.create(AgentMode.EXECUTE, 1, false, List.of(), List.of()),
+              promptFactory.create(
+                  AgentMode.EXECUTE,
+                  1,
+                  false,
+                  List.of(),
+                  List.of(),
+                  List.of(),
+                  com.mewcode.agent.PromptAdditions.empty()),
               List.of(),
               com.mewcode.agent.ToolPolicy.forMode(AgentMode.EXECUTE),
               router.main(),

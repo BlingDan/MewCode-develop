@@ -13,6 +13,7 @@ import com.mewcode.permission.PermissionContext;
 import com.mewcode.permission.PermissionDecision;
 import com.mewcode.permission.PermissionRequest;
 import com.mewcode.permission.PermissionResponse;
+import com.mewcode.util.Closeables;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -122,13 +123,8 @@ public final class ToolExecutor implements AutoCloseable {
           if (rejection.isPresent())
             return withHookContext(
                 context, () -> hookRejected(call, rejection.orElseThrow(), System.nanoTime()));
-          return executeSinglePrepared(call, policy, token, context);
+          return withHookContext(context, () -> executeSingleBody(call, policy, token));
         });
-  }
-
-  private ToolInvocationResult executeSinglePrepared(
-      ToolCall call, ToolPolicy policy, CancellationToken token, HookContext context) {
-    return withHookContext(context, () -> executeSingleBody(call, policy, token));
   }
 
   private ToolInvocationResult executeSingleBody(
@@ -147,7 +143,7 @@ public final class ToolExecutor implements AutoCloseable {
     }
 
     ToolExecutionContext context = capturedContext(token);
-    String validation = safeValidate(tool, context, call.arguments());
+    String validation = validateInput(tool, context, call.arguments());
     if (validation != null) {
       return result(call, ToolResult.error(validation), started, tool);
     }
@@ -183,13 +179,9 @@ public final class ToolExecutor implements AutoCloseable {
           if (rejection.isPresent())
             return withHookContext(
                 context, () -> hookRejected(call, rejection.orElseThrow(), System.nanoTime()));
-          return executeSinglePermissionPrepared(call, policy, permissions, context);
+          return withHookContext(
+              context, () -> executeSinglePermissionBody(call, policy, permissions));
         });
-  }
-
-  private ToolInvocationResult executeSinglePermissionPrepared(
-      ToolCall call, ToolPolicy policy, PermissionContext permissions, HookContext context) {
-    return withHookContext(context, () -> executeSinglePermissionBody(call, policy, permissions));
   }
 
   private ToolInvocationResult executeSinglePermissionBody(
@@ -253,7 +245,7 @@ public final class ToolExecutor implements AutoCloseable {
 
     ToolExecutionContext context =
         capturedContext(token).withPermissionContext(permissions, token, externalPathAuthorized);
-    String validation = safeValidate(tool, context, call.arguments());
+    String validation = validateInput(tool, context, call.arguments());
     if (validation != null) {
       return result(call, ToolResult.error(validation), started, tool);
     }
@@ -336,7 +328,9 @@ public final class ToolExecutor implements AutoCloseable {
         } else {
           futures.add(
               executor.submit(
-                  () -> executeSinglePermissionPrepared(call, policy, permissions, context)));
+                  () ->
+                      withHookContext(
+                          context, () -> executeSinglePermissionBody(call, policy, permissions))));
         }
       }
       for (int i = 0; i < futures.size(); i++) {
@@ -357,7 +351,7 @@ public final class ToolExecutor implements AutoCloseable {
       HookContext context) {
     if (!seenIds.add(call.toolUseId()))
       return withHookContext(context, () -> duplicateResult(call));
-    return executeSinglePermissionPrepared(call, policy, permissions, context);
+    return withHookContext(context, () -> executeSinglePermissionBody(call, policy, permissions));
   }
 
   private boolean isPermissionSafe(
@@ -442,7 +436,9 @@ public final class ToolExecutor implements AutoCloseable {
         if (!seenIds.add(call.toolUseId())) {
           futures.add(executor.submit(() -> withHookContext(context, () -> duplicateResult(call))));
         } else {
-          futures.add(executor.submit(() -> executeSinglePrepared(call, policy, token, context)));
+          futures.add(
+              executor.submit(
+                  () -> withHookContext(context, () -> executeSingleBody(call, policy, token))));
         }
       }
       for (int i = 0; i < futures.size(); i++) {
@@ -461,7 +457,7 @@ public final class ToolExecutor implements AutoCloseable {
       HookContext context) {
     if (!seenIds.add(call.toolUseId()))
       return withHookContext(context, () -> duplicateResult(call));
-    return executeSinglePrepared(call, policy, token, context);
+    return withHookContext(context, () -> executeSingleBody(call, policy, token));
   }
 
   private List<ToolInvocationResult> prepareAndExecuteBatch(
@@ -728,14 +724,6 @@ public final class ToolExecutor implements AutoCloseable {
     }
   }
 
-  private static void closeUse(AutoCloseable use) {
-    if (use == null) return;
-    try {
-      use.close();
-    } catch (Exception ignored) {
-    }
-  }
-
   /** Future 取消不代表 Callable 已停止；仅 run 的实际 finally 或确定未启动时释放。 */
   private Future<ToolResult> submitTool(Tool tool, ToolExecutionContext context, ToolCall call) {
     return submitPinned(
@@ -756,7 +744,7 @@ public final class ToolExecutor implements AutoCloseable {
               try {
                 return action.call();
               } finally {
-                closeUse(use);
+                Closeables.closeQuietly(use);
               }
             }) {
           @Override
@@ -766,13 +754,13 @@ public final class ToolExecutor implements AutoCloseable {
               super.run();
             } finally {
               state.set(2);
-              closeUse(use);
+              Closeables.closeQuietly(use);
             }
           }
 
           @Override
           protected void done() {
-            if (state.compareAndSet(0, 2)) closeUse(use);
+            if (state.compareAndSet(0, 2)) Closeables.closeQuietly(use);
           }
         };
     try {
@@ -821,8 +809,9 @@ public final class ToolExecutor implements AutoCloseable {
                             context,
                             () -> hookRejected(call, rejected.orElseThrow(), System.nanoTime()));
                       return permissionPath
-                          ? executeSinglePermissionPrepared(call, policy, permissions, context)
-                          : executeSinglePrepared(call, policy, token, context);
+                          ? withHookContext(
+                              context, () -> executeSinglePermissionBody(call, policy, permissions))
+                          : withHookContext(context, () -> executeSingleBody(call, policy, token));
                     });
         if (safe) futures.add(submitPinned(action, context.executionContext()));
         else {
@@ -856,7 +845,7 @@ public final class ToolExecutor implements AutoCloseable {
     }
   }
 
-  private String safeValidate(
+  private String validateInput(
       Tool tool, ToolExecutionContext context, java.util.Map<String, Object> input) {
     try {
       return tool.validateInput(context, input);
@@ -962,7 +951,7 @@ public final class ToolExecutor implements AutoCloseable {
         new java.util.concurrent.atomic.AtomicBoolean();
 
     void close() {
-      if (closed.compareAndSet(false, true)) closeUse(use);
+      if (closed.compareAndSet(false, true)) Closeables.closeQuietly(use);
     }
   }
 }

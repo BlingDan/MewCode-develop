@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.mewcode.conversation.Message;
+import com.mewcode.llm.PromptRequest;
 import com.mewcode.llm.StreamEvent;
 import java.util.List;
 import java.util.Map;
@@ -17,7 +18,7 @@ class TokenEstimatorTest {
     @Test
     void estimatesCurrentContentByCharactersWhenThereIsNoUsageAnchor() {
         var estimator = new TokenEstimator();
-        var request = new ContextRequest(List.of(), List.of(), Optional.empty());
+        var request = new PromptRequest(List.of(), List.of(), List.of(), Optional.empty());
         var history = List.of(new Message("user", "abc"));
 
         assertEquals(1, estimator.estimate(request, history));
@@ -27,7 +28,7 @@ class TokenEstimatorTest {
     @Test
     void anchorsOnAllProviderUsageDimensionsAndAddsOnlyNewCharacters() {
         var estimator = new TokenEstimator();
-        var request = new ContextRequest(List.of(), List.of(), Optional.empty());
+        var request = new PromptRequest(List.of(), List.of(), List.of(), Optional.empty());
         var initialHistory = List.of(new Message("user", "abc"));
         var laterHistory = List.of(
                 new Message("user", "abc"),
@@ -47,10 +48,11 @@ class TokenEstimatorTest {
 
     @Test
     void countsSystemToolsReminderAndHistoryInRequestCharacters() {
-        var emptyRequest = new ContextRequest(List.of(), List.of(), Optional.empty());
-        var fullRequest = new ContextRequest(
+        var emptyRequest = new PromptRequest(List.of(), List.of(), List.of(), Optional.empty());
+        var fullRequest = new PromptRequest(
                 List.of("system"),
                 List.of(Map.of("name", "ReadFile")),
+                List.of(),
                 Optional.of(new Message("user", "reminder")));
         var history = List.of(new Message("user", "history"));
 
@@ -64,7 +66,7 @@ class TokenEstimatorTest {
     @Test
     void fallsBackToCompleteApproximationAfterHistoryReplacement() {
         var estimator = new TokenEstimator();
-        var request = new ContextRequest(List.of(), List.of(), Optional.empty());
+        var request = new PromptRequest(List.of(), List.of(), List.of(), Optional.empty());
         var oldHistory = List.of(new Message("user", "old"));
         var compactedHistory = List.of(new Message("assistant", "summary"));
 

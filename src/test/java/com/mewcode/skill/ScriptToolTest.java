@@ -41,9 +41,9 @@ class ScriptToolTest {
                 script),
             temp);
 
-    assertTrue(tool.validateInput(Map.of()).contains("path"));
-    assertTrue(tool.validateInput(Map.of("path", "x", "extra", true)).contains("extra"));
-    assertEquals(null, tool.validateInput(Map.of("path", "x")));
+    assertTrue(tool.validateInput(null, Map.of()).contains("path"));
+    assertTrue(tool.validateInput(null, Map.of("path", "x", "extra", true)).contains("extra"));
+    assertEquals(null, tool.validateInput(null, Map.of("path", "x")));
 
     var result = tool.execute(context(new CancellationToken()), Map.of("path", "x"));
     assertFalse(result.isError(), result.content());

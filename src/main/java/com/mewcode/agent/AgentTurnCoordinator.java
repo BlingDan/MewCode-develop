@@ -3,7 +3,6 @@ package com.mewcode.agent;
 import com.mewcode.compact.ContextException;
 import com.mewcode.compact.ContextManager;
 import com.mewcode.compact.ContextPreparation;
-import com.mewcode.compact.ContextRequest;
 import com.mewcode.compact.ContextTrigger;
 import com.mewcode.conversation.ConversationManager;
 import com.mewcode.conversation.Message;
@@ -22,7 +21,6 @@ import com.mewcode.permission.PathAuthorizationStore;
 import com.mewcode.permission.PermissionContext;
 import com.mewcode.permission.PermissionGate;
 import com.mewcode.permission.PermissionMode;
-import com.mewcode.permission.PermissionRuleEngine;
 import com.mewcode.permission.PermissionRuntime;
 import com.mewcode.skill.ProviderRouter;
 import com.mewcode.skill.SkillCatalog;
@@ -44,7 +42,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -68,13 +65,10 @@ public final class AgentTurnCoordinator {
   private final ConversationManager conversation;
   private final ToolApiProtocol protocol;
   private final AgentLoopConfig config;
-  private final Function<AgentMode, String> systemPromptProvider;
   private final PromptRequestFactory promptRequestFactory;
   private final ContextManager contextManager;
   private final PermissionGate permissionGate;
-  private final PermissionMode configuredPermissionMode;
-  private final PermissionRuleEngine permissionRuleEngine;
-  private PermissionRuntime permissionRuntime;
+  private final PermissionRuntime permissionRuntime;
   private final PathAuthorizationStore pathAuthorizationStore;
   private final BashSandbox bashSandbox;
   private volatile Supplier<PromptAdditions> promptAdditionsSupplier = PromptAdditions::empty;
@@ -90,115 +84,7 @@ public final class AgentTurnCoordinator {
   private volatile SubAgentRuntime subAgentRuntime;
   private volatile com.mewcode.worktree.AgentWorkspace workspace;
 
-  public AgentTurnCoordinator(
-      LlmClient client,
-      ToolRegistry registry,
-      ToolExecutor executor,
-      ConversationManager conversation,
-      ToolApiProtocol protocol) {
-    this(client, registry, executor, conversation, protocol, new AgentLoopConfig(), mode -> null);
-  }
-
-  public AgentTurnCoordinator(
-      LlmClient client,
-      ToolRegistry registry,
-      ToolExecutor executor,
-      ConversationManager conversation,
-      ToolApiProtocol protocol,
-      AgentLoopConfig config) {
-    this(client, registry, executor, conversation, protocol, config, mode -> null);
-  }
-
-  public AgentTurnCoordinator(
-      LlmClient client,
-      ToolRegistry registry,
-      ToolExecutor executor,
-      ConversationManager conversation,
-      ToolApiProtocol protocol,
-      AgentLoopConfig config,
-      Function<AgentMode, String> systemPromptProvider) {
-    this(client, registry, executor, conversation, protocol, config, systemPromptProvider, null);
-  }
-
-  /** 使用结构化提示请求启动协调器；旧字符串构造器继续保留原有语义。 */
-  public AgentTurnCoordinator(
-      LlmClient client,
-      ToolRegistry registry,
-      ToolExecutor executor,
-      ConversationManager conversation,
-      ToolApiProtocol protocol,
-      AgentLoopConfig config,
-      PromptRequestFactory promptRequestFactory) {
-    this(
-        client,
-        registry,
-        executor,
-        conversation,
-        protocol,
-        config,
-        mode -> null,
-        Objects.requireNonNull(promptRequestFactory, "promptRequestFactory"));
-  }
-
-  /** 使用结构化提示请求和上下文管理器启动协调器。 */
-  public AgentTurnCoordinator(
-      LlmClient client,
-      ToolRegistry registry,
-      ToolExecutor executor,
-      ConversationManager conversation,
-      ToolApiProtocol protocol,
-      AgentLoopConfig config,
-      PromptRequestFactory promptRequestFactory,
-      ContextManager contextManager) {
-    this(
-        client,
-        registry,
-        executor,
-        conversation,
-        protocol,
-        config,
-        mode -> null,
-        Objects.requireNonNull(promptRequestFactory, "promptRequestFactory"),
-        Objects.requireNonNull(contextManager, "contextManager"),
-        null,
-        null,
-        null,
-        null,
-        null);
-  }
-
-  /** 创建启用五层权限系统的协调器。 */
-  public AgentTurnCoordinator(
-      LlmClient client,
-      ToolRegistry registry,
-      ToolExecutor executor,
-      ConversationManager conversation,
-      ToolApiProtocol protocol,
-      AgentLoopConfig config,
-      PromptRequestFactory promptRequestFactory,
-      PermissionGate permissionGate,
-      PermissionMode permissionMode,
-      PermissionRuleEngine permissionRuleEngine,
-      PathAuthorizationStore pathAuthorizationStore,
-      BashSandbox bashSandbox) {
-    this(
-        client,
-        registry,
-        executor,
-        conversation,
-        protocol,
-        config,
-        mode -> null,
-        Objects.requireNonNull(promptRequestFactory, "promptRequestFactory"),
-        null,
-        Objects.requireNonNull(permissionGate, "permissionGate"),
-        Objects.requireNonNull(permissionMode, "permissionMode"),
-        Objects.requireNonNull(permissionRuleEngine, "permissionRuleEngine"),
-        Objects.requireNonNull(pathAuthorizationStore, "pathAuthorizationStore"),
-        Objects.requireNonNull(bashSandbox, "bashSandbox"));
-  }
-
-  /** 创建使用可变运行期权限、但按 Agent Run 固定快照的协调器。 */
+  /** 创建协调器；上下文和权限依赖为空时禁用对应能力。 */
   public AgentTurnCoordinator(
       LlmClient client,
       ToolRegistry registry,
@@ -212,114 +98,17 @@ public final class AgentTurnCoordinator {
       PermissionRuntime permissionRuntime,
       PathAuthorizationStore pathAuthorizationStore,
       BashSandbox bashSandbox) {
-    this(
-        client,
-        registry,
-        executor,
-        conversation,
-        protocol,
-        config,
-        promptRequestFactory,
-        contextManager,
-        permissionGate,
-        Objects.requireNonNull(permissionRuntime, "permissionRuntime").mode(),
-        permissionRuntime.snapshot().ruleEngine(),
-        pathAuthorizationStore,
-        bashSandbox);
-    this.permissionRuntime = permissionRuntime;
-  }
-
-  /** 创建同时启用上下文管理和五层权限系统的协调器。 */
-  public AgentTurnCoordinator(
-      LlmClient client,
-      ToolRegistry registry,
-      ToolExecutor executor,
-      ConversationManager conversation,
-      ToolApiProtocol protocol,
-      AgentLoopConfig config,
-      PromptRequestFactory promptRequestFactory,
-      ContextManager contextManager,
-      PermissionGate permissionGate,
-      PermissionMode permissionMode,
-      PermissionRuleEngine permissionRuleEngine,
-      PathAuthorizationStore pathAuthorizationStore,
-      BashSandbox bashSandbox) {
-    this(
-        client,
-        registry,
-        executor,
-        conversation,
-        protocol,
-        config,
-        mode -> null,
-        Objects.requireNonNull(promptRequestFactory, "promptRequestFactory"),
-        Objects.requireNonNull(contextManager, "contextManager"),
-        Objects.requireNonNull(permissionGate, "permissionGate"),
-        Objects.requireNonNull(permissionMode, "permissionMode"),
-        Objects.requireNonNull(permissionRuleEngine, "permissionRuleEngine"),
-        Objects.requireNonNull(pathAuthorizationStore, "pathAuthorizationStore"),
-        Objects.requireNonNull(bashSandbox, "bashSandbox"));
-  }
-
-  private AgentTurnCoordinator(
-      LlmClient client,
-      ToolRegistry registry,
-      ToolExecutor executor,
-      ConversationManager conversation,
-      ToolApiProtocol protocol,
-      AgentLoopConfig config,
-      Function<AgentMode, String> systemPromptProvider,
-      PromptRequestFactory promptRequestFactory) {
-    this(
-        client,
-        registry,
-        executor,
-        conversation,
-        protocol,
-        config,
-        systemPromptProvider,
-        promptRequestFactory,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null);
-  }
-
-  private AgentTurnCoordinator(
-      LlmClient client,
-      ToolRegistry registry,
-      ToolExecutor executor,
-      ConversationManager conversation,
-      ToolApiProtocol protocol,
-      AgentLoopConfig config,
-      Function<AgentMode, String> systemPromptProvider,
-      PromptRequestFactory promptRequestFactory,
-      ContextManager contextManager,
-      PermissionGate permissionGate,
-      PermissionMode permissionMode,
-      PermissionRuleEngine permissionRuleEngine,
-      PathAuthorizationStore pathAuthorizationStore,
-      BashSandbox bashSandbox) {
     this.client = Objects.requireNonNull(client, "client");
     this.registry = Objects.requireNonNull(registry, "registry");
     this.executor = Objects.requireNonNull(executor, "executor");
     this.conversation = Objects.requireNonNull(conversation, "conversation");
     this.protocol = Objects.requireNonNull(protocol, "protocol");
     this.config = Objects.requireNonNull(config, "config").copy();
-    this.config.validate();
-    this.systemPromptProvider =
-        Objects.requireNonNull(systemPromptProvider, "systemPromptProvider");
-    this.promptRequestFactory = promptRequestFactory;
+    this.promptRequestFactory =
+        Objects.requireNonNull(promptRequestFactory, "promptRequestFactory");
     this.contextManager = contextManager;
     this.permissionGate = permissionGate;
-    this.configuredPermissionMode = permissionMode;
-    this.permissionRuleEngine = permissionRuleEngine;
-    this.permissionRuntime =
-        permissionMode == null || permissionRuleEngine == null
-            ? null
-            : new PermissionRuntime(permissionMode, permissionRuleEngine);
+    this.permissionRuntime = permissionRuntime;
     this.pathAuthorizationStore = pathAuthorizationStore;
     this.bashSandbox = bashSandbox;
   }
@@ -406,11 +195,9 @@ public final class AgentTurnCoordinator {
   public long estimateManualCompactionTokens(AgentMode mode) {
     if (contextManager == null) return 0;
     AgentMode effectiveMode = mode == null ? AgentMode.EXECUTE : mode;
-    ContextRequest request =
-        promptRequestFactory == null
-            ? contextRequestFromLegacyPrompt(effectiveMode)
-            : promptRequestFactory.createContextRequest(
-                effectiveMode, 1, true, List.of(), List.of());
+    PromptRequest request =
+        promptRequestFactory.create(
+            effectiveMode, 1, true, List.of(), List.of(), List.of(), PromptAdditions.empty());
     return contextManager.estimateTokens(conversation, request);
   }
 
@@ -419,10 +206,9 @@ public final class AgentTurnCoordinator {
     Runnable interruptThread = currentThread::interrupt;
     run.addCancellationHook(interruptThread);
     try {
-      ContextRequest request =
-          promptRequestFactory == null
-              ? contextRequestFromLegacyPrompt(mode)
-              : promptRequestFactory.createContextRequest(mode, 1, true, List.of(), List.of());
+      PromptRequest request =
+          promptRequestFactory.create(
+              mode, 1, true, List.of(), List.of(), List.of(), PromptAdditions.empty());
       run.events().publish(new AgentEvent.CompactionStarted(ContextTrigger.MANUAL));
       var result = contextManager.forceCompact(conversation, request, ContextTrigger.MANUAL, focus);
       run.events().publish(new AgentEvent.CompactionComplete(result));
@@ -443,12 +229,6 @@ public final class AgentTurnCoordinator {
     } finally {
       run.removeCancellationHook(interruptThread);
     }
-  }
-
-  private ContextRequest contextRequestFromLegacyPrompt(AgentMode mode) {
-    String prompt = systemPromptProvider.apply(mode);
-    return new ContextRequest(
-        prompt == null ? List.of() : List.of(prompt), List.of(), Optional.empty());
   }
 
   /** 返回本次协调器持有的会话历史，供继续对话和测试读取。 */
@@ -578,7 +358,6 @@ public final class AgentTurnCoordinator {
           recordUsage(turn, attempt);
         }
         PromptRequest sentRequest = attempt.request();
-        ContextRequest sentContextRequest = attempt.contextRequest();
 
         if (run.cancellationToken().isCancelled()) {
           finish(run, completedRounds, null, null);
@@ -588,12 +367,12 @@ public final class AgentTurnCoordinator {
           if (turn.errorKind() == StreamEvent.ErrorKind.CONTEXT_LENGTH
               && emergencyRecoveryRound != round
               && contextManager != null
-              && sentContextRequest != null) {
+              && sentRequest != null) {
             emergencyRecoveryRound = round;
             run.events().publish(new AgentEvent.CompactionStarted(ContextTrigger.EMERGENCY));
             var result =
                 contextManager.forceCompact(
-                    conversation, sentContextRequest, ContextTrigger.EMERGENCY);
+                    conversation, sentRequest, ContextTrigger.EMERGENCY, "");
             run.events().publish(new AgentEvent.CompactionComplete(result));
             dispatchCompact(mode, ContextTrigger.EMERGENCY, result, run);
             continue;
@@ -690,7 +469,7 @@ public final class AgentTurnCoordinator {
                           run.cancellationToken()));
         }
         List<ToolResultBlock> resultBlocks =
-            ToolResultAssembler.assemble(turn.calls(), executed, turn.parseErrors());
+            assembleToolResults(turn.calls(), executed, turn.parseErrors());
         // 工具调用和结果必须成对提交，取消发生在工具执行期间也不能留下悬空 assistant 消息。
         if (contextManager == null) {
           conversation.addToolTurn(turn.blocks(), resultBlocks);
@@ -794,8 +573,7 @@ public final class AgentTurnCoordinator {
     List<Map<String, Object>> schemas =
         registry.toAPIFormateForModel(
             route.protocol(), tool -> memoryOnlyRequest ? tool.isSystem() : policy.isAllowed(tool));
-    PromptAdditions baseAdditions = additions == null ? PromptAdditions.empty() : additions;
-    PromptAdditions dynamic = baseAdditions;
+    PromptAdditions dynamic = additions;
     HookSessionState.ReminderBatch reminderBatch = null;
     if (hookEngine != null && hookState != null) {
       dispatchHook(
@@ -803,26 +581,11 @@ public final class AgentTurnCoordinator {
           messageStartPayload(mode, requestId, round, attemptNumber, route),
           run);
       reminderBatch = hookState.snapshotPrompts();
-      dynamic = withHookReminders(baseAdditions, reminderBatch.texts());
+      dynamic = withHookReminders(additions, reminderBatch.texts());
     }
-    if (promptRequestFactory == null) {
-      String systemPrompt = systemPromptProvider.apply(mode);
-      try {
-        CancellableLlmStream stream =
-            systemPrompt == null
-                ? route.client().openStream(conversation, schemas)
-                : route.client().openStream(conversation, schemas, systemPrompt);
-        return new Attempt(stream, null, null, requestId, round, attemptNumber, route, mode);
-      } catch (RuntimeException error) {
-        dispatchMessageEndFailure(mode, requestId, round, attemptNumber, run, error);
-        throw error;
-      } finally {
-        if (reminderBatch != null) hookState.consumePrompts(reminderBatch);
-      }
-    }
-    ContextRequest contextRequest =
-        promptRequestFactory.createContextRequest(
-            mode, round, round == 1, schemas, deferredToolNames, dynamic);
+    PromptRequest contextRequest =
+        promptRequestFactory.create(
+            mode, round, round == 1, List.of(), schemas, deferredToolNames, dynamic);
     if (contextManager != null) {
       ContextPreparation preparation =
           contextManager.prepareForRequest(
@@ -835,10 +598,10 @@ public final class AgentTurnCoordinator {
         dispatchCompact(mode, ContextTrigger.AUTO, compactResult, run);
         if (hookState != null) {
           reminderBatch = hookState.snapshotPrompts();
-          dynamic = withHookReminders(baseAdditions, reminderBatch.texts());
+          dynamic = withHookReminders(additions, reminderBatch.texts());
           contextRequest =
-              promptRequestFactory.createContextRequest(
-                  mode, round, round == 1, schemas, deferredToolNames, dynamic);
+              promptRequestFactory.create(
+                  mode, round, round == 1, List.of(), schemas, deferredToolNames, dynamic);
         }
       }
     }
@@ -851,13 +614,10 @@ public final class AgentTurnCoordinator {
             schemas,
             deferredToolNames,
             dynamic);
-    ContextRequest sent =
-        new ContextRequest(request.systemSegments(), request.tools(), request.reminder());
     try {
       return new Attempt(
           route.client().openStream(request),
           request,
-          sent,
           requestId,
           round,
           attemptNumber,
@@ -872,12 +632,9 @@ public final class AgentTurnCoordinator {
   }
 
   private void recordUsage(CollectedTurn turn, Attempt attempt) {
-    if (contextManager != null
-        && attempt.request() != null
-        && attempt.contextRequest() != null
-        && turn.usage().isPresent()) {
+    if (contextManager != null && attempt.request() != null && turn.usage().isPresent()) {
       contextManager.recordUsage(
-          turn.usage().get(), attempt.request().history(), attempt.contextRequest());
+          turn.usage().get(), attempt.request().history(), attempt.request());
     }
   }
 
@@ -895,16 +652,15 @@ public final class AgentTurnCoordinator {
   }
 
   private PromptAdditions withHookReminders(PromptAdditions base, List<String> reminders) {
-    PromptAdditions value = base == null ? PromptAdditions.empty() : base;
-    var combined = new java.util.ArrayList<>(value.hookReminders());
-    if (reminders != null) combined.addAll(reminders);
+    var combined = new java.util.ArrayList<>(base.hookReminders());
+    combined.addAll(reminders);
     return new PromptAdditions(
-        value.memoryIndex(),
-        value.resumeReminder(),
-        value.skillCatalog(),
-        value.activeSkills(),
+        base.memoryIndex(),
+        base.resumeReminder(),
+        base.skillCatalog(),
+        base.activeSkills(),
         combined,
-        value.agentCatalog());
+        base.agentCatalog());
   }
 
   private Map<String, Object> messageStartPayload(
@@ -970,16 +726,7 @@ public final class AgentTurnCoordinator {
       CollectedTurn turn = collector.collect(run, attempt.stream(), usageRound);
       dispatchMessageEnd(attempt, turn, run);
       return turn;
-    } catch (InterruptedException error) {
-      dispatchMessageEndFailure(
-          attempt.mode(),
-          attempt.requestId(),
-          attempt.iteration(),
-          attempt.attemptNumber(),
-          run,
-          error);
-      throw error;
-    } catch (RuntimeException error) {
+    } catch (InterruptedException | RuntimeException error) {
       dispatchMessageEndFailure(
           attempt.mode(),
           attempt.requestId(),
@@ -1176,7 +923,6 @@ public final class AgentTurnCoordinator {
   private record Attempt(
       CancellableLlmStream stream,
       PromptRequest request,
-      ContextRequest contextRequest,
       String requestId,
       int iteration,
       int attemptNumber,
@@ -1184,7 +930,7 @@ public final class AgentTurnCoordinator {
       AgentMode mode) {}
 
   private static boolean isMemoryOnlyRequest(String userText) {
-    String text = userText == null ? "" : userText.toLowerCase(Locale.ROOT);
+    String text = userText.toLowerCase(Locale.ROOT);
     boolean memoryIntent =
         text.contains("记住")
             || text.contains("记下")
@@ -1272,18 +1018,40 @@ public final class AgentTurnCoordinator {
   private PermissionContext createPermissionContext(
       AgentRun run, AgentMode mode, PermissionRuntime.Snapshot snapshot) {
     if (permissionGate == null) return null;
+    PermissionRuntime.Snapshot permissions = Objects.requireNonNull(snapshot, "permissionSnapshot");
     PermissionMode effectiveMode =
-        mode == AgentMode.PLAN
-            ? PermissionMode.PLAN
-            : snapshot == null ? configuredPermissionMode : snapshot.mode();
+        mode == AgentMode.PLAN ? PermissionMode.PLAN : permissions.mode();
     return new PermissionContext(
         executor.projectRoot(),
         effectiveMode,
-        snapshot == null ? permissionRuleEngine : snapshot.ruleEngine(),
+        permissions.ruleEngine(),
         pathAuthorizationStore,
         bashSandbox,
         run.permissionBroker(),
         run.cancellationToken());
+  }
+
+  /** 按模型原始调用顺序组装完整结果，解析失败也保持调用和结果成对。 */
+  private static List<ToolResultBlock> assembleToolResults(
+      List<ToolCall> calls, List<ToolInvocationResult> executed, Map<String, String> parseErrors) {
+    var byId = new java.util.HashMap<String, ArrayDeque<ToolResult>>();
+    for (ToolInvocationResult result : executed) {
+      byId.computeIfAbsent(result.toolUseId(), ignored -> new ArrayDeque<>())
+          .addLast(result.result());
+    }
+    var blocks = new ArrayList<ToolResultBlock>();
+    for (ToolCall call : calls) {
+      String parseError = parseErrors.get(call.toolUseId());
+      if (parseError != null) {
+        blocks.add(new ToolResultBlock(call.toolUseId(), parseError, true));
+        continue;
+      }
+      var results = byId.get(call.toolUseId());
+      ToolResult result = results == null ? null : results.pollFirst();
+      if (result == null) result = ToolResult.error("工具没有返回结果，请重试该调用。");
+      blocks.add(new ToolResultBlock(call.toolUseId(), result.content(), result.isError()));
+    }
+    return List.copyOf(blocks);
   }
 
   /** 将工具结果事件恢复为模型调用顺序，避免并发执行导致 UI 顺序抖动。 */

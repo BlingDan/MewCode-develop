@@ -56,14 +56,14 @@ public final class ConversationCompactor {
     /** 强制执行一次摘要；没有可压缩旧内容时返回 changed=false。 */
     public CompactResult compact(
             ConversationManager conversation,
-            ContextRequest request) {
+            PromptRequest request) {
         return compact(conversation, request, "");
     }
 
     /** 可选重点只参与摘要提示，不写入会话历史。 */
     public CompactResult compact(
             ConversationManager conversation,
-            ContextRequest request,
+            PromptRequest request,
             String focus) {
         Objects.requireNonNull(conversation, "conversation");
         Objects.requireNonNull(request, "request");
@@ -102,10 +102,9 @@ public final class ConversationCompactor {
         List<String> systems = normalizedFocus.isEmpty()
                 ? List.of(SUMMARY_SYSTEM)
                 : List.of(SUMMARY_SYSTEM, "本次摘要额外保留重点：" + normalizedFocus);
-        var summaryContext = new ContextRequest(systems, List.of(), Optional.empty());
         var summaryHistory = List.of(new Message("user", serializeMessages(oldMessages)));
         var summaryRequest = new PromptRequest(
-                summaryContext.systemSegments(),
+                systems,
                 List.of(),
                 summaryHistory,
                 Optional.empty());
@@ -135,7 +134,7 @@ public final class ConversationCompactor {
         } catch (RuntimeException error) {
             throw new ContextException("上下文摘要请求失败。", error);
         }
-        if (lastUsage != null) estimator.recordUsage(lastUsage, summaryHistory, summaryContext);
+        if (lastUsage != null) estimator.recordUsage(lastUsage, summaryHistory, summaryRequest);
         if (!ended) throw new ContextException("上下文摘要未完整结束。");
         String result = text.toString().trim();
         if (result.isEmpty() || SUMMARY_HEADINGS.stream().anyMatch(heading -> !result.contains(heading))) {

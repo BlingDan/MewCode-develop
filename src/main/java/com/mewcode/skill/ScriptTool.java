@@ -7,6 +7,7 @@ import com.mewcode.tool.ToolCategory;
 import com.mewcode.tool.ToolExecutionContext;
 import com.mewcode.tool.ToolResult;
 import com.mewcode.tool.support.CommandRunner;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -73,7 +74,7 @@ public final class ScriptTool implements Tool {
         return ToolResult.error("Skill 工具输出格式无效：需要 content 字符串和 is_error 布尔值。");
       }
       return new ToolResult(text, failed, Map.of("truncated", result.truncated()));
-    } catch (Exception error) {
+    } catch (IOException error) {
       return ToolResult.error("Skill 工具执行失败：输出或运行环境无效。");
     }
   }
@@ -99,7 +100,7 @@ public final class ScriptTool implements Tool {
   }
 
   @Override
-  public String validateInput(Map<String, Object> input) {
+  public String validateInput(ToolExecutionContext context, Map<String, Object> input) {
     return validateValue(input, spec.inputSchema(), "input");
   }
 
@@ -120,7 +121,7 @@ public final class ScriptTool implements Tool {
         }
       }
       return null;
-    } catch (Exception error) {
+    } catch (IOException error) {
       return "Skill 工具脚本不可访问。";
     }
   }
@@ -128,7 +129,7 @@ public final class ScriptTool implements Tool {
   private static Path realDirectory(Path directory) {
     try {
       return directory.toRealPath();
-    } catch (Exception error) {
+    } catch (IOException error) {
       return directory.toAbsolutePath().normalize();
     }
   }

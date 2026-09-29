@@ -68,7 +68,7 @@ public final class LoadSkillTool implements Tool {
   }
 
   @Override
-  public String validateInput(Map<String, Object> input) {
+  public String validateInput(ToolExecutionContext context, Map<String, Object> input) {
     Object name = input == null ? null : input.get("name");
     if (!(name instanceof String text) || text.isBlank()) return "请传入要加载的 Skill 名称。";
     Object arguments = input.get("arguments");

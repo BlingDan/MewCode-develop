@@ -3,7 +3,7 @@ package com.mewcode.tool;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.mewcode.permission.BashSandboxFactory;
+import com.mewcode.permission.BashSandbox;
 import com.mewcode.tool.impl.BashTool;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -17,7 +17,7 @@ class BashSandboxIntegrationTest {
 
   @Test
   void allowsProjectWritesButRejectsWritesOutsideTheSandbox() throws Exception {
-    Assumptions.assumeTrue(BashSandboxFactory.create().isAvailable());
+    Assumptions.assumeTrue(BashSandbox.create().isAvailable());
     Path outside = projectRoot.resolveSibling("mewcode-bash-sandbox-outside.txt");
     Path inside = projectRoot.resolve("inside.txt");
     try {
@@ -43,7 +43,7 @@ class BashSandboxIntegrationTest {
 
   @Test
   void allowsCommandsToWriteToTheStandardNullDevice() throws Exception {
-    Assumptions.assumeTrue(BashSandboxFactory.create().isAvailable());
+    Assumptions.assumeTrue(BashSandbox.create().isAvailable());
     ToolExecutionContext context =
         new ToolExecutionContext(projectRoot, Duration.ofSeconds(2), new FileStateCache());
 

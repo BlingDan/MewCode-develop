@@ -27,11 +27,6 @@ public final class SystemReminderFactory {
     return Optional.of(full ? full(context, names) : compact(context, names));
   }
 
-  /** 生成包含轮次状态和完整行为约束的提醒。 */
-  public static Message full(ReminderContext context) {
-    return full(context, List.of());
-  }
-
   /** 生成完整提醒，并列出尚未发现的延迟工具名称。 */
   public static Message full(ReminderContext context, List<String> deferredToolNames) {
     Objects.requireNonNull(context, "context");
@@ -47,11 +42,6 @@ public final class SystemReminderFactory {
             + "Continue across tool rounds when the task requires more investigation or verification."
             + deferredTools(deferredToolNames);
     return fromContent(content);
-  }
-
-  /** 生成只保留模式和关键约束的精简提醒。 */
-  public static Message compact(ReminderContext context) {
-    return compact(context, List.of());
   }
 
   /** 生成精简提醒，并列出尚未发现的延迟工具名称。 */

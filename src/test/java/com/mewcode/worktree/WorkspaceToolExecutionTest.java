@@ -150,10 +150,6 @@ class WorkspaceToolExecutionTest {
             return true;
           }
 
-          public String validateInput(Map<String, Object> input) {
-            return null;
-          }
-
           public String validateInput(ToolExecutionContext context, Map<String, Object> input) {
             validated.countDown();
             try {
